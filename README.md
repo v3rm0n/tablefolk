@@ -3,7 +3,7 @@
 Good company, good cards. A browser-based, peer-to-peer platform for multiplayer
 card games, starting with Sasku. Three-player games such as 500 and 1000 are planned.
 
-[Play Tablefolk](https://enum.ee/tablefolk/) · [GitHub](https://github.com/v3rm0n/tablefolk)
+[Play Tablefolk](https://cards.maido.io/) · [GitHub](https://github.com/v3rm0n/tablefolk)
 The first playable rules module is Sasku.
 
 The browser now plays one complete four-player Sasku round: authenticated lobby,
@@ -371,9 +371,9 @@ Passing local tests is not a substitute for independent cryptographic review.
 
 ## GitHub Pages deployment
 
-The public site is hosted at https://enum.ee/tablefolk/, inheriting the account’s
-existing GitHub Pages domain. The default `v3rm0n.github.io/tablefolk/` address
-redirects there; Cloudflare redirects HTTP requests to HTTPS. Every push to
+The public site is hosted at https://cards.maido.io/, the repository’s custom
+GitHub Pages domain. The default `v3rm0n.github.io/tablefolk/` address
+redirects there. Every push to
 `main` runs `.github/workflows/pages.yml`: install locked npm dependencies, check
 types and tests, compile the pinned Rust/WASM shuffle backend, and build the static
 Vite app. The deploy job publishes only `apps/web/dist` through GitHub Pages.
@@ -381,7 +381,8 @@ Pull requests run the build checks without publishing. The workflow can also be
 started manually from GitHub Actions.
 
 Repository **Settings → Pages → Source** must be **GitHub Actions**. The relative
-Vite base (`./`) supports the `/tablefolk/` project path, including workers and WASM.
+Vite base (`./`) supports both the custom domain root and project paths, including
+workers and WASM.
 No application server or deployment secrets are required. Browser identities and
 game secrets remain in each browser's IndexedDB; generated build output and local
 workspace databases are excluded from Git. Signaling still uses external Nostr
