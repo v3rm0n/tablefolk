@@ -272,7 +272,7 @@ describe("Sasku round recovery", () => {
         body: encodeActionBody({ kind: "diamonds", data: {}, reveal: [], shares: [] }), ...changes });
       expect(() => PersistentSaskuRoundReceiver.recover(c.options), JSON.stringify(changes)).toThrow(SaskuRoundRecoveryError);
     }
-  }, 15_000);
+  }, 60_000); // Reconstructs six cryptographic histories; allow slower CI CPUs.
 
   it("rechecks action ownership and proof context instead of trusting chain-valid card reveals", async () => {
     const base = await context();

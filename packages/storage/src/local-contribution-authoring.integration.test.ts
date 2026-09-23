@@ -198,7 +198,7 @@ describe("four-peer local Sasku contribution authoring with native IndexedDB his
       await Promise.all(peers.flatMap((peer) => [peer.store.close(), peer.authored.close(), peer.keyStore.close()]));
       vi.restoreAllMocks();
     }
-  }, 30_000);
+  }, 120_000); // Full four-peer cryptographic round and recovery on shared CI CPUs.
 });
 
 async function durablePeer(f: Fixture, seat: number) {

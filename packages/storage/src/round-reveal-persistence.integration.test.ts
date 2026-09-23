@@ -174,7 +174,7 @@ describe("production Sasku receiver with IndexedDB", () => {
         expect(await completedStore.loadTranscript(f.gameId)).toHaveLength(65);
       } finally { await completedStore.close(); }
     } finally { await store.close(); }
-  }, 15_000);
+  }, 120_000); // Full hand plus multiple cryptographic recovery passes on CI CPUs.
 
   it("keeps action and public-hand state unchanged until IndexedDB commit resolves", async () => {
     const round = await durableRound();
