@@ -15,9 +15,7 @@
 html, body { min-width: 320px; margin: 0; }
 body {
   min-height: 100vh;
-  background: linear-gradient(oklch(31% 0.06 154deg / 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, oklch(31% 0.06 154deg / 0.045) 1px, transparent 1px), oklch(91% 0.035 82deg);
-  background-size: 30px 30px;
+  background: oklch(91% 0.035 82deg);
 }
 button, input, textarea, select, a { font: inherit; }
 button { cursor: pointer; }
@@ -30,24 +28,17 @@ h1, h2, h3, p { text-wrap: pretty; }
 p { line-height: 1.6; }
 h1, h2, h3 { font-family: var(--serif); font-weight: 500; }
 .shell { width: min(100%, 1500px); margin: auto; padding: clamp(1rem, 3.5vw, 3.5rem); }
-.masthead { display: flex; justify-content: space-between; align-items: baseline; gap: 1.5rem; border-bottom: 1px solid var(--line); padding-bottom: 1rem; }
-.wordmark { display: flex; align-items: baseline; gap: 1rem; text-decoration: none; font-weight: 700; letter-spacing: -0.03em; }
-.wordmark__index, .eyebrow, .edition-strip, .table-caption, .footer { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.13em; text-transform: uppercase; }
-.wordmark__index, .eyebrow { color: var(--rust); }
-.masthead__note { margin: 0; font-family: var(--serif); font-style: italic; text-align: right; }
-.edition-strip { display: flex; justify-content: space-between; gap: 1rem; padding-block: 1rem; color: var(--rust); }
+.eyebrow, .table-caption { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.13em; text-transform: uppercase; }
+.eyebrow { color: var(--rust); }
 .eyebrow { margin: 0 0 1.1rem; }
-.welcome { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(20rem, 0.8fr); gap: clamp(3rem, 6vw, 6rem); padding: clamp(2.5rem, 5vw, 5rem) 0 4rem; align-items: start; }
+.shell--welcome { max-width: 1180px; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; }
+.shell--welcome > .notice { width: 100%; }
+.welcome { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(20rem, 0.9fr); gap: clamp(2rem, 6vw, 6rem); align-items: center; padding-block: 2rem; }
+.shell--welcome .welcome { width: 100%; }
 h1 { font-size: clamp(3.7rem, 7.5vw, 7rem); line-height: 0.96; letter-spacing: -0.065em; margin: 0; }
 h1 em { color: var(--felt); font-weight: 500; }
-.lede { max-width: 33rem; margin: 2rem 0 1.5rem; font-size: clamp(1.05rem, 1.5vw, 1.25rem); }
-.preview-note { display: flex; align-items: baseline; gap: 1rem; font-size: 0.88rem; max-width: 31rem; color: var(--rust); }
-.preview-note > span { font-family: var(--serif); font-size: 2rem; font-style: italic; }
-.mini-court { display: flex; align-items: center; width: 19rem; height: 11rem; margin-top: 2rem; padding-left: 1.5rem; position: relative; }
-.mini-court::before { position: absolute; inset: 1rem 0 0; content: ""; border-radius: 50%; background: var(--felt); transform: rotate(-8deg); }
-.mini-court > span { z-index: 1; background: var(--paper); border: 1px solid var(--line); border-radius: 0.3rem; width: 6rem; height: 8.5rem; padding: 0.7rem; font-family: var(--serif); font-size: 1.8rem; line-height: 1.1; text-align: center; transform: rotate(-14deg); box-shadow: 0.3rem 0.3rem 0 oklch(20% 0.04 151deg / 0.2); }
-.mini-court > span:nth-child(2) { transform: translateY(-0.75rem) rotate(1deg); margin-left: -1rem; }
-.mini-court > span:nth-child(3) { transform: rotate(15deg); margin-left: -1rem; color: var(--rust); }
+.lede { max-width: 31rem; margin: 1.5rem 0; font-size: clamp(1.05rem, 1.5vw, 1.25rem); }
+.reference-link { display: inline-flex; gap: 0.5rem; align-items: center; font-size: 0.88rem; font-weight: 700; text-underline-offset: 0.25em; }
 .entry-panel { border-top: 3px solid var(--felt); background: var(--paper); padding: clamp(1.4rem, 3vw, 2.7rem); }
 h2 { font-size: clamp(2rem, 3.4vw, 3rem); letter-spacing: -0.045em; line-height: 1.04; margin: 0 0 1.7rem; }
 label { display: block; font-weight: 700; font-size: 0.84rem; margin: 1.2rem 0 0.55rem; }
@@ -65,7 +56,7 @@ form .button, .lobby-ledger input + .button { margin-top: 0.75rem; }
 .entry-divider::before, .entry-divider::after { content: ""; height: 1px; background: var(--line); flex: 1; }
 .settings { border-top: 1px solid var(--line); margin-top: 1.6rem; padding-top: 1rem; }
 summary { cursor: pointer; font-size: 0.85rem; font-weight: 700; padding-block: 0.35rem; }
-.settings p, .privacy-note, .identity-strip details p { font-size: 0.79rem; line-height: 1.6; }
+.settings p, .privacy-note { font-size: 0.79rem; line-height: 1.6; }
 .privacy-note { margin-bottom: 0; color: oklch(38% 0.045 72deg); }
 .optional { font-weight: 400; font-size: 0.75rem; }
 .notice { margin-block: 1rem; padding: 1rem 1.2rem; border: 1px solid var(--rust); background: oklch(94% 0.035 50deg); font-size: 0.88rem; overflow-wrap: anywhere; }
@@ -119,14 +110,11 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .relay-list span, .relay-list small { overflow-wrap: anywhere; min-width: 0; }
 .relay-list small { color: var(--rust); width: 100%; }
 .event-log { padding-left: 1.25rem; margin-top: 2rem; font-size: 0.75rem; line-height: 1.7; overflow-wrap: anywhere; }
-.scoring-reference { border-top: 1px solid var(--line); margin-block: 1rem 2rem; padding-block: 0.8rem; }
-.scoring-reference > summary { display: flex; justify-content: space-between; gap: 1rem; padding-block: 0.75rem; }
-.scoring-reference > summary::before { content: "+"; color: var(--rust); }
-.scoring-reference[open] > summary::before { content: "-"; }
-.scoring-reference > summary span { margin-left: auto; font-weight: 400; }
+.shell--reference { max-width: 1180px; }
+.reference-back { display: inline-block; margin-bottom: clamp(2rem, 6vw, 5rem); font-size: 0.85rem; font-weight: 700; text-underline-offset: 0.25em; }
+.scoring-reference { padding-bottom: 2rem; }
 .scoring-intro { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; align-items: center; padding-top: 2.5rem; }
-.scoring-intro h2 { margin-bottom: 1rem; }
-.scoring-intro h2 em { color: var(--felt); }
+.scoring-intro h1 { font-size: clamp(3rem, 6vw, 5.5rem); }
 .scoring-intro > p { max-width: 32rem; font-size: 0.9rem; }
 .scoring-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: clamp(1.5rem, 4vw, 4rem); margin-top: 1rem; }
 .scoring-controls { min-width: 0; }
@@ -156,79 +144,7 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .court-order { display: flex; flex-wrap: wrap; gap: 0.65rem; list-style: none; padding: 0; margin: 0; font: 1.2rem var(--serif); }
 .court-order li { border-bottom: 1px solid var(--line); padding: 0.25rem 0.4rem; }
 .court-order li:nth-child(n+7) { color: var(--rust); }
-.trick-reference { border-top: 1px solid var(--line); margin-block: 1rem 2rem; padding-block: 0.8rem; }
-.trick-reference > summary { display: flex; justify-content: space-between; gap: 1rem; padding-block: 0.75rem; }
-.trick-reference > summary::before { content: "+"; color: var(--rust); }
-.trick-reference[open] > summary::before { content: "-"; }
-.trick-reference > summary > span { margin-left: auto; font-weight: 400; }
-.practice-heading { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; align-items: center; padding-top: 2.5rem; }
-.practice-heading h2 { margin-bottom: 1rem; }
-.practice-heading h2 em { color: var(--felt); }
-.practice-heading > p { max-width: 33rem; font-size: 0.9rem; }
-.practice-selector { max-width: 28rem; margin-block: 1.25rem 2rem; }
-.practice-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(1.5rem, 4vw, 4rem); }
-.practice-table { background: var(--felt); color: var(--paper); padding: clamp(1rem, 2.5vw, 2rem); align-self: start; }
-.practice-caption { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.7rem; font-size: 0.76rem; }
-.practice-plays { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(0.4rem, 1vw, 1rem); list-style: none; padding: 0; margin: 1.5rem 0; }
-.practice-seat { display: block; font-size: 0.7rem; margin-bottom: 0.65rem; }
-.practice-card { display: flex; flex-direction: column; justify-content: space-between; min-width: 0; min-height: 8rem; color: var(--ink); border: 1px solid var(--line); border-radius: 0.25rem; background: var(--paper); padding: 0.7rem; text-align: left; }
-.practice-card--red { color: var(--rust); }
-.practice-face { display: grid; width: 100%; font-family: var(--serif); font-size: 1.6rem; line-height: 1.1; }
-.practice-face b { justify-self: center; font-size: 2.35rem; font-weight: 400; margin: 0.4rem 0; }
-.practice-empty { display: grid; place-items: center; min-height: 8rem; padding: 0.4rem; border: 1px dashed oklch(89% 0.05 82deg / 0.5); border-radius: 0.25rem; font-size: 0.72rem; text-align: center; }
-.practice-result { border-top: 1px solid oklch(89% 0.05 82deg / 0.4); padding-top: 1rem; }
-.practice-result h3 { font-size: 1.9rem; margin: 0.3rem 0; }
-.practice-result p { font-size: 0.82rem; margin-bottom: 0; }
-.practice-hand { min-width: 0; }
-.practice-instruction { margin-top: 0; font-size: 0.88rem; }
-.practice-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.7rem; max-width: 25rem; }
-.practice-cards .practice-card { min-height: 8.3rem; }
-.practice-cards .practice-card:not(:disabled):hover { border-color: var(--felt); background: oklch(90% 0.05 102deg); }
-.practice-card--chosen { outline: 2px solid var(--felt); outline-offset: 2px; opacity: 1 !important; }
-.practice-card small { font: 0.58rem "Avenir Next", sans-serif; letter-spacing: 0.025em; color: var(--ink); }
-.practice-legal-count { font-size: 0.77rem; max-width: 30rem; }
-.hand-practice { border-top: 1px solid var(--line); margin-block: 1rem 2rem; padding-block: 0.8rem; }
-.hand-practice > summary { display: flex; justify-content: space-between; gap: 1rem; padding-block: 0.75rem; }
-.hand-practice > summary::before { content: "+"; color: var(--rust); }
-.hand-practice[open] > summary::before { content: "-"; }
-.hand-practice > summary > span { margin-left: auto; font-weight: 400; }
-.hand-practice-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.7rem 2rem; padding-block: 1rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--line); font-size: 0.78rem; }
-.hand-practice-bar .button { margin-left: auto; }
-.hand-practice-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr); gap: clamp(1.5rem, 4vw, 4rem); }
-.hand-phase h3 { font-size: clamp(1.9rem, 3vw, 2.8rem); margin: 0 0 1rem; }
-.hand-practice-main > p { font-size: 0.85rem; }
 .hand-action-buttons { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-block: 1rem; }
-.hand-contract { text-transform: capitalize; color: var(--felt); font-weight: 700; }
-.full-hand-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; max-width: 29rem; margin-block: 1.5rem; }
-.full-hand-cards .practice-card { min-height: 7.5rem; }
-.full-hand-cards .practice-card:disabled { opacity: 0.65; }
-.full-hand-cards[data-playing="false"] .practice-card { opacity: 1; cursor: default; }
-.full-hand-cards .practice-card:not(:disabled):hover { background: oklch(90% 0.05 102deg); border-color: var(--felt); }
-.hand-ledger { background: var(--felt); color: var(--paper); padding: clamp(1.2rem, 2.5vw, 2rem); align-self: start; min-width: 0; }
-.hand-ledger .eyebrow { color: oklch(89% 0.05 82deg); }
-.hand-ledger h3 { font-size: 2.2rem; margin: 0 0 1.25rem; }
-.hand-ledger dl { margin: 0; }
-.hand-ledger dl > div { padding-block: 1rem; border-top: 1px solid oklch(89% 0.05 82deg / 0.4); }
-.hand-ledger dt { font-weight: 700; font-size: 0.9rem; }
-.hand-ledger dd { margin: 0.5rem 0 0; font-size: 0.8rem; }
-.hand-ledger p { font-size: 0.79rem; }
-.hand-ledger details { border-top: 1px solid oklch(89% 0.05 82deg / 0.4); padding-top: 0.65rem; margin-top: 1rem; }
-.hand-trick { display: flex; flex-wrap: wrap; gap: 0.8rem; list-style: none; margin: 1rem 0; padding: 0; min-height: 5rem; }
-.hand-trick li { background: var(--paper); border: 1px solid var(--line); border-radius: 0.15rem; padding: 0.7rem; min-width: 4rem; }
-.hand-trick span { display: block; font-size: 0.65rem; }
-.hand-trick strong { font: 1.6rem var(--serif); }
-.hand-trick-history, .public-deal { margin: 1rem 0 0; padding-left: 1rem; font-size: 0.73rem; }
-.hand-trick-history li, .public-deal li { margin-bottom: 1rem; }
-.hand-trick-history span, .public-deal span { display: block; margin-top: 0.3rem; overflow-wrap: anywhere; }
-.hand-final-score { border-block: 1px solid var(--line); padding-block: 1rem 1.5rem; }
-.hand-final-score p { font-size: 0.9rem; }
-.hand-final-score > p:first-child { font-family: var(--serif); font-size: 1.5rem; }
-.identity-strip { border-top: 1px solid var(--line); padding-block: 1.75rem 2.5rem; display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
-.identity-strip .eyebrow { margin-bottom: 0.6rem; }
-.identity-strip strong { font-size: 0.85rem; letter-spacing: 0.08em; overflow-wrap: anywhere; }
-.identity-strip > div > p { font-size: 0.8rem; margin-top: 0; }
-.footer { display: flex; justify-content: space-between; gap: 1.5rem; border-top: 1px solid var(--line); padding-top: 1.25rem; }
-.footer p { margin: 0; }
 @media (max-width: 1000px) {
   .lobby-layout { grid-template-columns: minmax(0, 1.3fr) minmax(16rem, 0.9fr); gap: 1.5rem; }
   .felt-table { padding: 1.25rem; gap: 6rem 1rem; border-radius: 15% / 10%; }
@@ -238,24 +154,15 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 @media (max-width: 800px) {
   .welcome, .lobby-layout { grid-template-columns: 1fr; }
   .welcome { gap: 2rem; }
-  .mini-court { display: none; }
-  .welcome__copy { padding-bottom: 1rem; }
   .entry-panel { max-width: 38rem; width: 100%; }
   .felt-table { min-height: 35rem; }
   .lobby-ledger { margin-top: 1rem; }
   .lobby-ledger h2 { max-width: 16ch; }
-  .diagnostics__columns, .identity-strip { grid-template-columns: 1fr; gap: 1.5rem; }
+  .diagnostics__columns { grid-template-columns: 1fr; gap: 1.5rem; }
   .scoring-layout, .scoring-intro, .scoring-rules { grid-template-columns: 1fr; gap: 1.5rem; }
   .scoring-intro > p { margin-top: 0; }
-  .practice-layout, .practice-heading { grid-template-columns: 1fr; gap: 1.5rem; }
-  .practice-heading > p { margin-top: 0; }
-  .hand-practice-layout { grid-template-columns: 1fr; }
 }
 @media (max-width: 480px) {
-  .masthead { flex-wrap: wrap; gap: 0.6rem; }
-  .wordmark { width: 100%; justify-content: space-between; }
-  .masthead__note { text-align: left; font-size: 0.85rem; }
-  .edition-strip { font-size: 0.58rem; }
   h1 { font-size: clamp(3.2rem, 13vw, 4.5rem); }
   .lobby-heading { align-items: start; padding-bottom: 1.75rem; }
   .lobby-heading h1 { font-size: 3rem; }
@@ -268,33 +175,17 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
   .seat__fingerprint { font-size: 0.72rem; }
   .seat p { margin-block: 0.4rem; }
   .seat__host { display: inline; margin-left: 0.4rem; }
-  .footer { font-size: 0.6rem; }
-  .footer p:last-child { text-align: right; }
   .connection-list li { align-items: start; }
   .connection-list .button { min-height: 2.6rem; max-width: 7rem; text-align: left; }
-  .scoring-reference > summary { flex-wrap: wrap; }
-  .scoring-reference > summary span { flex-basis: 100%; margin-left: 1.5rem; }
   .scoring-totals, .partnership-labels { gap: 0.6rem; }
   .scoring-controls select { font-size: 0.77rem; padding: 0.7rem 0.4rem; }
-  .trick-reference > summary { flex-wrap: wrap; }
-  .trick-reference > summary > span { flex-basis: 100%; margin-left: 1.5rem; }
-  .practice-table { padding: 0.9rem; }
-  .practice-plays .practice-card, .practice-empty { min-height: 6rem; }
-  .practice-plays .practice-card { padding: 0.4rem; }
-  .practice-plays .practice-face { font-size: 1.25rem; }
-  .practice-plays .practice-face b { font-size: 1.9rem; }
-  .hand-practice > summary { flex-wrap: wrap; }
-  .hand-practice > summary > span { flex-basis: 100%; margin-left: 1.5rem; }
-  .hand-practice-bar .button { margin-left: 0; }
   .hand-action-buttons .button { flex: 1 1 auto; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
 
 
-/* Live play has its own compact layout; reference tools keep their existing styles. */
+/* Live play has its own compact layout. */
 .shell--playing { max-width: 1180px; padding-top: 1.2rem; }
-.shell--playing .masthead { padding-bottom: .65rem; }
-.shell--playing .edition-strip { padding-block: .65rem; }
 .live-focus:focus { outline: none; }
 .table-settings:not(.table-settings--playing) > summary { display: none; }
 .table-settings--playing { margin-top: 1.5rem; border-top: 1px solid var(--line); }
@@ -338,8 +229,6 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .live-card-space, .live-played-card { width: 49px; height: 64px; border-radius: .3rem; display: grid; place-items: center; }
 .live-card-space { color: oklch(85% .11 100deg); border: 1px dashed oklch(90% .02 100deg / .2); }
 .live-played-card { color: var(--ink); background: var(--paper); padding: .25rem; box-shadow: 0 3px 8px #0003; }
-.live-played-card .practice-face { font-size: 1rem; }
-.live-played-card .practice-face b { font-size: 1.3rem; margin: 0; }
 .live-actions { min-height: 3rem; padding: .8rem 0; display: flex; justify-content: space-between; align-items: center; gap: .7rem; flex-wrap: wrap; }
 .live-actions > p { font-size: .78rem; margin: 0; }
 .live-actions .hand-action-buttons { margin: 0; gap: .5rem; }
@@ -349,8 +238,6 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .live-hand { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: .55rem; min-height: 0; }
 .live-hand-card { display: flex; flex-direction: column; justify-content: space-between; min-width: 0; min-height: 125px; text-align: left; padding: .65rem; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: .45rem; box-shadow: 0 2px 3px #0001; transition: transform 140ms, box-shadow 140ms; }
 .live-hand-card:disabled { opacity: 1; cursor: default; }
-.live-hand-card .practice-face { font-size: 1.7rem; }
-.live-hand-card .practice-face b { margin: .1rem 0; font-size: 2rem; }
 .live-hand-card > small { text-align: center; color: var(--felt); font-size: .65rem; font-weight: 700; min-height: 1em; }
 .live-hand-card.is-playable { border: 2px solid var(--felt); padding: calc(.65rem - 1px); box-shadow: 0 3px 0 var(--felt); cursor: pointer; }
 .live-hand-card.is-playable:hover { transform: translateY(-5px); box-shadow: 0 7px 0 var(--felt); }
@@ -377,7 +264,6 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .live-history li small { grid-column: 2; opacity: .7; }
 @media (max-width: 620px) {
   .shell--playing { padding: .8rem; }
-  .shell--playing .masthead__note, .shell--playing .wordmark__index, .shell--playing .edition-strip { display: none; }
   .live-heading { flex-direction: column; gap: .3rem; padding-top: .5rem; }
   .live-heading h2 { font-size: 1.9rem; }
   .live-heading .eyebrow { font-size: .6rem; }
@@ -404,8 +290,6 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
   .live-hand { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .4rem; }
   .live-hand-card { min-height: 90px; padding: .4rem; }
   .live-hand-card.is-playable { padding: calc(.4rem - 1px); }
-  .live-hand-card .practice-face { font-size: 1.2rem; }
-  .live-hand-card .practice-face b { font-size: 1.6rem; }
   .live-hand-card > small { font-size: .58rem; }
   .live-hand-heading { font-size: .75rem; }
   .live-hand-heading small { font-size: .6rem; }
@@ -425,9 +309,6 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .live-hand-card > small { position: absolute; bottom: -.3rem; left: 50%; transform: translateX(-50%); padding: .1rem .4rem; border-radius: 1rem; font-size: .6rem; pointer-events: none; }
 .live-hand-card.is-playable > small { background: var(--felt); color: #fffdf8; }
 .live-played-card { padding: 0; width: 49px; height: auto; aspect-ratio: 5 / 7; background: transparent; }
-.practice-card { padding: .25rem; background: #fffdf8; }
-.practice-card > small { padding: .3rem; }
-.practice-card .playing-card-face { max-height: 12rem; }
 @media (max-width: 620px) {
   .live-hand-card, .live-hand-card.is-playable { min-height: 0; padding: 0; }
   .live-played-card { width: 40px; height: auto; }

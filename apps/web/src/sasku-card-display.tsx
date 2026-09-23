@@ -67,7 +67,7 @@ function CourtHalf({ rank, suit }: { rank: "J" | "Q" | "K"; suit: SaskuSuit }) {
 export function SaskuCardFace({ id }: { readonly id: SaskuCardId }) {
   const { rank, suit } = parseSaskuCard(id);
   const court = rank === "J" || rank === "Q" || rank === "K";
-  return <svg aria-hidden="true" focusable="false" className="practice-face playing-card-face" viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg" style={{ color: suit === "hearts" || suit === "diamonds" ? "#b51f32" : "#17202b" }}>
+  return <svg aria-hidden="true" focusable="false" className="playing-card-face" viewBox="0 0 100 140" xmlns="http://www.w3.org/2000/svg" style={{ color: suit === "hearts" || suit === "diamonds" ? "#b51f32" : "#17202b" }}>
     <rect x=".5" y=".5" width="99" height="139" rx="6" fill="#fffdf8" stroke="#c9c5bb" />
     {[false, true].map(inverted => <g key={String(inverted)} transform={inverted ? "translate(100 140) rotate(180)" : undefined}>
       <text x="11" y="20" textAnchor="middle" fill="currentColor" fontFamily="Georgia, 'Times New Roman', serif" fontSize={rank === "10" ? "16" : "19"} fontWeight="bold" letterSpacing="-1">{rank}</text>

@@ -18,8 +18,7 @@ at the bottom, your partner sits opposite, and the active player is highlighted.
 Cards are grouped by suit with legal plays marked; the last completed trick stays
 visible until the next card is played. Scores, turn instructions, and completed
 trick history are available in the round view. Invitation, connection retry, and
-leaving controls remain under **Table & connections**. Practice tools are hidden
-while a live round is open.
+leaving controls remain under **Table & connections**.
 
 The signed roster binds the first-round rules hash: the Sasku card, hand, and
 scoring implementations, setup round 0, game round 1, dealer seat 4, opening seat

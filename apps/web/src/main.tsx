@@ -17,8 +17,4 @@ window.addEventListener("pagehide", () => { void controller.dispose(); });
 window.addEventListener("pageshow", (event) => { if (event.persisted) { window.location.reload(); } });
 import.meta.hot?.dispose(() => { void controller.dispose(); });
 
-createRoot(root).render(
-  <StrictMode>
-    <App controller={controller} />
-  </StrictMode>,
-);
+createRoot(root).render(<StrictMode><App controller={controller} /></StrictMode>);

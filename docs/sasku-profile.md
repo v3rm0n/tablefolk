@@ -526,26 +526,11 @@ choose a target score, write a transcript, or emit a signed game result.
 
 ## Browser Reference
 
-The expandable Sasku scoring reference uses this same package for manual examples.
+The `scoring.html` page uses this same package for manual examples.
 Changing its inputs has no lobby, identity, storage, or network effect. Invalid
 totals show a validation message instead of a misleading score. Pass-round mode
 disables the named-suit/declarer inputs and always represents default diamonds.
 The existing connection-check rules bundle and lobby agreement are unchanged.
-
-The trick practice view also calls the shared rules package. Its fixed public
-examples provide their own leader, diamonds as trump, and demonstration play
-order 1, 2, 3, 4; they are not a bidding or turn-order policy. It disables choices
-that fail effective-suit following, adjudicates the selected fourth card, and
-shows the resulting card points. It never transmits, stores, or claims to have
-cryptographically dealt these example cards.
-
-Full hand practice uses the reference controller from bidding through all nine
-tricks and scoring. Two fixed public deals cover equal-strength ties and unequal
-strengths with raises/passer re-entry. Changing the deal or restarting affects
-only this local exercise. The initial demonstration dealer is supplied explicitly;
-the next-practice action uses the controller's next-dealer result. There is no
-cryptographic shuffle, hidden-information multiplayer game, lobby mutation,
-network traffic, transcript persistence, or match-score accumulation.
 
 ## Remaining Decisions
 

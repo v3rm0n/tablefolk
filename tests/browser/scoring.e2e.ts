@@ -5,8 +5,13 @@ test("Sasku scoring reference follows named, special and pass-round rules withou
   page.on("websocket", (socket) => { if (!socket.url().includes(":4317")) { externalSockets.push(socket.url()); } });
   await page.setViewportSize({ width: 1440, height: 1100 });
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Play Sasku together." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open a table" })).toBeEnabled();
-  await page.locator(".scoring-reference > summary").click();
+  await expect(page.getByLabel("Invitation link", { exact: true })).toBeVisible();
+  await expect(page.locator(".scoring-reference, .hand-practice, .trick-reference, main > header, main > footer")).toHaveCount(0);
+  await page.getByRole("link", { name: "Scoring reference" }).click();
+  await expect(page).toHaveURL(/\/scoring\.html$/);
+  await expect(page.getByRole("heading", { name: "Scoring reference." })).toBeVisible();
   const result = page.getByRole("region", { name: "Example hand score" });
   await expect(result.getByRole("heading", { name: "Seaj\u00e4nn" })).toBeVisible();
   await expect(page.getByLabel("Partnership A game points", { exact: true })).toHaveText("3 P");
@@ -41,5 +46,6 @@ test("Sasku scoring reference follows named, special and pass-round rules withou
   await expect(result.getByRole("alert")).toContainText("not possible");
   await expect(page.getByLabel("Partnership A game points", { exact: true })).toHaveCount(0);
   expect(externalSockets).toEqual([]);
+  await page.getByRole("link", { name: "Back to game" }).click();
   await expect(page.getByRole("button", { name: "Open a table" })).toBeEnabled();
 });

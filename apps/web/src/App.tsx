@@ -2,9 +2,6 @@ import { LiveSaskuRound } from "./LiveSaskuRound";
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 
 import type { BrowserLobbyActions } from "./lobby-types";
-import { SaskuScoringReference } from "./SaskuScoringReference";
-import { SaskuTrickReference } from "./SaskuTrickReference";
-import { SaskuHandPractice } from "./SaskuHandPractice";
 
 export function App({ controller }: { readonly controller: BrowserLobbyActions }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -38,41 +35,28 @@ export function App({ controller }: { readonly controller: BrowserLobbyActions }
   };
 
   return (
-    <main className={`shell${playing ? " shell--playing" : ""}`}>
-      <header className="masthead">
-        <a className="wordmark" href="./" onClick={(event) => { event.preventDefault(); if (!room) act(controller.leave()); else window.scrollTo({ top: 0, behavior: "smooth" }); }}>
-          <span className="wordmark__index">P2P / 01</span><span>Tablefolk</span>
-        </a>
-        <p className="masthead__note">Good company. Good cards.</p>
-      </header>
-
-      <div className="edition-strip">
-        <span>Sasku / first round</span>
-        <span>{state.identity === null ? "Preparing this browser" : "Identity saved on this browser"}</span>
-      </div>
+    <main className={`shell${playing ? " shell--playing" : room === null ? " shell--welcome" : ""}`}>
       {state.error !== null && <div className="notice notice--error" role="alert"><strong>Something needs attention.</strong> {state.error}</div>}
 
       {state.game && controller.playAction && <div ref={roundHeading} tabIndex={-1} className="live-focus"><LiveSaskuRound view={state.game} act={intent => controller.playAction!(intent)} /></div>}
       {room === null ? (
         <section className="welcome" aria-labelledby="welcome-title">
           <div className="welcome__copy">
-            <p className="eyebrow">An invitation to connect</p>
-            <h1 id="welcome-title">Four seats.<br /><em>One shared record.</em></h1>
-            <p className="lede">Open a table, invite three people, and play a private nine-trick round of Sasku.</p>
-            <p className="preview-note"><span aria-hidden="true">01</span> Experimental multiplayer: the shuffle proof backend is a candidate awaiting independent review. All four players must stay connected.</p>
-            <div className="mini-court" aria-hidden="true"><span>K<br />{"\u2663"}</span><span>Q<br />{"\u2660"}</span><span>J<br />{"\u2665"}</span></div>
+            <p className="eyebrow">Tablefolk · Sasku</p>
+            <h1 id="welcome-title">Play Sasku<br /><em>together.</em></h1>
+            <p className="lede">A four-player partnership trick-taking game. Bid for trump, play nine tricks, and score with your partner.</p>
+            <a className="reference-link" href="./scoring.html">Scoring reference <span aria-hidden="true">→</span></a>
           </div>
           <div className="entry-panel">
-            <p className="eyebrow">Take your place</p>
-            <h2>Start with an invitation.</h2>
+            <h2>Start a game</h2>
             <button className="button button--primary" disabled={busy || state.identity === null} onClick={() => act(controller.create(relays))}>
               {state.busy === "hosting" ? "Opening table..." : "Open a table"}<span aria-hidden="true">+</span>
             </button>
-            <div className="entry-divider"><span>or join someone else's</span></div>
+            <div className="entry-divider"><span>or join a table</span></div>
             <form onSubmit={join}>
               <label htmlFor="invitation">Invitation link</label>
               <textarea id="invitation" value={invitation} onChange={(event) => setInvitation(event.target.value)} required maxLength={4096}
-                placeholder="Paste the invitation from your host" rows={3} disabled={busy} autoCapitalize="none" spellCheck={false} />
+                placeholder="Paste the invitation from your host" rows={2} disabled={busy} autoCapitalize="none" spellCheck={false} />
               <button className="button button--secondary" disabled={busy || state.identity === null || invitation.trim() === ""}>
                 {state.busy === "joining" ? "Joining table..." : "Join this table"}
               </button>
@@ -84,8 +68,9 @@ export function App({ controller }: { readonly controller: BrowserLobbyActions }
                 maxLength={10_240} placeholder="Automatic public relays when blank" autoCapitalize="none" spellCheck={false} />
               <p>One URL per line, up to five. Use the same custom list on every device. Public relays may have their own access policies.</p>
               <p>STUN is configured. TURN is not; some restricted networks may not connect.</p>
+              <p>Multiplayer is experimental. All four players must stay connected, and the shuffle proof backend awaits independent review.</p>
+              <p>Invitations stay in the URL fragment. Share yours only with the people you want at the table.</p>
             </details>
-            <p className="privacy-note">The invitation stays in the URL fragment. Share it only with the people you want at the table.</p>
           </div>
         </section>
       ) : (
@@ -150,16 +135,6 @@ export function App({ controller }: { readonly controller: BrowserLobbyActions }
         </details>
       )}
 
-      {!playing && <><SaskuScoringReference />
-      <SaskuTrickReference />
-      <SaskuHandPractice /></>}
-      {!playing && <section className="identity-strip" aria-label="Browser identity">
-        <div><p className="eyebrow">Your browser identity</p><strong>{state.identity?.fingerprint ?? (state.phase === "loading" ? "Loading saved identity..." : "Identity unavailable")}</strong></div>
-        <div><p>Another tab shares this identity. Use another device or a separate browser profile for a different seat.</p>
-          {state.identity !== null && <details><summary>Show public key</summary><code>{state.identity.publicKey}</code><p>The current build stores a raw signing-key seed in IndexedDB. Clearing site data loses this identity; this is not a non-extractable key store.</p></details>}
-        </div>
-      </section>}
-      <footer className="footer"><p>Four players. One table.</p><p>Sasku · Experimental multiplayer</p></footer>
     </main>
   );
 }

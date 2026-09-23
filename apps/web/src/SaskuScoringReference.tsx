@@ -31,10 +31,9 @@ export function SaskuScoringReference() {
     });
   } catch (cause) { error = cause instanceof Error ? cause.message : "Enter valid completed-hand totals"; }
 
-  return <details className="scoring-reference">
-    <summary>Sasku scoring reference <span>Interactive rulebook</span></summary>
+  return <section className="scoring-reference" aria-labelledby="scoring-title">
     <div className="scoring-intro">
-      <div><p className="eyebrow">Know the result</p><h2>Every point<br /><em>has its place.</em></h2></div>
+      <div><p className="eyebrow">Sasku rules</p><h1 id="scoring-title">Scoring<br /><em>reference.</em></h1></div>
       <p>Try the rules for a completed nine-trick hand. These are manual examples, not results from a played or verified game. Nothing here changes your lobby or its transcript.</p>
     </div>
     <div className="scoring-layout">
@@ -76,5 +75,5 @@ export function SaskuScoringReference() {
       <section><h3>Card points</h3><dl className="point-values">{Object.entries(SASKU_CARD_POINTS).map(([rank, points]) => <div key={rank}><dt>{rank === "other" ? "Other cards" : rank[0]!.toUpperCase() + rank.slice(1)}</dt><dd>{points}</dd></div>)}</dl></section>
       <section><h3>Permanent trumps</h3><p>Strongest first. Every court is above the non-court cards of the chosen trump suit.</p><ol className="court-order">{SASKU_COURT_ORDER.map((card) => <li key={`${card.suit}:${card.rank}`} aria-label={`${card.rank} of ${card.suit}`}><span aria-hidden="true">{rankMarks[card.rank]}{suitMarks[card.suit]}</span></li>)}</ol></section>
     </div>
-  </details>;
+  </section>;
 }

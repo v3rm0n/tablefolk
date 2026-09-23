@@ -139,27 +139,12 @@ can override that location. Browser-test TypeScript is checked by `npm run check
 
 ## Sasku Scoring Reference
 
-Expand **Sasku scoring reference** in the browser to try completed-hand totals,
+Open **Scoring reference** from the landing page, or visit `scoring.html`, to try completed-hand totals,
 named trumps, pokk, karvane, and pass-round scoring. The same deterministic
 `scoreSaskuHand` function is exported by `@p2pcards/rules-sasku`. It rejects
 inconsistent point/trick totals and distinguishes named diamonds from diamonds
 by default. These manual examples are not played or verified game results and
 do not modify the lobby or transcript.
-
-Expand **Sasku trick practice** to exercise the confirmed following rules with
-public example hands. Courts count only as trumps; follow the effective led
-suit when possible, otherwise discard freely. The shared package validates the
-36-card deck, filters legal cards, and resolves ordered public tricks. The
-examples do not implement bidding, turn-order policy, cryptographic dealing,
-or a live Sasku game.
-
-Expand **Full Sasku hand practice** to run the confirmed auction and play all nine
-tricks through scoring. The shared `SaskuHandController` enforces exact bids,
-on-turn diamonds calls, turns, ownership, following, and winner-led tricks;
-`replaySaskuHand` reproduces the same state. Equal- and unequal-strength public
-example deals let you explore ties, raises, and passer re-entry. This is a
-complete-information local exercise, not a cryptographic deal or a multiplayer
-game, and it does not change your lobby or transcript.
 
 The rules package also provides `SaskuPublicHandController({ dealer })` for public
 progression without opponents' hidden cards. It enforces public turns, auction
@@ -282,7 +267,7 @@ scheduling, and browser integration remain unfinished.
 ## Current Workspaces
 
 - `apps/web`: playable first-round Sasku, authenticated lobby, invitations, public identity
-  fingerprints, signed readiness, relay/peer diagnostics, and public Sasku hand practice
+  fingerprints, signed readiness, relay/peer diagnostics, and a separate scoring reference
 - `packages/encoding`: strict RFC 8949 Core Deterministic CBOR boundary
 - `packages/crypto`: audited-library-backed hashes, randomness, and Ed25519
   identity primitives

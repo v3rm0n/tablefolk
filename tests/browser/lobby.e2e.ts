@@ -121,14 +121,15 @@ test("four isolated browser identities play and recover the first Sasku round ov
       await expect(page.getByText("4 / 4 seated", { exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "Mark ready", exact: true })).toBeEnabled();
     }
-    const identities = await Promise.all(pages.map((page) => page.locator(".identity-strip strong").innerText()));
+    const ownFingerprint = (page: Page) => page.locator(".seat").filter({ has: page.getByRole("heading", { name: /^You/ }) }).locator(".seat__fingerprint").textContent();
+    const identities = await Promise.all(pages.map(ownFingerprint));
     expect(new Set(identities).size).toBe(4);
     await pages[2]!.reload();
     await expect(pages[2]!.getByRole("button", { name: "Join this table" })).toBeEnabled();
     await configureRelay(pages[2]!, relayUrl);
     await pages[2]!.getByRole("button", { name: "Join this table" }).click();
     for (const page of pages) { await expect(page.getByRole("button", { name: "Mark ready", exact: true })).toBeEnabled(); }
-    expect(await pages[2]!.locator(".identity-strip strong").innerText()).toBe(identities[2]);
+    expect(await ownFingerprint(pages[2]!)).toBe(identities[2]);
     await pages[0]!.screenshot({ path: testInfo.outputPath("lobby-desktop.png"), fullPage: true });
     await pages[3]!.setViewportSize({ width: 390, height: 844 });
     await expect.poll(() => pages[3]!.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -175,7 +176,6 @@ test("four isolated browser identities play and recover the first Sasku round ov
     for (const page of pages) await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "bidding", { timeout: 120_000 });
     for (const page of pages) await expect(page.getByLabel("Your private hand").getByRole("button")).toHaveCount(9);
     for (const page of pages) {
-      await expect(page.getByText("Full Sasku hand practice", { exact: false })).not.toBeVisible();
       await expect(page.getByRole("heading", { name: "A lobby, agreed." })).not.toBeVisible();
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
