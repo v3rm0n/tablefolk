@@ -1,0 +1,28 @@
+{
+  "name": "@p2pcards/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "preview": "vite preview",
+    "prepare:shuffle": "node ../../experiments/shuffle-backend/stage-web-candidate.mjs",
+    "predev": "npm run prepare:shuffle",
+    "prebuild": "npm run prepare:shuffle"
+  },
+  "dependencies": {
+    "@p2pcards/crypto": "*",
+    "@p2pcards/encoding": "*",
+    "@p2pcards/protocol": "*",
+    "@p2pcards/rules-sasku": "*",
+    "@p2pcards/session": "*",
+    "@p2pcards/storage": "*",
+    "@p2pcards/transport": "*",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "@p2pcards/engine": "*",
+    "@p2pcards/game-sasku": "*"
+  }
+}

@@ -1,0 +1,35 @@
+[package]
+name = "shuffle-backend-evaluation"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone feasibility experiment, outside the application's npm workspaces.
+[workspace]
+exclude = ["vendor/cards-proofs"]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+ristretto = ["dep:ark-ed25519", "dep:curve25519-dalek"]
+candidate-crs = ["ristretto", "dep:sha2"]
+candidate-transcript = ["candidate-crs", "dep:cards-proofs-sha512"]
+
+[dependencies]
+cards-proofs = { git = "https://github.com/paritytech/mental-poker", rev = "ac4fb67b612aa89f37f6be72ea74a3c13eff66ca" }
+cards-proofs-sha512 = { package = "cards-proofs", path = "vendor/cards-proofs", optional = true }
+ark-ec = "=0.5.0"
+ark-ff = "=0.5.0"
+ark-secp256k1 = "=0.5.0"
+ark-ed25519 = { version = "=0.5.0", default-features = false, optional = true }
+curve25519-dalek = { version = "=4.1.3", optional = true }
+ark-serialize = { version = "=0.5.0", features = ["derive"] }
+rand = "=0.8.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = { version = "=0.10.9", optional = true }
+wasm-bindgen = "=0.2.100"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }

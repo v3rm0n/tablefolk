@@ -1,0 +1,84 @@
+name: Build and deploy Tablefolk
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install JavaScript dependencies
+        run: npm ci
+      - name: Check types
+        run: npm run typecheck
+      - name: Run tests
+        run: npm test -- --maxWorkers=2 --testTimeout=15000
+      - name: Set up pinned Rust toolchain
+        run: rustup toolchain install 1.90.0 --profile minimal --target wasm32-unknown-unknown
+      - name: Cache Rust dependencies and compiler output
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/wasm-bindgen
+            experiments/shuffle-backend/target
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-1.90.0-bindgen-0.2.100-${{ hashFiles('experiments/shuffle-backend/Cargo.lock', 'experiments/shuffle-backend/vendor/cards-proofs/source-manifest.json') }}
+      - name: Verify attributed proof sources
+        run: node experiments/shuffle-backend/verify-vendor.mjs
+      - name: Build candidate shuffle WASM
+        working-directory: experiments/shuffle-backend
+        run: |
+          cargo build --release --locked --features candidate-transcript --lib --target wasm32-unknown-unknown
+          if ! command -v wasm-bindgen >/dev/null || [ "$(wasm-bindgen --version)" != 'wasm-bindgen 0.2.100' ]; then
+            cargo install wasm-bindgen-cli --version 0.2.100 --locked
+          fi
+          wasm-bindgen target/wasm32-unknown-unknown/release/shuffle_backend_evaluation.wasm --target web --out-dir pkg-transcript
+      - name: Build static site
+        run: npm run build
+      - name: Check deployable assets
+        run: |
+          test -s apps/web/dist/index.html
+          test -s apps/web/dist/shuffle-candidate/shuffle_backend_evaluation.js
+          test -s apps/web/dist/shuffle-candidate/shuffle_backend_evaluation_bg.wasm
+      - name: Upload Pages site
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: apps/web/dist
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

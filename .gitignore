@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+*.local
+.DS_Store
+playwright-report/
+test-results/
+apps/web/public/shuffle-candidate/
+
+# Local workspace state and credentials
+/pending_changes.db*
+.env
+.env.*
+!.env.example
+.codex/
+.agents/

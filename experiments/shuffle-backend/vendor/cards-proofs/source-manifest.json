@@ -1,0 +1,225 @@
+{
+  "revision": "ac4fb67b612aa89f37f6be72ea74a3c13eff66ca",
+  "files": {
+    "src/error.rs": {
+      "upstream": "d161cb1777730047af6ee8eee19f1cf0123cb791caa9bc6ee95f64102e74032a",
+      "local": "d161cb1777730047af6ee8eee19f1cf0123cb791caa9bc6ee95f64102e74032a"
+    },
+    "src/homomorphic_encryption/el_gamal/arithmetic_definitions/ciphertext.rs": {
+      "upstream": "f01ecaee9673e6edbd3b7afb45742be26ca62823299ecb924e1f42b34c6b331e",
+      "local": "f01ecaee9673e6edbd3b7afb45742be26ca62823299ecb924e1f42b34c6b331e"
+    },
+    "src/homomorphic_encryption/el_gamal/arithmetic_definitions/mod.rs": {
+      "upstream": "4101530bc5208a44fd0d4d3a0f64d7e46d8e410ab352cde5d9180d0291527058",
+      "local": "4101530bc5208a44fd0d4d3a0f64d7e46d8e410ab352cde5d9180d0291527058"
+    },
+    "src/homomorphic_encryption/el_gamal/arithmetic_definitions/plaintext.rs": {
+      "upstream": "d588c83d2d351063ce2d1a5dd9468aeab5c523f4ce9cedb9fdfc26e281acf5de",
+      "local": "d588c83d2d351063ce2d1a5dd9468aeab5c523f4ce9cedb9fdfc26e281acf5de"
+    },
+    "src/homomorphic_encryption/el_gamal/mod.rs": {
+      "upstream": "1b4d9bb257c4deb1f4f50fda2811044bb60922e59d268e8250b883705497c952",
+      "local": "1b4d9bb257c4deb1f4f50fda2811044bb60922e59d268e8250b883705497c952"
+    },
+    "src/homomorphic_encryption/el_gamal/tests.rs": {
+      "upstream": "97142f23e643f52c3a059a1b13809fca39c584a1542ccc5e29d74bd570d99771",
+      "local": "97142f23e643f52c3a059a1b13809fca39c584a1542ccc5e29d74bd570d99771"
+    },
+    "src/homomorphic_encryption/mod.rs": {
+      "upstream": "ccd0af9335c512d71b38cd531a003d463ad995d140dcd1ed491601f1eeb6ac33",
+      "local": "ccd0af9335c512d71b38cd531a003d463ad995d140dcd1ed491601f1eeb6ac33"
+    },
+    "src/lib.rs": {
+      "upstream": "8cb69ee6c3e46e9f776c76973bb01cef66a8c38f1f4b3ab7cf44b12bf82192c8",
+      "local": "6ed79b47ed43a4aea44ebb73a91db8af75a5fda8e61a2bd016823c4cbfe93418"
+    },
+    "src/transcript.rs": {
+      "upstream": null,
+      "local": "03d6cf6de0c5b911e79c8bee672485939a6c2856ed918881e6893dab0c2d2837"
+    },
+    "src/utils/cow.rs": {
+      "upstream": "10b6f3d6871e84ab596f45ed70abf72101138160fe3712839ce10f97d021c31a",
+      "local": "10b6f3d6871e84ab596f45ed70abf72101138160fe3712839ce10f97d021c31a"
+    },
+    "src/utils/mod.rs": {
+      "upstream": "d94e70482975e4a056b485b5e4a2359236566993bf03432ad76202b680c3c9bd",
+      "local": "d94e70482975e4a056b485b5e4a2359236566993bf03432ad76202b680c3c9bd"
+    },
+    "src/utils/permutation.rs": {
+      "upstream": "158a4d125711dbfbd299716bcfda66b318947b3cfefcc4213e9b01db1659a5c8",
+      "local": "158a4d125711dbfbd299716bcfda66b318947b3cfefcc4213e9b01db1659a5c8"
+    },
+    "src/utils/rand.rs": {
+      "upstream": "965e45cc69b1c2c859f8b285122fc9d43aded381b30605e361024d26927a2231",
+      "local": "965e45cc69b1c2c859f8b285122fc9d43aded381b30605e361024d26927a2231"
+    },
+    "src/utils/vector_arithmetic.rs": {
+      "upstream": "306c34d9381b193a3770a618f8ec9bc8106a5c803fe497ceb85c8182a97a2684",
+      "local": "306c34d9381b193a3770a618f8ec9bc8106a5c803fe497ceb85c8182a97a2684"
+    },
+    "src/vector_commitment/mod.rs": {
+      "upstream": "6b107e39fef98794ae89e2cfbe9cf995e1ae425437dde51ae11361af6ab651e6",
+      "local": "6b107e39fef98794ae89e2cfbe9cf995e1ae425437dde51ae11361af6ab651e6"
+    },
+    "src/vector_commitment/pedersen/arithmetic_definitions/commitment.rs": {
+      "upstream": "63afd268165e04b2a8daf0ed7cf2c1ef7ae777ccd7c45800e0758b4f04240564",
+      "local": "63afd268165e04b2a8daf0ed7cf2c1ef7ae777ccd7c45800e0758b4f04240564"
+    },
+    "src/vector_commitment/pedersen/arithmetic_definitions/mod.rs": {
+      "upstream": "9f065ff1552d8aef8f759ea177f3edad4521cb1d5559b5e5b435b3f242dc35fe",
+      "local": "9f065ff1552d8aef8f759ea177f3edad4521cb1d5559b5e5b435b3f242dc35fe"
+    },
+    "src/vector_commitment/pedersen/mod.rs": {
+      "upstream": "6f3cdfdf22a603f0286cce7b33d8cecc76568ac1a279755000c5860bbabeb2a4",
+      "local": "6f3cdfdf22a603f0286cce7b33d8cecc76568ac1a279755000c5860bbabeb2a4"
+    },
+    "src/vector_commitment/pedersen/tests.rs": {
+      "upstream": "adca4836d789755e832ec98ec21bb907c743e9541dbb43ac557afdd294b7ac02",
+      "local": "adca4836d789755e832ec98ec21bb907c743e9541dbb43ac557afdd294b7ac02"
+    },
+    "src/zkp/arguments/hadamard_product/mod.rs": {
+      "upstream": "da9ef738a43794f4a04a22ec1735641546b48ca254ba6a4a4726048b74f29be0",
+      "local": "da9ef738a43794f4a04a22ec1735641546b48ca254ba6a4a4726048b74f29be0"
+    },
+    "src/zkp/arguments/hadamard_product/proof.rs": {
+      "upstream": "c2484f1b8036478b3d1daa55278942791b1dba00d34f2618e1beffb9f3a416c2",
+      "local": "c2484f1b8036478b3d1daa55278942791b1dba00d34f2618e1beffb9f3a416c2"
+    },
+    "src/zkp/arguments/hadamard_product/prover.rs": {
+      "upstream": "eb7d45ca592ad4db35eac5297e69c2b0594e5bd487f7e1eaea09fafa820218c8",
+      "local": "eb7d45ca592ad4db35eac5297e69c2b0594e5bd487f7e1eaea09fafa820218c8"
+    },
+    "src/zkp/arguments/hadamard_product/tests.rs": {
+      "upstream": "57ef38276766eda47d0b2e9d33f199008334f6bb9c1fa3653524f2e1ebfb5284",
+      "local": "57ef38276766eda47d0b2e9d33f199008334f6bb9c1fa3653524f2e1ebfb5284"
+    },
+    "src/zkp/arguments/m_by_n.rs": {
+      "upstream": "748e82edf1191a4222e66250e0ea5bee9915578cdad8ddf66ee279b726e9657d",
+      "local": "748e82edf1191a4222e66250e0ea5bee9915578cdad8ddf66ee279b726e9657d"
+    },
+    "src/zkp/arguments/matrix_elements_product/mod.rs": {
+      "upstream": "bed2b097709eb6358c85e0806b766535a06583280d1f09bdead23430adec73a9",
+      "local": "bed2b097709eb6358c85e0806b766535a06583280d1f09bdead23430adec73a9"
+    },
+    "src/zkp/arguments/matrix_elements_product/proof.rs": {
+      "upstream": "db8f866c7ac01c4866349c4d22b9d3e6428bce2aa01c27b9b281d9ef006b68e1",
+      "local": "db8f866c7ac01c4866349c4d22b9d3e6428bce2aa01c27b9b281d9ef006b68e1"
+    },
+    "src/zkp/arguments/matrix_elements_product/prover.rs": {
+      "upstream": "1dfff6b30148781bb26ef579538a5c1876303b7ae3aa52daaa383a64ac156101",
+      "local": "c3b9c21a733637b817bdf5648e6183c350fbee4b09185d6061e06cb7d9d6dbd6"
+    },
+    "src/zkp/arguments/matrix_elements_product/tests.rs": {
+      "upstream": "4325c6550fa832b5059a4c130c97fa1055700c445c2eb3b75601db2836741fc1",
+      "local": "4325c6550fa832b5059a4c130c97fa1055700c445c2eb3b75601db2836741fc1"
+    },
+    "src/zkp/arguments/mod.rs": {
+      "upstream": "20d777464d2c07f194e12715a2bc5d8b93b21a07e4d8ddaaac0ea368b72eaa90",
+      "local": "20d777464d2c07f194e12715a2bc5d8b93b21a07e4d8ddaaac0ea368b72eaa90"
+    },
+    "src/zkp/arguments/multi_exponentiation/mod.rs": {
+      "upstream": "f4380e9b2f6e124c89eadc0b3fdf48cf9a67fcf1f02ef34d5ee8fcab72f73001",
+      "local": "f4380e9b2f6e124c89eadc0b3fdf48cf9a67fcf1f02ef34d5ee8fcab72f73001"
+    },
+    "src/zkp/arguments/multi_exponentiation/proof.rs": {
+      "upstream": "98cbc93d987050dd604c1f6d5c2037989b9255dc7a4349cf94d1ff7a4c9da8f3",
+      "local": "98cbc93d987050dd604c1f6d5c2037989b9255dc7a4349cf94d1ff7a4c9da8f3"
+    },
+    "src/zkp/arguments/multi_exponentiation/prover.rs": {
+      "upstream": "64606cef2b1b7f66e454d8aa83bb3b1a52653cf5eb098afb574d67699931adca",
+      "local": "64606cef2b1b7f66e454d8aa83bb3b1a52653cf5eb098afb574d67699931adca"
+    },
+    "src/zkp/arguments/multi_exponentiation/tests.rs": {
+      "upstream": "ae9175faa862f7ec6b9f669cd5a0a7f8b47bea273aa2a96e664503836c4d7e00",
+      "local": "ae9175faa862f7ec6b9f669cd5a0a7f8b47bea273aa2a96e664503836c4d7e00"
+    },
+    "src/zkp/arguments/shuffle/mod.rs": {
+      "upstream": "db8ac3517a6739dca52d62677e97cde346b2beaa260603a0aa4347d178d00ba4",
+      "local": "db8ac3517a6739dca52d62677e97cde346b2beaa260603a0aa4347d178d00ba4"
+    },
+    "src/zkp/arguments/shuffle/proof.rs": {
+      "upstream": "a7620b8cfe92d7356ccc0754abda2fc94f2bbe234a3b6233252f4ccc82272e8d",
+      "local": "a7620b8cfe92d7356ccc0754abda2fc94f2bbe234a3b6233252f4ccc82272e8d"
+    },
+    "src/zkp/arguments/shuffle/prover.rs": {
+      "upstream": "9a65217da443abfa47f635eea7d69ddea465c8ea654d0663362851bc2ea64d56",
+      "local": "9a65217da443abfa47f635eea7d69ddea465c8ea654d0663362851bc2ea64d56"
+    },
+    "src/zkp/arguments/shuffle/tests.rs": {
+      "upstream": "a308169a359b0501de05d8b0909e928c56bd1fcda419cc5576e70d274423383b",
+      "local": "a308169a359b0501de05d8b0909e928c56bd1fcda419cc5576e70d274423383b"
+    },
+    "src/zkp/arguments/single_value_product/mod.rs": {
+      "upstream": "b733ab3972d1e29e1e6bf18c6f3768efae501ec5e0faeb59263e6e344ec73972",
+      "local": "b733ab3972d1e29e1e6bf18c6f3768efae501ec5e0faeb59263e6e344ec73972"
+    },
+    "src/zkp/arguments/single_value_product/proof.rs": {
+      "upstream": "469be6ae2259dc140c24564b13d09e93e6c796554c0b13214d1b47fa1228bc8c",
+      "local": "469be6ae2259dc140c24564b13d09e93e6c796554c0b13214d1b47fa1228bc8c"
+    },
+    "src/zkp/arguments/single_value_product/prover.rs": {
+      "upstream": "ed2ec40e3a04c035a922ffffa92bfd70eb1cd8060d4dd93b5d7b54175a84fd83",
+      "local": "ed2ec40e3a04c035a922ffffa92bfd70eb1cd8060d4dd93b5d7b54175a84fd83"
+    },
+    "src/zkp/arguments/single_value_product/tests.rs": {
+      "upstream": "dc588a7a2fb00a78e022a62a3df0586967f5f72d6b0ef8c6534d8936d3d4ce84",
+      "local": "dc588a7a2fb00a78e022a62a3df0586967f5f72d6b0ef8c6534d8936d3d4ce84"
+    },
+    "src/zkp/arguments/zero_value_bilinear_map/mod.rs": {
+      "upstream": "7ab58ea3eb4d4e3c2387276187f8b21d89528c2d8251979124927b3d8901c27e",
+      "local": "7ab58ea3eb4d4e3c2387276187f8b21d89528c2d8251979124927b3d8901c27e"
+    },
+    "src/zkp/arguments/zero_value_bilinear_map/proof.rs": {
+      "upstream": "b67fd88377a1b22991b44523dd8259e6aa84d349107ae8a9902af8bf17706469",
+      "local": "b67fd88377a1b22991b44523dd8259e6aa84d349107ae8a9902af8bf17706469"
+    },
+    "src/zkp/arguments/zero_value_bilinear_map/prover.rs": {
+      "upstream": "6235915838458740e8f942035d43b2e43c629f9dc82346888f70fb628982d84b",
+      "local": "6235915838458740e8f942035d43b2e43c629f9dc82346888f70fb628982d84b"
+    },
+    "src/zkp/arguments/zero_value_bilinear_map/tests.rs": {
+      "upstream": "311b2e500af01e3d66868fef95213bf0926703858c9ba061ab773c6371160590",
+      "local": "311b2e500af01e3d66868fef95213bf0926703858c9ba061ab773c6371160590"
+    },
+    "src/zkp/mod.rs": {
+      "upstream": "a1549e7fc5f19c1547f788b001aca4b21627cc6f69099a86d22c15784d982ca1",
+      "local": "202bac1b79f7902d9672a7bd70d568a096030e63b575a969cb7c936ecaaf8204"
+    },
+    "src/zkp/proofs/chaum_pedersen_dl_equality/mod.rs": {
+      "upstream": "54c9e5df7cbbe39365036a9e62782f8c0d6cbf4dbce31d89ab575e98f342a884",
+      "local": "54c9e5df7cbbe39365036a9e62782f8c0d6cbf4dbce31d89ab575e98f342a884"
+    },
+    "src/zkp/proofs/chaum_pedersen_dl_equality/proof.rs": {
+      "upstream": "6457335b5d934f441202fee490e5446529a66168398c0916735646ea9f8dfa8a",
+      "local": "6457335b5d934f441202fee490e5446529a66168398c0916735646ea9f8dfa8a"
+    },
+    "src/zkp/proofs/chaum_pedersen_dl_equality/prover.rs": {
+      "upstream": "f613b90db5ac16731c338a07299c0d4a7ad4e6f7d82f3f6f3f0dcc6b148b2b68",
+      "local": "f613b90db5ac16731c338a07299c0d4a7ad4e6f7d82f3f6f3f0dcc6b148b2b68"
+    },
+    "src/zkp/proofs/chaum_pedersen_dl_equality/test.rs": {
+      "upstream": "1719dacab7870a43c1014d850e0d0d0c93aa95ecb25a77550154ddb70bc2f6dd",
+      "local": "1719dacab7870a43c1014d850e0d0d0c93aa95ecb25a77550154ddb70bc2f6dd"
+    },
+    "src/zkp/proofs/mod.rs": {
+      "upstream": "06990f928cdee3796e1ce073fe7d03aae6d907744ee6a3f3e4f2c90161ad324b",
+      "local": "06990f928cdee3796e1ce073fe7d03aae6d907744ee6a3f3e4f2c90161ad324b"
+    },
+    "src/zkp/proofs/schnorr_identification/mod.rs": {
+      "upstream": "dfe3fc51b216ccc3d4ebc365a3fee108dfd42a682a2701d319bef79914c4d4c0",
+      "local": "dfe3fc51b216ccc3d4ebc365a3fee108dfd42a682a2701d319bef79914c4d4c0"
+    },
+    "src/zkp/proofs/schnorr_identification/proof.rs": {
+      "upstream": "5ecff0967419688ae60b8373a188e11886533ba8f8f1d5aefe33603d1ab06886",
+      "local": "5ecff0967419688ae60b8373a188e11886533ba8f8f1d5aefe33603d1ab06886"
+    },
+    "src/zkp/proofs/schnorr_identification/prover.rs": {
+      "upstream": "b263e910402a0948960f7c2112254a11db9d0322973ebe6f92798cef25fa9906",
+      "local": "b263e910402a0948960f7c2112254a11db9d0322973ebe6f92798cef25fa9906"
+    },
+    "src/zkp/proofs/schnorr_identification/test.rs": {
+      "upstream": "323539bfe5376750656ec4023bfae0300a9716d0c2e90663feebe1fe6687d5c4",
+      "local": "323539bfe5376750656ec4023bfae0300a9716d0c2e90663feebe1fe6687d5c4"
+    }
+  }
+}
