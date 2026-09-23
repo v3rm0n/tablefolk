@@ -38,6 +38,7 @@ h1, h2, h3 { font-family: var(--serif); font-weight: 500; }
 h1 { font-size: clamp(3.7rem, 7.5vw, 7rem); line-height: 0.96; letter-spacing: -0.065em; margin: 0; }
 h1 em { color: var(--felt); font-weight: 500; }
 .lede { max-width: 31rem; margin: 1.5rem 0; font-size: clamp(1.05rem, 1.5vw, 1.25rem); }
+.welcome__links { display: flex; flex-wrap: wrap; gap: 0.75rem 2rem; }
 .reference-link { display: inline-flex; gap: 0.5rem; align-items: center; font-size: 0.88rem; font-weight: 700; text-underline-offset: 0.25em; }
 .entry-panel { border-top: 3px solid var(--felt); background: var(--paper); padding: clamp(1.4rem, 3vw, 2.7rem); }
 h2 { font-size: clamp(2rem, 3.4vw, 3rem); letter-spacing: -0.045em; line-height: 1.04; margin: 0 0 1.7rem; }
@@ -112,6 +113,36 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .event-log { padding-left: 1.25rem; margin-top: 2rem; font-size: 0.75rem; line-height: 1.7; overflow-wrap: anywhere; }
 .shell--reference { max-width: 1180px; }
 .reference-back { display: inline-block; margin-bottom: clamp(2rem, 6vw, 5rem); font-size: 0.85rem; font-weight: 700; text-underline-offset: 0.25em; }
+.shell--technical { max-width: 1120px; padding-bottom: 5rem; }
+.technical-hero { padding-bottom: clamp(3rem, 6vw, 5rem); border-bottom: 1px solid var(--line); }
+.technical-hero h1 { font-size: clamp(3.5rem, 7vw, 6.5rem); }
+.technical-lede { max-width: 46rem; margin: 1.8rem 0 0; font-size: clamp(1.08rem, 1.5vw, 1.3rem); }
+.technical-boundary, .technical-flow, .technical-scope { padding-block: clamp(2.5rem, 5vw, 4.5rem); }
+.technical-boundary, .technical-flow { border-bottom: 1px solid var(--line); }
+.technical-section-heading { display: grid; grid-template-columns: minmax(0, 0.42fr) minmax(0, 1fr); gap: 2rem; align-items: start; margin-bottom: 2rem; }
+.technical-section-heading .eyebrow { margin-top: 0.45rem; }
+.technical-section-heading h2 { max-width: 18ch; margin: 0; }
+.technical-boundary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.technical-boundary-card { min-width: 0; background: var(--paper); border-top: 3px solid var(--rust); padding: clamp(1.5rem, 3vw, 2.5rem); }
+.technical-boundary-card--private { border-color: var(--felt); }
+.technical-boundary-card h3 { margin: 0 0 0.8rem; font-size: 1.8rem; }
+.technical-boundary-card p { max-width: 35rem; margin: 0; font-size: 0.92rem; }
+.technical-recovery { max-width: 45rem; margin: 1.5rem 0 0; font-size: 0.87rem; }
+.technical-steps { list-style: none; padding: 0; margin: 0; }
+.technical-steps li { display: grid; grid-template-columns: minmax(0, 0.42fr) minmax(0, 1fr); gap: 2rem; border-top: 1px solid var(--line); padding-block: 1.6rem; }
+.technical-step-number { color: var(--rust); font: italic 2rem var(--serif); }
+.technical-steps h3 { margin: 0 0 0.5rem; font-size: clamp(1.5rem, 2.4vw, 2rem); }
+.technical-steps p { max-width: 42rem; margin: 0; font-size: 0.92rem; }
+.technical-key { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr); gap: clamp(2rem, 5vw, 5rem); margin-block: clamp(2.5rem, 5vw, 4.5rem); padding: clamp(1.5rem, 4vw, 3rem); background: var(--felt); color: var(--paper); }
+.technical-key .eyebrow { color: oklch(89% 0.05 82deg); }
+.technical-key h2 { margin: 0; }
+.technical-key-example p { margin: 0; padding-block: 0.85rem; border-bottom: 1px solid oklch(89% 0.05 82deg / 0.4); font-size: 0.9rem; }
+.technical-key-example p:first-child { border-top: 1px solid oklch(89% 0.05 82deg / 0.4); }
+.technical-scope { max-width: 52rem; padding-top: 0; }
+.technical-scope h2 { margin-bottom: 1.25rem; }
+.technical-scope > p:not(.eyebrow) { font-size: 0.95rem; }
+.technical-next { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem 2rem; margin-top: 2rem; }
+.technical-next .button { min-width: 12rem; }
 .scoring-reference { padding-bottom: 2rem; }
 .scoring-intro { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; align-items: center; padding-top: 2.5rem; }
 .scoring-intro h1 { font-size: clamp(3rem, 6vw, 5.5rem); }
@@ -161,6 +192,10 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
   .diagnostics__columns { grid-template-columns: 1fr; gap: 1.5rem; }
   .scoring-layout, .scoring-intro, .scoring-rules { grid-template-columns: 1fr; gap: 1.5rem; }
   .scoring-intro > p { margin-top: 0; }
+  .technical-section-heading, .technical-steps li, .technical-key { grid-template-columns: 1fr; gap: 0.8rem; }
+  .technical-section-heading { margin-bottom: 1.5rem; }
+  .technical-section-heading .eyebrow { margin-top: 0; }
+  .technical-key { gap: 1.5rem; }
 }
 @media (max-width: 480px) {
   h1 { font-size: clamp(3.2rem, 13vw, 4.5rem); }
@@ -179,6 +214,9 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
   .connection-list .button { min-height: 2.6rem; max-width: 7rem; text-align: left; }
   .scoring-totals, .partnership-labels { gap: 0.6rem; }
   .scoring-controls select { font-size: 0.77rem; padding: 0.7rem 0.4rem; }
+  .technical-hero h1 { font-size: clamp(3rem, 12vw, 4rem); }
+  .technical-boundary-grid { grid-template-columns: 1fr; }
+  .technical-steps li { gap: 0.2rem; }
   .hand-action-buttons .button { flex: 1 1 auto; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }

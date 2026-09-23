@@ -45,7 +45,10 @@ export function App({ controller }: { readonly controller: BrowserLobbyActions }
             <p className="eyebrow">Tablefolk · Sasku</p>
             <h1 id="welcome-title">Play Sasku<br /><em>together.</em></h1>
             <p className="lede">A four-player partnership trick-taking game. Bid for trump, play nine tricks, and score with your partner.</p>
-            <a className="reference-link" href="./scoring.html">Scoring reference <span aria-hidden="true">→</span></a>
+            <div className="welcome__links">
+              <a className="reference-link" href="./how-it-works.html">How it works <span aria-hidden="true">→</span></a>
+              <a className="reference-link" href="./scoring.html">Scoring reference <span aria-hidden="true">→</span></a>
+            </div>
           </div>
           <div className="entry-panel">
             <h2>Start a game</h2>

@@ -146,6 +146,16 @@ inconsistent point/trick totals and distinguishes named diamonds from diamonds
 by default. These manual examples are not played or verified game results and
 do not modify the lobby or transcript.
 
+## How the peer-to-peer game works
+
+Open **How it works** from the landing page, or visit `how-it-works.html`, for a
+technical walkthrough of authenticated peer connections, the jointly shuffled
+encrypted deck, private dealing through decryption shares, card reveals, and the
+final hand audit. It explains the boundary clearly: unrevealed cards stay private
+under the protocol's cryptographic assumptions, while bids and played cards are
+public. The current shuffle proof backend remains experimental and awaits
+independent review.
+
 The rules package also provides `SaskuPublicHandController({ dealer })` for public
 progression without opponents' hidden cards. It enforces public turns, auction
 constraints, unique plays, and trick resolution, exposing only a `provisionalScore`.
