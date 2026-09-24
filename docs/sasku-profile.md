@@ -95,10 +95,10 @@ seven regardless of the courts' printed suits. Valid nine-card hands have
 strengths from three through nine.
 
 Bidding starts at `(dealer + 1) mod 4` and advances in cyclic seat order 0, 1, 2,
-3. On a bidding turn, a player may pass, make an exact-strength bid strictly
+3. On a bidding turn, a player may pass, make a bid up to their hand strength and strictly
 higher than the current high bid, or call diamonds immediately. Equal bids
 cannot displace the first bidder. Passing does not eliminate a player; a prior
-passer can later bid if their exact strength beats the current high bid. Advice
+passer can later bid if their hand strength beats the current high bid. Advice
 against outbidding a partner is not a prohibition.
 
 Every successful numerical raise resets consecutive passes. Three consecutive
@@ -128,7 +128,7 @@ Actions have explicit `type` and `seat`, with only the fields for that action:
 These remain local API actions. The positional wire adapter below maps the
 supported `ACTION` payloads to them after separate authority and reveal checks.
 The controller enforces the expected seat and phase, rejects unknown
-or extra action fields, checks exact bids and ownership, and applies the confirmed
+or extra action fields, checks bids against hand strength and ownership, and applies the confirmed
 effective-suit following rule. Validation computes a new private state before
 committing it, so any rejected action leaves the current state and history intact.
 `preview(action)` returns the prospective public snapshot without mutation;
@@ -315,7 +315,7 @@ turn. Intent fields are limited to `type` and, when needed, bid `value`, trump
 `suit`, or encrypted-deck `position`; callers cannot claim an actor or plaintext
 card identity.
 
-Before generating a play proof or signing, local checks enforce exact bid
+Before generating a play proof or signing, local checks enforce maximum bid
 strength and effective-suit following as well as public turn/phase legality and
 ownership. Remote actions still receive only the public checks until audit;
 local preflight does not give the receiver opponents' private cards. A successful

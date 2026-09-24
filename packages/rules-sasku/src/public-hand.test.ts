@@ -77,14 +77,14 @@ describe("Sasku public-only hand progression", () => {
     expect(() => game.apply({ type: "diamonds", seat: 0 })).toThrow(/Only card plays/);
   });
 
-  it("rejects a previously declared bidder changing their exact strength without knowing the deal", () => {
+  it("rejects a previously declared bidder changing their bid without knowing the deal", () => {
     const game = new SaskuPublicHandController({ dealer: 3 });
     game.apply({ type: "bid", seat: 0, value: 3 });
     game.apply({ type: "bid", seat: 1, value: 4 });
     game.apply({ type: "pass", seat: 2 });
     game.apply({ type: "pass", seat: 3 });
     const before = game.snapshot;
-    expect(() => game.apply({ type: "bid", seat: 0, value: 7 })).toThrow(/exact bid cannot change/);
+    expect(() => game.apply({ type: "bid", seat: 0, value: 7 })).toThrow(/bid cannot change/);
     expect(game.snapshot).toEqual(before);
     game.apply({ type: "diamonds", seat: 0 });
     expect(game.snapshot.contract).toEqual({ kind: "named", suit: "diamonds", declarerSeat: 0 });
@@ -173,12 +173,16 @@ describe("Sasku disclosed-hand audit", () => {
     expect(() => auditSaskuHand(initial, [...reference.history, { type: "pass", seat: 0 }])).toThrow(/complete/);
   });
 
-  it.each([3, 5, 7, 9])("detects a publicly admissible false exact bid of %i", (value) => {
+  it("accepts a bid below the hand maximum but detects an overbid at audit", () => {
     const initial = setup(3);
+    const maximum = saskuBidStrength(initial.hands[0]);
     const publicHand = new SaskuPublicHandController({ dealer: 3 });
-    publicHand.apply({ type: "bid", seat: 0, value });
-    expect(publicHand.snapshot.highestBid?.value).toBe(value);
-    expect(auditSaskuHand(initial, publicHand.history)).toEqual({ status: "violation", seat: 0, at: 0, rule: "bid_strength" });
+    publicHand.apply({ type: "bid", seat: 0, value: 3 });
+    expect(auditSaskuHand(initial, publicHand.history)).toMatchObject({ status: "incomplete" });
+    const overbid = new SaskuPublicHandController({ dealer: 3 });
+    overbid.apply({ type: "bid", seat: 0, value: maximum + 1 });
+    expect(overbid.snapshot.highestBid?.value).toBe(maximum + 1);
+    expect(auditSaskuHand(initial, overbid.history)).toEqual({ status: "violation", seat: 0, at: 0, rule: "bid_strength" });
   });
 
   it.each([
@@ -208,7 +212,7 @@ describe("Sasku disclosed-hand audit", () => {
   it("reports the first hidden violation deterministically without mutating the deal or history", () => {
     const initial = setup(3);
     const actions: readonly SaskuHandAction[] = Object.freeze([
-      Object.freeze({ type: "bid", seat: 0, value: 3 } as const),
+      Object.freeze({ type: "bid", seat: 0, value: 9 } as const),
       Object.freeze({ type: "diamonds", seat: 1 } as const),
       Object.freeze({ type: "play", seat: 1, card: "6C" } as const),
     ]);
@@ -240,7 +244,7 @@ describe("Sasku disclosed-hand audit", () => {
     expect(() => auditSaskuHand(initial, new Array<SaskuHandAction>(MAX_SASKU_HAND_ACTIONS + 1))).toThrow(/oversized/);
     expect(() => auditSaskuHand(initial, new Array<SaskuHandAction>(1))).toThrow(/action/);
     expect(() => auditSaskuHand(initial, [{ type: "pass", seat: 1 }])).toThrow(/expected seat/);
-    const invalidTail = [{ type: "bid", seat: 0, value: 3 }, { type: "pass", seat: 3 }] as const;
+    const invalidTail = [{ type: "bid", seat: 0, value: 9 }, { type: "pass", seat: 3 }] as const;
     expect(() => auditSaskuHand(initial, invalidTail)).toThrow(/expected seat/);
     expect(() => auditSaskuHand(initial, [
       { type: "diamonds", seat: 0 }, { type: "play", seat: 0, card: "6C" }, { type: "play", seat: 1, card: "6C" },
@@ -249,7 +253,7 @@ describe("Sasku disclosed-hand audit", () => {
 
   it("preserves structured private-rule errors in the complete-information controller", () => {
     const cases: readonly { prefix: readonly SaskuHandAction[]; action: SaskuHandAction; rule: SaskuHandAuditRule }[] = [
-      { prefix: [], action: { type: "bid", seat: 0, value: 3 }, rule: "bid_strength" },
+      { prefix: [], action: { type: "bid", seat: 0, value: 9 }, rule: "bid_strength" },
       { prefix: [{ type: "diamonds", seat: 0 }], action: { type: "play", seat: 0, card: "7C" }, rule: "card_ownership" },
       { prefix: [{ type: "diamonds", seat: 0 }, { type: "play", seat: 0, card: "6C" }], action: { type: "play", seat: 1, card: "JC" }, rule: "follow_suit" },
     ];

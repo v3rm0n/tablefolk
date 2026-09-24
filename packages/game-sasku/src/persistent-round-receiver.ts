@@ -394,8 +394,8 @@ export class PersistentSaskuRoundReceiver {
       action = { type: "play", seat, card };
     } else { action = { ...intent, seat }; }
     this.#hand.preview(action);
-    if (action.type === "bid" && action.value !== saskuBidStrength(Object.values(privateHand.dealt))) {
-      throw new SaskuHandError("A bid must equal the player's exact calculated hand strength", "bid_strength");
+    if (action.type === "bid" && action.value > saskuBidStrength(Object.values(privateHand.dealt))) {
+      throw new SaskuHandError("A bid cannot exceed the player's calculated hand strength", "bid_strength");
     }
     if (action.type === "play") {
       const contract = expected.hand.contract!;

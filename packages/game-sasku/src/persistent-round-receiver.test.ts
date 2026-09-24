@@ -743,7 +743,7 @@ async function completeHand(c: Awaited<ReturnType<typeof context>>, mode: "valid
   const messages: EnvelopeArtifact[] = [];
   let violation: Extract<SaskuHandAuditResult, { status: "violation" }> | null = null;
   if (mode === "false_bid") {
-    messages.push(c.f.action(0, [], 0, "bid", { value: saskuBidStrength(hands[0]) === 3 ? 4 : 3 }));
+    messages.push(c.f.action(0, [], 0, "bid", { value: saskuBidStrength(hands[0]) + 1 }));
     await c.game.receive(messages.at(-1)!);
     violation = { status: "violation", seat: 0, at: 0, rule: "bid_strength" };
   }

@@ -1096,7 +1096,7 @@ work and wire capacity, not the complete JavaScript heap.
 
 Execution requires the complete committed initial deal. Public rule preview
 checks the turn, phase, auction progression, and play shape. Private checks also
-require the exact original-hand bid strength, scheduled ownership of an unplayed
+require bids no higher than the original-hand strength, scheduled ownership of an unplayed
 position, and effective-suit following. Invalid local moves reach neither signing
 nor proof randomness. Auction actions contain no reveals/shares. A play generates
 exactly one fresh owner DLEQ proof under its current game, round, and action phase,

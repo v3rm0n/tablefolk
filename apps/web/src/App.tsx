@@ -15,6 +15,7 @@ export function App({ controller }: { readonly controller: BrowserLobbyActions }
   useEffect(() => { if (playing) { roundHeading.current?.focus({ preventScroll: true }); window.scrollTo({ top: 0 }); } }, [playing]);
   const busy = state.busy !== null;
   const room = state.room;
+  const invited = room === null && state.pendingInvitation !== "" && window.location.hash !== "";
   const readyCount = room?.seats.filter((seat) => seat.ready).length ?? 0;
   const act = (operation: Promise<void>): void => { void operation.catch(() => undefined); };
   const join = (event: FormEvent): void => {
@@ -40,30 +41,44 @@ export function App({ controller }: { readonly controller: BrowserLobbyActions }
 
       {state.game && controller.playAction && <div ref={roundHeading} tabIndex={-1} className="live-focus"><LiveSaskuRound view={state.game} act={intent => controller.playAction!(intent)} /></div>}
       {room === null ? (
-        <section className="welcome" aria-labelledby="welcome-title">
+        <section className={`welcome${invited ? " welcome--invited" : ""}`} aria-labelledby="welcome-title">
           <div className="welcome__copy">
-            <p className="eyebrow">Tablefolk · Sasku</p>
-            <h1 id="welcome-title">Play Sasku<br /><em>together.</em></h1>
-            <p className="lede">A four-player partnership trick-taking game. Bid for trump, play nine tricks, and score with your partner.</p>
-            <div className="welcome__links">
-              <a className="reference-link" href="./how-it-works.html">How it works <span aria-hidden="true">→</span></a>
-              <a className="reference-link" href="./scoring.html">Scoring reference <span aria-hidden="true">→</span></a>
-            </div>
+            {invited ? <>
+              <p className="eyebrow">Invitation received</p>
+              <h1 id="welcome-title">You're invited<br /><em>to Sasku.</em></h1>
+              <p className="lede">Take your seat in a private four-player game.</p>
+            </> : <>
+              <p className="eyebrow">Tablefolk · Sasku</p>
+              <h1 id="welcome-title">Play Sasku<br /><em>together.</em></h1>
+              <p className="lede">A four-player partnership trick-taking game. Bid for trump, play nine tricks, and score with your partner.</p>
+              <div className="welcome__links">
+                <a className="reference-link" href="./how-it-works.html">How it works <span aria-hidden="true">→</span></a>
+                <a className="reference-link" href="./scoring.html">Scoring reference <span aria-hidden="true">→</span></a>
+              </div>
+            </>}
           </div>
           <div className="entry-panel">
-            <h2>Start a game</h2>
-            <button className="button button--primary" disabled={busy || state.identity === null} onClick={() => act(controller.create(relays))}>
-              {state.busy === "hosting" ? "Opening table..." : "Open a table"}<span aria-hidden="true">+</span>
-            </button>
-            <div className="entry-divider"><span>or join a table</span></div>
-            <form onSubmit={join}>
-              <label htmlFor="invitation">Invitation link</label>
-              <textarea id="invitation" value={invitation} onChange={(event) => setInvitation(event.target.value)} required maxLength={4096}
-                placeholder="Paste the invitation from your host" rows={2} disabled={busy} autoCapitalize="none" spellCheck={false} />
-              <button className="button button--secondary" disabled={busy || state.identity === null || invitation.trim() === ""}>
-                {state.busy === "joining" ? "Joining table..." : "Join this table"}
+            {invited ? <>
+              <h2>Join the table</h2>
+              <button className="button button--primary" disabled={busy || state.identity === null} onClick={() => act(controller.join(invitation, relays))}>
+                {state.busy === "joining" ? "Joining table..." : "Join this table"}<span aria-hidden="true">→</span>
               </button>
-            </form>
+              <button className="entry-alternative" disabled={busy || state.identity === null} onClick={() => act(controller.create(relays))}>Open a new table instead</button>
+            </> : <>
+              <h2>Start a game</h2>
+              <button className="button button--primary" disabled={busy || state.identity === null} onClick={() => act(controller.create(relays))}>
+                {state.busy === "hosting" ? "Opening table..." : "Open a table"}<span aria-hidden="true">+</span>
+              </button>
+              <div className="entry-divider"><span>or join a table</span></div>
+              <form onSubmit={join}>
+                <label htmlFor="invitation">Invitation link</label>
+                <textarea id="invitation" value={invitation} onChange={(event) => setInvitation(event.target.value)} required maxLength={4096}
+                  placeholder="Paste the invitation from your host" rows={2} disabled={busy} autoCapitalize="none" spellCheck={false} />
+                <button className="button button--secondary" disabled={busy || state.identity === null || invitation.trim() === ""}>
+                  {state.busy === "joining" ? "Joining table..." : "Join this table"}
+                </button>
+              </form>
+            </>}
             <details className="settings">
               <summary>Connection settings</summary>
               <label htmlFor="relay-urls">Custom Nostr relays <span className="optional">Optional</span></label>
@@ -81,49 +96,43 @@ export function App({ controller }: { readonly controller: BrowserLobbyActions }
         <summary>Table & connections <span>{state.peers.filter(peer => peer.state === "authenticated").length} / 3 connected</span></summary>
         <section className="lobby" aria-labelledby="lobby-title">
           <div className="lobby-heading">
-            <div><p className="eyebrow">{room.isHost ? "Your table" : "An invited table"}</p><h1 id="lobby-title">{state.phase === "agreed" ? "A lobby, agreed." : "Room for four."}</h1></div>
-            <button className="button button--quiet" onClick={() => act(controller.leave())} disabled={state.busy === "leaving"}>Leave table</button>
+            <div><p className="eyebrow">{state.phase === "agreed" && readyCount === 4 ? "Ready to play" : "Waiting room"}</p><h1 id="lobby-title">Sasku</h1></div>
+            <button className="button button--quiet" onClick={() => act(controller.leave().then(() => setInvitation("")))} disabled={state.busy === "leaving"}>Leave table</button>
           </div>
           <div className="lobby-layout">
             <div className="table-panel">
-              <div className="table-caption"><span>Four-player Sasku</span><span aria-live="polite">{room.seats.length} / 4 seated</span></div>
+              <div className="table-caption" aria-live="polite">{room.seats.length} / 4 seated</div>
               <div className="felt-table" aria-label="Table seats">
-                <div className="table-seal" aria-hidden="true"><span>P2P</span><i>{"\u2663"}</i><small>Sasku</small></div>
                 {Array.from({ length: 4 }, (_, index) => {
                   const seat = room.seats[index];
                   return <div className={`seat seat--${index + 1}${seat === undefined ? " seat--empty" : ""}`} key={index}>
                     <span className="seat__number">0{index + 1}</span>
-                    {seat === undefined ? <><h3>Open seat</h3><p>Waiting for an invitation to arrive.</p></> : <>
+                    {seat === undefined ? <h3>Open seat</h3> : <>
                       <h3>{seat.isSelf ? "You" : `Player ${index + 1}`} {seat.isHost && <span className="seat__host">Host</span>}</h3>
                       <details className="seat-identity"><summary>Identity</summary><p className="seat__fingerprint">{seat.fingerprint}</p></details>
                       <p className="seat__connection"><span className={seat.connected ? "status-dot status-dot--verified" : "status-dot"} aria-hidden="true" />{seat.isSelf ? "This browser" : seat.connected ? "Identity verified" : "Not connected"}</p>
-                      <span className={`vote ${seat.ready ? "vote--ready" : ""}`}>{seat.ready ? "Ready vote saved" : "Not marked ready"}</span>
+                      <span className={`vote ${seat.ready ? "vote--ready" : ""}`}>{seat.ready ? "Ready" : "Not ready"}</span>
                     </>}
                   </div>;
                 })}
               </div>
             </div>
-            <aside className="lobby-ledger" aria-label="Invitation and lobby agreement">
-              <p className="eyebrow">The table ledger</p>
-              <h2>{state.phase === "agreed" ? "Four signatures. One roster." : "Bring everyone together."}</h2>
+            <aside className="lobby-actions" aria-label="Invitation and readiness">
               <label htmlFor="share-invitation">Share this invitation</label>
               <input id="share-invitation" ref={inviteField} readOnly value={room.invitation} onFocus={() => inviteField.current?.select()} />
               <button className="button button--secondary" onClick={() => { void copyInvite(); }}>Copy invitation</button>
               <p className="copy-status" role="status">{copySource === room.invitation ? copyStatus : ""}</p>
               <div className="agreement-status" aria-live="polite">
-                <strong>{readyCount} of 4 readiness votes</strong>
-                <p>{state.phase === "agreed" ? "The roster and first-round rules are signed. Each player can now start the round." : room.ownReady ? "Your signed vote is saved. Waiting for the remaining players." : "Wait for all four identities and their lobby histories, then sign your readiness vote."}</p>
+                <strong>{readyCount} of 4 ready</strong>
+                <p>{!room.ownReady ? "You are marked not ready." : room.seats.length < 4 ? "Waiting for four players." : readyCount < 4 ? "Waiting for everyone to be ready." : state.phase !== "agreed" ? "Preparing the table." : room.isHost ? room.canStart ? "Everyone is ready. Start the round." : "Syncing the table." : "Waiting for player 1 to start."}</p>
               </div>
-              {state.phase !== "agreed" && <button className="button button--primary" disabled={!room.canReady || busy} onClick={() => act(controller.markReady())}>
-                {state.busy === "ready" ? "Saving your vote..." : room.ownReady ? "Your vote is saved" : "Mark ready"}
-              </button>}
-              {state.phase === "agreed" && !state.game && controller.startRound && <button className="button button--primary" onClick={() => act(controller.startRound!())}>Play first round</button>}
-              <p className="privacy-note">First round: player 4 deals, player 1 opens, nine cards per player in seat order. Your ready vote accepts this policy and the Sasku rules.</p>
+              {!state.game && <button className="button button--secondary" disabled={busy} onClick={() => act(controller.setReady(!room.ownReady))}>{room.ownReady ? "Mark myself not ready" : "Mark myself ready"}</button>}
+              {room.isHost && state.phase === "agreed" && !state.game && controller.startRound && <button className="button button--primary" disabled={!room.canStart || busy} onClick={() => act(controller.startRound!())}>Play first round</button>}
 
               <details className="settings"><summary>Signed roster</summary><p>Game ID</p><code>{room.gameId}</code><p>Roster hash</p><code>{room.rosterHash ?? "Waiting for the host's signed roster"}</code></details>
             </aside>
           </div>
-          <details className="diagnostics" open={state.peers.some(({ state }) => state !== "authenticated")}>
+          <details className="diagnostics">
             <summary>Connection diagnostics <span>{state.peers.filter(({ state }) => state === "authenticated").length} verified links</span></summary>
             <div className="diagnostics__columns">
               <div><h3>Peer links</h3>{state.peers.length === 0 ? <p>No peer connections yet. Guests connect after opening your invitation.</p> : <ul className="connection-list">{state.peers.map((peer) => <li key={peer.publicKey}>

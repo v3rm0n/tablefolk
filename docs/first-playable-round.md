@@ -7,15 +7,15 @@ This is an experimental playable build, not a reviewed cryptographic release.
 ## Play
 
 Run `npm run dev`. Open a table and share the invitation with three devices or
-isolated browser profiles. After all four players choose **Mark ready**, each
-chooses **Play first round**. Setup, the four sequential shuffles, and private
+isolated browser profiles. Players are ready by default and can opt out. Once
+all four are ready, player 1 chooses **Play first round**. Setup, the four sequential shuffles, and private
 shares run automatically. Players bid or pass, choose trump, and click legal
 cards on their own turns. After nine tricks, every browser verifies all four
 audit disclosures and displays its audited score. No second round starts.
 
 During play, the live table replaces the lobby as the main view. Your seat stays
 at the bottom, your partner sits opposite, and the active player is highlighted.
-Cards are grouped by suit with legal plays marked; the last completed trick stays
+Cards are ordered by strength, then suit, with legal plays marked; the last completed trick stays
 visible until the next card is played. Scores, turn instructions, and completed
 trick history are available in the round view. Invitation, connection retry, and
 leaving controls remain under **Table & connections**.

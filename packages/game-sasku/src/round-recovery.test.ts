@@ -744,7 +744,7 @@ describe("Sasku complete-hand recovery", () => {
     completed = await context();
     const hand = completed.game.readPrivateHand(completed.author.sender, completed.f.secrets[0]!)!;
     const falseBid = await append(completed, 0, { round: completed.f.round, phase: completed.game.snapshot.ledger.phase, type: "ACTION",
-      body: encodeActionBody({ kind: "bid", data: { value: saskuBidStrength(Object.values(hand.dealt)) === 3 ? 4 : 3 }, reveal: [], shares: [] }) });
+      body: encodeActionBody({ kind: "bid", data: { value: saskuBidStrength(Object.values(hand.dealt)) + 1 }, reveal: [], shares: [] }) });
     await completed.game.receive(falseBid);
     await act(completed, completed.game.snapshot.hand.turn!, { type: "diamonds" });
     for (let play = 0; play < 36; play += 1) {

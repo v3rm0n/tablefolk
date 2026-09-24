@@ -35,6 +35,9 @@ interface Room {
   readonly flushes: Map<string, { generation: number; dirty: boolean }>;
   game: LiveRound | null;
   playing: boolean;
+  localReady: boolean;
+  autoReadyRequested: boolean;
+  readonly peerReady: Map<string, { generation: number; ready: boolean }>;
   readonly barriers: Map<string, { generation: number; barrier: PeerHistoryBarrier }>;
   readonly early: { remote: IdentityPublicKey; payload: Uint8Array }[];
   readonly paths: Map<string, "direct" | "relayed" | "unknown">;
@@ -129,7 +132,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       room = {
         invitation, host, stored, authored, author: new PersistentEnvelopeAuthor(invitation.gameId, self.secretKey, authored),
         abort: new AbortController(), lobby, receiver: new PersistentLobbyReceiver(lobby, stored),
-        signaling: null, transport: null, queue: Promise.resolve(), pending: 0, blocked: false, recordCount: 0, releaseLease: null, flushes: new Map(), paths: new Map(), game: null, playing: false, barriers: new Map(), early: [],
+        signaling: null, transport: null, queue: Promise.resolve(), pending: 0, blocked: false, recordCount: 0, releaseLease: null, flushes: new Map(), paths: new Map(), game: null, playing: false, localReady: true, autoReadyRequested: false, peerReady: new Map(), barriers: new Map(), early: [],
       };
       this.#room = room;
       this.#refresh(room);
@@ -206,7 +209,11 @@ export class BrowserLobbyController implements BrowserLobbyActions {
         onAuthenticated: (remote, generation) => {
           if (this.#room !== current) { return; }
           current.barriers.set(bytesToHex(remote), { generation, barrier: new PeerHistoryBarrier() });
+          current.peerReady.delete(bytesToHex(remote));
           this.#event(`Identity verified: ${identityFingerprint(remote)}`);
+          void current.transport!.send(remote, generation, Uint8Array.of(1, current.localReady ? 1 : 0)).catch((cause: unknown) => {
+            if (this.#room === current) this.#event(`Ready status delivery failed: ${message(cause)}`);
+          });
           this.#flush(current, remote, generation);
           void current.transport!.path(remote).then((path) => {
             if (this.#room === current && current.transport?.generation(remote) === generation) {
@@ -218,6 +225,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
         onDisconnected: (remote) => {
           if (this.#room !== current) { return; }
           current.barriers.delete(bytesToHex(remote));
+          current.peerReady.delete(bytesToHex(remote));
           current.paths.delete(bytesToHex(remote));
           current.flushes.delete(bytesToHex(remote));
           if (!current.lobby.isRosterMember(remote)) { current.transport?.remove(remote); }
@@ -244,6 +252,11 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     if (payload[0] === 0) {
       room.barriers.get(bytesToHex(remote))?.barrier.receive(payload); this.#refresh(room); return;
     }
+    if (payload[0] === 1) {
+      if (payload.length !== 2 || (payload[1] !== 0 && payload[1] !== 1)) throw new LobbyProtocolError("Invalid ready status");
+      room.peerReady.set(bytesToHex(remote), { generation, ready: payload[1] === 1 });
+      this.#refresh(room); return;
+    }
     if (payload.length > 65536) throw new LobbyProtocolError("Envelope exceeds 64 KiB");
     const candidate = decodeAndVerifyEnvelope(payload);
     if (!["JOIN", "ROSTER", "READY"].includes(candidate.envelope.type)) {
@@ -253,6 +266,10 @@ export class BrowserLobbyController implements BrowserLobbyActions {
         else {
           if (room.early.length >= 32) throw new LobbyProtocolError("Early round queue is full");
           room.early.push({ remote, payload: payload.slice() });
+        }
+        if (!room.playing && bytesEqual(remote, room.invitation.host) && candidate.envelope.type === "KEY_SHARE") {
+          room.playing = true;
+          this.#refresh(room);
         }
       });
     }
@@ -383,16 +400,31 @@ export class BrowserLobbyController implements BrowserLobbyActions {
         if (!this.#snapshot.room?.canReady || room.lobby.rosterHash === null) { throw new LobbyProtocolError("Wait for all four identities and their lobby histories before marking ready"); }
         await this.#publish(room, { round: 0, phase: "lobby", type: "READY", body: encodeReadyBody({ rosterHash: room.lobby.rosterHash }) });
         this.#require(room);
-        this.#event("Your readiness vote is saved and scheduled for every connected peer.");
         this.#refresh(room);
       });
-    } catch (cause) { if (this.#room === room) { this.#set({ error: message(cause) }); } throw cause; }
+    } catch (cause) { if (this.#room === room) { room.autoReadyRequested = false; this.#set({ error: message(cause) }); } throw cause; }
     finally { if (this.#room === room) { this.#set({ busy: null }); } }
+  }
+
+  async setReady(ready: boolean): Promise<void> {
+    const room = this.#room;
+    if (room === null) throw new Error("No active table");
+    if (room.playing) throw new Error("The round has already started");
+    room.localReady = ready;
+    this.#set({ error: null });
+    this.#refresh(room);
+    try {
+      await Promise.all((room.transport?.peers ?? []).filter(peer => room.transport?.authenticated(peer.identity)).map(peer =>
+        room.transport!.send(peer.identity, peer.generation, Uint8Array.of(1, ready ? 1 : 0))));
+    } catch (cause) {
+      if (this.#room === room) this.#set({ error: `Ready status delivery failed: ${message(cause)}` });
+      throw cause;
+    }
   }
 
   async startRound(): Promise<void> {
     const room = this.#room;
-    if (!room || room.lobby.state !== "finalized") throw new Error("Agree on the four-player roster first");
+    if (!room?.host || !this.#snapshot.room?.canStart) throw new Error("Wait for all four ready players before starting");
     room.playing = true; this.#refresh(room);
   }
   async playAction(intent: SaskuActionIntent): Promise<void> {
@@ -504,7 +536,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     const ownSeat = roster.findIndex((key) => bytesEqual(key, self));
     const seats = roster.map((key, seat) => Object.freeze({
       publicKey: bytesToHex(key), fingerprint: identityFingerprint(key), isSelf: bytesEqual(key, self),
-      isHost: bytesEqual(key, room.invitation.host), ready: readySeats.includes(seat),
+      isHost: bytesEqual(key, room.invitation.host), ready: bytesEqual(key, self) ? room.localReady : room.peerReady.get(bytesToHex(key))?.ready ?? true,
       connected: bytesEqual(key, self) || (room.transport?.authenticated(key) ?? false),
     }));
     const peers = (room.transport?.peers ?? []).map((peer) => Object.freeze({
@@ -517,16 +549,23 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     room.game?.connected(room.playing && synchronized);
     const canReady = !room.blocked && room.recordCount < 128 && room.lobby.state !== "finalized" && roster.length === 4 && ownSeat >= 0 &&
       !readySeats.includes(ownSeat) && roster.every((key) => room.lobby.headOf(key) !== null) && seats.every(({ connected }) => connected);
+    const allReadyKnown = room.localReady && roster.length === 4 && roster.every(key => bytesEqual(key, self) || (
+      room.peerReady.get(bytesToHex(key))?.generation === room.transport?.generation(key) && room.peerReady.get(bytesToHex(key))?.ready === true));
+    const canStart = room.host && room.lobby.state === "finalized" && !room.playing && synchronized && allReadyKnown && !room.blocked;
     this.#set({
       game: room.playing ? room.game?.view ?? null : null,
       phase: room.lobby.state === "finalized" ? "agreed" : room.transport === null ? "connecting" : "lobby",
       room: Object.freeze({ gameId: bytesToHex(room.invitation.gameId), host: bytesToHex(room.invitation.host), isHost: room.host,
         invitation: createLobbyInvitation(this.#baseUrl, room.invitation.gameId, room.invitation.host), seats: Object.freeze(seats),
-        rosterHash: room.lobby.rosterHash === null ? null : bytesToHex(room.lobby.rosterHash), canReady, ownReady: readySeats.includes(ownSeat) }),
+        rosterHash: room.lobby.rosterHash === null ? null : bytesToHex(room.lobby.rosterHash), canReady, canStart, ownReady: room.localReady }),
       peers: Object.freeze(peers), relays: Object.freeze((room.signaling?.relayDiagnostics ?? []).map((relay) => Object.freeze({
         url: relay.url, state: relay.state, error: relay.lastError === null ? null : message(relay.lastError),
       }))),
     });
+    if (canReady && !room.autoReadyRequested && this.#snapshot.busy === null) {
+      room.autoReadyRequested = true;
+      queueMicrotask(() => { if (this.#room === room) void this.markReady().catch(() => undefined); });
+    }
   }
 
   #event(event: string): void { this.#set({ events: Object.freeze([...this.#snapshot.events.slice(-7), event.slice(0, 240)]) }); }

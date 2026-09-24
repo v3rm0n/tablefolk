@@ -153,12 +153,12 @@ function nextState(current: HandState, candidate: SaskuHandAction): HandState {
   };
   if (state.phase === "bidding") {
     if (action.type === "bid") {
-      if (state.hands !== null && action.value !== saskuBidStrength(state.hands[action.seat]!)) {
-        throw new SaskuHandError("A bid must equal the player's exact calculated hand strength", "bid_strength");
+      if (state.hands !== null && action.value > saskuBidStrength(state.hands[action.seat]!)) {
+        throw new SaskuHandError("A bid cannot exceed the player's calculated hand strength", "bid_strength");
       }
       if (state.highestBid !== null && action.value <= state.highestBid.value) { throw new SaskuHandError("A bid must strictly exceed the current highest bid"); }
       if (current.history.some((past) => past.type === "bid" && past.seat === action.seat)) {
-        throw new SaskuHandError("A player's exact bid cannot change while bidding");
+        throw new SaskuHandError("A player's bid cannot change while bidding");
       }
       state.highestBid = Object.freeze({ seat: action.seat, value: action.value });
       state.consecutivePasses = 0;

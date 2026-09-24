@@ -13,7 +13,16 @@ import { PersistentSaskuRoundReceiver, type SaskuActionIntent } from "./persiste
 describe("local Sasku action authoring", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("authors an exact bid, three passes, chosen trump and a play with the current phase's proof", async () => {
+  it("authors a bid below the private hand maximum", async () => {
+    const c = await context();
+    const hand = c.game.readPrivateHand(c.author.sender, c.f.secrets[0]!)!;
+    const maximum = saskuBidStrength(Object.values(hand.dealt));
+    expect(maximum).toBeGreaterThan(3);
+    const bid = await act(c, 0, { type: "bid", value: maximum - 1 });
+    expect(decodeActionBody(bid.received.envelope.body)).toEqual({ kind: "bid", data: { value: maximum - 1 }, reveal: [], shares: [] });
+  });
+
+  it("authors a bid, three passes, chosen trump and a play with the current phase's proof", async () => {
     const c = await context();
     const before = c.game.snapshot;
     const hand = c.game.readPrivateHand(c.author.sender, c.f.secrets[0]!)!;
@@ -76,7 +85,7 @@ describe("local Sasku action authoring", () => {
     const append = vi.spyOn(c.store, "appendNext");
     const author = vi.spyOn(c.author, "author");
     const rng = vi.spyOn(c.f.source, "fill");
-    await expect(act(c, 0, { type: "bid", value: value === 3 ? 4 : 3 })).rejects.toMatchObject({ rule: "bid_strength" });
+    await expect(act(c, 0, { type: "bid", value: value + 1 })).rejects.toMatchObject({ rule: "bid_strength" });
     await expect(act(c, 0, { type: "choose_trump", suit: "clubs" })).rejects.toThrow(/during bidding/);
     await expect(act(c, 0, { type: "play", position: 0 })).rejects.toThrow(/during bidding/);
     await expect(act(c, 1, { type: "pass" })).rejects.toThrow(/expected seat/);

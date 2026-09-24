@@ -48,13 +48,12 @@ describe("Sasku bidding", () => {
     expect(game.snapshot).toMatchObject({ phase: "playing", turn: 0, contract: { kind: "named", declarerSeat: 0, suit: "clubs" } });
   });
 
-  it("rejects understated, overstated, equal, or lower bids without mutation", () => {
+  it("accepts bids up to strength and rejects overstated, equal, or lower bids without mutation", () => {
     const game = new SaskuHandController({ dealer: 0, hands: variedDeal() });
     const initial = game.snapshot;
-    expect(() => game.apply({ type: "bid", seat: 1, value: 4 })).toThrow(/exact/);
-    expect(() => game.apply({ type: "bid", seat: 1, value: 6 })).toThrow(/exact/);
+    expect(() => game.apply({ type: "bid", seat: 1, value: 6 })).toThrow(/cannot exceed/);
     expect(game.snapshot).toEqual(initial);
-    game.apply({ type: "bid", seat: 1, value: 5 });
+    game.apply({ type: "bid", seat: 1, value: 4 });
     expect(() => game.apply({ type: "bid", seat: 2, value: 4 })).toThrow(/strictly exceed/);
     expect(game.snapshot.turn).toBe(2);
     const equal = new SaskuHandController(setup(3));

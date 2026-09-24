@@ -24,15 +24,17 @@ export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (inten
   const displayedTrick = showingLast ? last!.plays : state?.trick ?? [];
   const turnLabel = view.phase === "bidding" ? "Your turn to bid" : view.phase === "choosing_trump" ? "Choose your trump" : "Your turn to play";
   const title = done ? "First round complete" : view.phase === "audit" ? "Checking the round" : preparing ? "Preparing your hand" : mine ? turnLabel : `Player ${(state?.turn ?? 0) + 1}’s turn`;
-  const instruction = preparing ? !view.connected ? "Waiting for everyone to start or reconnect." : view.phase === "setup" ? "Getting the table ready with all four players." : view.phase === "shuffle" ? view.message : "Your nine cards will appear automatically." : done ? "Nine tricks played. Here’s how your table finished." : view.phase === "audit" ? "Checking all cards and plays before confirming the score."
-    : !view.connected ? "Syncing the table. Your hand is saved." : submitting ? "Saving your move…" : view.phase === "bidding" ? mine ? "Bid your hand strength, pass, or call diamonds." : "You can review your hand while you wait."
+  const instruction = preparing ? !view.connected ? "Waiting for all four connections." : view.phase === "setup" ? "Getting the table ready with all four players." : view.phase === "shuffle" ? view.message : "Your nine cards will appear automatically." : done ? "Nine tricks played. Here’s how your table finished." : view.phase === "audit" ? "Checking all cards and plays before confirming the score."
+    : !view.connected ? "Syncing the table. Your hand is saved." : submitting ? "Saving your move…" : view.phase === "bidding" ? mine ? "Bid up to your hand’s maximum, pass, or call diamonds." : "You can review your hand while you wait."
     : view.phase === "choosing_trump" ? mine ? "Choose the trump suit for this round." : "The auction winner is choosing trump."
     : mine ? state?.trick.length ? "Follow the led suit. Highlighted cards are legal." : "You lead. Choose any card from your hand." : "The next play will appear on the table.";
-  // Keep the hand in a familiar suit/rank order, without changing signed deck positions.
+  // Sort the displayed cards by strength, then suit, without changing signed deck positions.
   const cards = [...view.hand].sort((a, b) => {
     const left = parseSaskuCard(a.card), right = parseSaskuCard(b.card);
-    return SASKU_SUITS.indexOf(left.suit) - SASKU_SUITS.indexOf(right.suit) || ["A", "K", "Q", "J", "10", "9", "8", "7", "6"].indexOf(left.rank) - ["A", "K", "Q", "J", "10", "9", "8", "7", "6"].indexOf(right.rank);
+    const ranks = ["K", "Q", "J", "A", "10", "9", "8", "7", "6"];
+    return ranks.indexOf(left.rank) - ranks.indexOf(right.rank) || SASKU_SUITS.indexOf(left.suit) - SASKU_SUITS.indexOf(right.suit);
   });
+  const firstBid = Math.max(3, (state?.highestBid?.value ?? 2) + 1);
   return <section className="live-round" aria-label="Live Sasku round" data-phase={view.phase}>
     <header className="live-heading">
       <div><p className="eyebrow">Sasku · Round 1</p><h2>{title}</h2><p className="live-instruction" role="status">{instruction}</p></div>
@@ -64,11 +66,11 @@ export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (inten
       })}
     </div>}
     {!preparing && !done && <div className="live-actions">
-      {view.phase === "bidding" ? <><p>Hand strength <strong>{view.strength}</strong>{state?.highestBid ? ` · Highest bid ${state.highestBid.value}` : " · No bid yet"}</p><div className="hand-action-buttons">
-        <button className="button button--primary" disabled={!enabled || view.strength === null || view.strength <= (state?.highestBid?.value ?? -1)} onClick={() => void send({ type: "bid", value: view.strength! })}>Bid {view.strength}</button>
+      {view.phase === "bidding" ? <><p>Maximum bid <strong>{view.strength}</strong>{state?.highestBid ? ` · Highest bid ${state.highestBid.value}` : " · No bid yet"}</p><div className="hand-action-buttons">
+        {Array.from({ length: Math.max(0, (view.strength ?? 0) - firstBid + 1) }, (_, index) => firstBid + index).map(value => <button key={value} className="button button--primary" disabled={!enabled} onClick={() => void send({ type: "bid", value })}>Bid {value}</button>)}
         <button className="button button--secondary" disabled={!enabled} onClick={() => void send({ type: "pass" })}>Pass</button>
         <button className="button button--secondary" disabled={!enabled} onClick={() => void send({ type: "diamonds" })}>Name diamonds now</button>
-      </div></> : view.phase === "choosing_trump" ? <div className="hand-action-buttons">{SASKU_SUITS.map(suit => <button className="button button--secondary" key={suit} disabled={!enabled} onClick={() => void send({ type: "choose_trump", suit })}>Choose {suit} {SASKU_SUIT_MARKS[suit]}</button>)}</div>
+      </div></> : view.phase === "choosing_trump" ? <div className="hand-action-buttons trump-choices">{SASKU_SUITS.map(suit => <button className={`trump-choice trump-choice--${suit}`} key={suit} disabled={!enabled} onClick={() => void send({ type: "choose_trump", suit })} aria-label={`Choose ${suit}`}><span className="trump-choice__mark" aria-hidden="true">{SASKU_SUIT_MARKS[suit]}</span><span>{suit}</span></button>)}</div>
         : <p>{last ? <>Last trick: <strong>{last.winner.seat === view.seat ? "you" : `player ${last.winner.seat + 1}`}</strong> took {last.cardPoints} points.</> : "Courts are trumps. Follow the effective suit when you can."}</p>}
     </div>}
     <div className="live-hand-heading"><span>{done ? "All cards played" : "Your hand"}</span><small>{view.hand.length} cards · Only visible to you</small></div>
@@ -76,13 +78,13 @@ export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (inten
       const suit = parseSaskuCard(card).suit, available = enabled && playable && view.phase === "playing";
       return <button key={position} className={`live-hand-card${suit === "hearts" || suit === "diamonds" ? " is-red" : ""}${available ? " is-playable" : ""}`}
         disabled={!available} aria-label={`Play ${saskuCardName(card)}`} onClick={() => void send({ type: "play", position })}>
-        <SaskuCardFace id={card} /><small>{available ? "Play" : "\u00a0"}</small>
+        <SaskuCardFace id={card} />
       </button>;
     })}</div>
     {done && <div className="live-result" role="status">
       {view.state?.audit?.result?.status === "valid" ? <><p className="eyebrow">Round verified</p><h3>Your team: {view.state.audit.result.score.gamePoints[team]} P <span>· Opponents: {view.state.audit.result.score.gamePoints[1 - team]} P</span></h3><p>Round verified by this browser: all 36 cards and all plays checked.</p></> : <p>Round audit found a violation. The result is not accepted.</p>}
       <p>That’s the first round. You can leave the table when you’re ready.</p>
     </div>}
-    {state && state.completedTricks.length > 0 && <details className="live-history"><summary>Completed tricks <span>{state.completedTricks.length} / 9</span></summary><ol>{state.completedTricks.map((trick, index) => <li key={index}><strong>Trick {index + 1}</strong><span>Player {trick.winner.seat + 1} · {trick.cardPoints} points</span><small>{trick.plays.map(p => `P${p.seat + 1}: ${p.card}`).join(" · ")}</small></li>)}</ol></details>}
+    {state && state.completedTricks.length > 0 && <details className="live-history"><summary>Completed tricks <span>{state.completedTricks.length} / 9</span></summary><ol>{state.completedTricks.map((trick, index) => <li key={index}><strong>Trick {index + 1}</strong><span>Player {trick.winner.seat + 1} · {trick.cardPoints} points</span><div className="live-history-cards">{trick.plays.map(play => <div className="live-history-play" key={play.seat} role="img" aria-label={`Player ${play.seat + 1}: ${saskuCardName(play.card)}`}><small>P{play.seat + 1}</small><span className="live-history-card"><SaskuCardFace id={play.card} /></span></div>)}</div></li>)}</ol></details>}
   </section>;
 }

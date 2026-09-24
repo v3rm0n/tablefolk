@@ -30,6 +30,7 @@ export interface BrowserLobbySnapshot {
     readonly seats: readonly LobbySeatView[];
     readonly rosterHash: string | null;
     readonly canReady: boolean;
+    readonly canStart: boolean;
     readonly ownReady: boolean;
   } | null;
   readonly peers: readonly LobbyPeerView[];
@@ -45,6 +46,7 @@ export interface BrowserLobbyActions {
   create(relayText?: string): Promise<void>;
   join(invitation: string, relayText?: string): Promise<void>;
   markReady(): Promise<void>;
+  setReady(ready: boolean): Promise<void>;
   startRound?(): Promise<void>;
   playAction?(intent: SaskuActionIntent): Promise<void>;
   retryPeer(publicKey: string): Promise<void>;

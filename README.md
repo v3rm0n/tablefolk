@@ -100,9 +100,8 @@ production build.
    isolated browser profiles. Another tab uses the same identity and cannot open
    the same table concurrently.
 3. Guests open or paste the invitation and choose **Join this table**.
-4. Once all four identities and their lobby histories are present, each player
-   chooses **Mark ready**, accepting the displayed first-round policy.
-5. Each player chooses **Play first round**. After automatic setup and dealing,
+4. Players are ready by default and may mark themselves not ready while waiting.
+5. Once all four are ready, player 1 chooses **Play first round**. The other players join automatically. After setup and dealing,
    bid or pass, choose trump, and play highlighted legal cards. The round ends
    after nine tricks and four verified audit disclosures.
 
