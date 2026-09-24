@@ -642,7 +642,7 @@ async function nativeDeal(c: Context, step: number, seat: SaskuSeat) {
 async function completeHand(c: Context, falseBid = false) {
   if (falseBid) {
     const hand = c.game.readPrivateHand(c.author.sender, c.f.secrets[0]!)!;
-    const value = saskuBidStrength(Object.values(hand.dealt)) === 3 ? 4 : 3;
+    const value = saskuBidStrength(Object.values(hand.dealt)) + 1;
     // Simulate a malicious peer bypassing local preflight, but keep its real durable signing head.
     const malicious = await c.author.author({
       round: c.f.round, phase: c.game.snapshot.ledger.phase, type: "ACTION",
