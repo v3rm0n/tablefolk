@@ -427,11 +427,6 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     }
   }
 
-  async startRound(): Promise<void> {
-    const room = this.#room;
-    if (!room?.host || !this.#snapshot.room?.canStart) throw new Error("Wait for all four ready players before starting");
-    room.playing = true; this.#refresh(room);
-  }
   async playAction(intent: SaskuActionIntent): Promise<void> {
     const room = this.#room;
     if (!room?.game || !room.playing) throw new Error("No active round");
@@ -541,7 +536,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     const ownSeat = roster.findIndex((key) => bytesEqual(key, self));
     const seats = roster.map((key, seat) => Object.freeze({
       publicKey: bytesToHex(key), fingerprint: identityFingerprint(key), isSelf: bytesEqual(key, self),
-      isHost: bytesEqual(key, room.invitation.host), ready: bytesEqual(key, self) ? room.localReady : room.peerReady.get(bytesToHex(key))?.ready ?? true,
+      isHost: bytesEqual(key, room.invitation.host), ready: bytesEqual(key, self) ? room.localReady : room.peerReady.get(bytesToHex(key))?.ready ?? false,
       connected: bytesEqual(key, self) || (room.transport?.authenticated(key) ?? false),
     }));
     const peers = (room.transport?.peers ?? []).map((peer) => Object.freeze({
@@ -557,12 +552,16 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     const allReadyKnown = room.localReady && roster.length === 4 && roster.every(key => bytesEqual(key, self) || (
       room.peerReady.get(bytesToHex(key))?.generation === room.transport?.generation(key) && room.peerReady.get(bytesToHex(key))?.ready === true));
     const canStart = room.host && room.lobby.state === "finalized" && !room.playing && synchronized && allReadyKnown && !room.blocked;
+    if (canStart) {
+      room.playing = true;
+      room.game?.connected(synchronized);
+    }
     this.#set({
       game: room.playing ? room.game?.view ?? null : null,
       phase: room.lobby.state === "finalized" ? "agreed" : room.transport === null ? "connecting" : "lobby",
       room: Object.freeze({ gameId: bytesToHex(room.invitation.gameId), host: bytesToHex(room.invitation.host), isHost: room.host,
         invitation: createLobbyInvitation(this.#baseUrl, room.invitation.gameId, room.invitation.host), seats: Object.freeze(seats),
-        rosterHash: room.lobby.rosterHash === null ? null : bytesToHex(room.lobby.rosterHash), canReady, canStart, ownReady: room.localReady }),
+        rosterHash: room.lobby.rosterHash === null ? null : bytesToHex(room.lobby.rosterHash), canReady, ownReady: room.localReady }),
       peers: Object.freeze(peers), relays: Object.freeze((room.signaling?.relayDiagnostics ?? []).map((relay) => Object.freeze({
         url: relay.url, state: relay.state, error: relay.lastError === null ? null : message(relay.lastError),
       }))),

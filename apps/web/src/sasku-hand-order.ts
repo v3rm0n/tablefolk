@@ -10,5 +10,5 @@ export function compareSaskuHandCards(leftId: SaskuCardId, rightId: SaskuCardId)
   if (left.isCourt !== right.isCourt) return Number(left.isCourt) - Number(right.isCourt);
   const suitOrder = SASKU_SUITS.indexOf(right.suit) - SASKU_SUITS.indexOf(left.suit);
   const rankOrder = rankStrength[left.rank] - rankStrength[right.rank];
-  return suitOrder || rankOrder;
+  return left.isCourt ? rankOrder || suitOrder : suitOrder || rankOrder;
 }

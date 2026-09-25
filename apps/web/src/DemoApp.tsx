@@ -35,7 +35,7 @@ export function DemoApp({ session }: { readonly session: DemoSession }) {
   return <div className="demo-page">
     <header className="demo-toolbar">
       <div className="demo-toolbar__top">
-        <div><p className="eyebrow">Local demo</p><h1>Four seats. One tab.</h1><p>Switch between players to inspect their hands and play every turn.</p></div>
+        <div><h1>Demo</h1><p>Switch players to see each hand.</p></div>
         <div className="demo-toolbar__links"><a href="./">Back to game</a><button className="button button--secondary" disabled={starting} onClick={() => void restart()}>New demo table</button></div>
       </div>
       <div className="demo-seats" role="tablist" aria-label="Demo players">

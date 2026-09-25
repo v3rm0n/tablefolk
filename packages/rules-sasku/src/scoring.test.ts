@@ -9,8 +9,9 @@ describe("Sasku completed-hand scoring", () => {
   it("keeps opposite seats in fixed partnerships and profiles the stated court order", () => {
     expect([0, 1, 2, 3].map(partnershipForSeat)).toEqual([0, 1, 0, 1]);
     expect(SASKU_COURT_ORDER.map(({ rank, suit }) => `${rank}:${suit}`)).toEqual([
-      "king:clubs", "queen:clubs", "jack:clubs", "king:spades", "queen:spades", "jack:spades",
-      "king:hearts", "queen:hearts", "jack:hearts", "king:diamonds", "queen:diamonds", "jack:diamonds",
+      "king:clubs", "king:spades", "king:hearts", "king:diamonds",
+      "queen:clubs", "queen:spades", "queen:hearts", "queen:diamonds",
+      "jack:clubs", "jack:spades", "jack:hearts", "jack:diamonds",
     ]);
     expect(SASKU_CARD_POINTS).toEqual({ ace: 11, ten: 10, king: 4, queen: 3, jack: 2, other: 0 });
     expect(Object.values(SASKU_CARD_POINTS).reduce<number>((sum, value) => sum + value * 4, 0)).toBe(120);

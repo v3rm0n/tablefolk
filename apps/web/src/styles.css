@@ -92,7 +92,7 @@ summary { cursor: pointer; font-size: 0.85rem; font-weight: 700; padding-block: 
 .lobby-layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(17rem, 0.8fr); gap: clamp(1.5rem, 4vw, 4rem); align-items: start; }
 .table-panel { min-width: 0; }
 .table-caption { margin-bottom: 1rem; }
-.felt-table { position: relative; isolation: isolate; display: grid; grid-template-columns: 1fr 1fr; gap: 6rem clamp(1rem, 3vw, 3rem); padding: clamp(1.2rem, 3vw, 3rem); min-height: 36rem; background: var(--felt); border-radius: 40% / 18%; }
+.felt-table { position: relative; isolation: isolate; display: grid; grid-template-columns: 1fr 1fr; gap: 6rem clamp(1rem, 3vw, 3rem); padding: clamp(1.2rem, 3vw, 3rem); min-height: 36rem; background: var(--felt); border-radius: 1.5rem; }
 .felt-table::before { content: ""; position: absolute; inset: 0.7rem; border: 1px dashed oklch(87% 0.06 92deg / 0.4); border-radius: inherit; z-index: -1; }
 .seat { background: var(--paper); border-radius: 0.25rem; border: 1px solid oklch(24% 0.025 72deg / 0.45); padding: clamp(1rem, 1.5vw, 1.4rem); min-width: 0; position: relative; align-self: start; }
 .seat--3, .seat--4 { align-self: end; }
@@ -233,8 +233,8 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .technical-next { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem 2rem; margin-top: 2rem; }
 .technical-next .button { min-width: 12rem; }
 .scoring-reference { padding-bottom: 2rem; }
-.scoring-intro { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; align-items: center; padding-top: 2.5rem; }
-.scoring-intro h1 { font-size: clamp(3rem, 6vw, 5.5rem); }
+.scoring-intro { display: grid; grid-template-columns: 1fr; gap: 2rem; align-items: center; padding-top: 2.5rem; }
+.scoring-intro h1 { font-size: clamp(1.6rem, 5vw, 3.5rem); }
 .scoring-intro > p { max-width: 32rem; font-size: 0.9rem; }
 .scoring-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: clamp(1.5rem, 4vw, 4rem); margin-top: 1rem; }
 .scoring-controls { min-width: 0; }
@@ -263,11 +263,11 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .point-values dd { font-weight: 700; }
 .court-order { display: flex; flex-wrap: wrap; gap: 0.65rem; list-style: none; padding: 0; margin: 0; font: 1.2rem var(--serif); }
 .court-order li { border-bottom: 1px solid var(--line); padding: 0.25rem 0.4rem; }
-.court-order li:nth-child(n+7) { color: var(--rust); }
+.court-order li.suit-red { color: #b51f32; }
 .hand-action-buttons { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-block: 1rem; }
 @media (max-width: 1000px) {
   .lobby-layout { grid-template-columns: minmax(0, 1.3fr) minmax(16rem, 0.9fr); gap: 1.5rem; }
-  .felt-table { padding: 1.25rem; gap: 6rem 1rem; border-radius: 15% / 10%; }
+  .felt-table { padding: 1.25rem; gap: 6rem 1rem; border-radius: 1.5rem; }
   .seat { padding: 1rem; }
   .seat__fingerprint { font-size: 0.65rem; }
 }
@@ -458,3 +458,15 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
   .live-hand-card, .live-hand-card.is-playable { min-height: 0; padding: 0; }
   .live-played-card { width: 40px; height: auto; }
 }
+
+.live-heading--your-turn { background: #e5eddb; border-left: 5px solid var(--felt); padding: 1rem; border-radius: .5rem; margin-bottom: 1rem; }
+.live-turn-badge.is-yours { font-size: 1rem; font-weight: 800; }
+.suit-red { color: #b51f32; }
+.live-scoreboard .live-contract .trump-symbol { font-size: 2rem; color: #24334a; }
+.live-scoreboard .trump-symbol.suit-red { color: #b51f32; }
+.table-trump { background: var(--paper); color: #24334a; border-radius: .4rem; padding: .1rem .5rem; }
+.table-trump.suit-red { color: #b51f32; }
+.joining-status { display: inline-flex; align-items: center; gap: .6rem; }
+.loading-spinner { width: 1rem; height: 1rem; border: 2px solid var(--line); border-top-color: var(--felt); border-radius: 50%; animation: loading-spin 1s linear infinite; }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .loading-spinner { animation: none; } }

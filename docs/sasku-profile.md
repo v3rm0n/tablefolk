@@ -20,10 +20,9 @@ cards zero. `other` is a scoring category, not an approved card rank/identifier.
 The strongest-first permanent court order is:
 
 ```text
-K clubs, Q clubs, J clubs,
-K spades, Q spades, J spades,
-K hearts, Q hearts, J hearts,
-K diamonds, Q diamonds, J diamonds
+K clubs, K spades, K hearts, K diamonds,
+Q clubs, Q spades, Q hearts, Q diamonds,
+J clubs, J spades, J hearts, J diamonds
 ```
 
 The confirmed non-court order is `A > 10 > 9 > 8 > 7 > 6`, both within a plain

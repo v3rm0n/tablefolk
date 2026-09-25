@@ -33,8 +33,8 @@ export function SaskuScoringReference() {
 
   return <section className="scoring-reference" aria-labelledby="scoring-title">
     <div className="scoring-intro">
-      <div><p className="eyebrow">Sasku rules</p><h1 id="scoring-title">Scoring<br /><em>reference.</em></h1></div>
-      <p>Try the rules for a completed nine-trick hand. These are manual examples, not results from a played or verified game. Nothing here changes your lobby or its transcript.</p>
+      <div><h1 id="scoring-title">Scoring reference</h1></div>
+      <p>Calculate the score for a completed nine-trick hand.</p>
     </div>
     <div className="scoring-layout">
       <form className="scoring-controls" aria-label="Completed hand scoring" onSubmit={(event) => event.preventDefault()}>
@@ -73,7 +73,7 @@ export function SaskuScoringReference() {
     </div>
     <div className="scoring-rules">
       <section><h3>Card points</h3><dl className="point-values">{Object.entries(SASKU_CARD_POINTS).map(([rank, points]) => <div key={rank}><dt>{rank === "other" ? "Other cards" : rank[0]!.toUpperCase() + rank.slice(1)}</dt><dd>{points}</dd></div>)}</dl></section>
-      <section><h3>Permanent trumps</h3><p>Strongest first. Every court is above the non-court cards of the chosen trump suit.</p><ol className="court-order">{SASKU_COURT_ORDER.map((card) => <li key={`${card.suit}:${card.rank}`} aria-label={`${card.rank} of ${card.suit}`}><span aria-hidden="true">{rankMarks[card.rank]}{suitMarks[card.suit]}</span></li>)}</ol></section>
+      <section><h3>Permanent trumps</h3><p>Weakest to strongest. Kings beat queens, queens beat jacks. All beat other trumps.</p><ol className="court-order">{[...SASKU_COURT_ORDER].reverse().map((card) => <li className={card.suit === "hearts" || card.suit === "diamonds" ? "suit-red" : undefined} key={`${card.suit}:${card.rank}`} aria-label={`${card.rank} of ${card.suit}`}><span aria-hidden="true">{rankMarks[card.rank]}{suitMarks[card.suit]}</span></li>)}</ol></section>
     </div>
   </section>;
 }

@@ -2,8 +2,8 @@ export const SASKU_TOTAL_CARD_POINTS = 120;
 export const SASKU_TRICKS_PER_HAND = 9;
 export const SASKU_SUITS = Object.freeze(["clubs", "spades", "hearts", "diamonds"] as const);
 export const SASKU_CARD_POINTS = Object.freeze({ ace: 11, ten: 10, king: 4, queen: 3, jack: 2, other: 0 });
-export const SASKU_COURT_ORDER = Object.freeze(SASKU_SUITS.flatMap((suit) =>
-  (["king", "queen", "jack"] as const).map((rank) => Object.freeze({ suit, rank })),
+export const SASKU_COURT_ORDER = Object.freeze((["king", "queen", "jack"] as const).flatMap((rank) =>
+  SASKU_SUITS.map((suit) => Object.freeze({ suit, rank })),
 ));
 
 export type SaskuSuit = (typeof SASKU_SUITS)[number];

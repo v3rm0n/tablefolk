@@ -10,7 +10,7 @@ import {
 } from "./cards";
 import { SASKU_SUITS, type SaskuSeat, type SaskuSuit } from "./scoring";
 
-const COURTS: readonly SaskuCardId[] = ["KC", "QC", "JC", "KS", "QS", "JS", "KH", "QH", "JH", "KD", "QD", "JD"];
+const COURTS: readonly SaskuCardId[] = ["KC", "KS", "KH", "KD", "QC", "QS", "QH", "QD", "JC", "JS", "JH", "JD"];
 const PLAIN_RANKS = ["A", "10", "9", "8", "7", "6"] as const;
 const CODES = { clubs: "C", spades: "S", hearts: "H", diamonds: "D" } as const;
 

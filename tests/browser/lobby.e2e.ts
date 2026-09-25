@@ -99,11 +99,12 @@ test("four isolated browser identities play and recover the first Sasku round ov
   const errors: string[] = [];
   pages.forEach((page, index) => page.on("pageerror", (error) => errors.push(`${index}: ${error.message}`)));
   try {
-    for (const page of pages) { await page.goto(baseURL!); await expect(page.getByRole("button", { name: "Open a table" })).toBeEnabled(); }
+    for (const page of pages) { await page.goto(baseURL!); await expect(page.getByRole("button", { name: "Start a game" })).toBeEnabled(); }
     await configureRelay(pages[0]!, relayUrl);
     await pages[0]!.screenshot({ path: testInfo.outputPath("welcome-desktop.png"), fullPage: true });
-    await pages[0]!.getByRole("button", { name: "Open a table" }).click();
+    await pages[0]!.getByRole("button", { name: "Start a game" }).click();
     await expect(pages[0]!.getByLabel("Share this invitation")).toBeVisible();
+    await pages[0]!.getByRole("button", { name: "Not ready", exact: true }).click();
     const invitation = await pages[0]!.getByLabel("Share this invitation").inputValue();
     const duplicateTab = await contexts[0]!.newPage();
     await duplicateTab.goto(invitation);
@@ -121,7 +122,7 @@ test("four isolated browser identities play and recover the first Sasku round ov
     }
     for (const page of pages) {
       await expect(page.getByText("4 / 4 seated", { exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Mark myself not ready", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: /^(Not ready|Ready)$/ })).toBeVisible();
     }
     const ownFingerprint = (page: Page) => page.locator(".seat").filter({ has: page.getByRole("heading", { name: /^You/ }) }).locator(".seat__fingerprint").textContent();
     const identities = await Promise.all(pages.map(ownFingerprint));
@@ -130,19 +131,24 @@ test("four isolated browser identities play and recover the first Sasku round ov
     await expect(pages[2]!.getByRole("button", { name: "Join this table" })).toBeEnabled();
     await configureRelay(pages[2]!, relayUrl);
     await pages[2]!.getByRole("button", { name: "Join this table" }).click();
-    for (const page of pages) { await expect(page.getByRole("button", { name: "Mark myself not ready", exact: true })).toBeVisible(); }
+    for (const page of pages) { await expect(page.getByRole("button", { name: /^(Not ready|Ready)$/ })).toBeVisible(); }
     expect(await ownFingerprint(pages[2]!)).toBe(identities[2]);
+    const tableBounds = await pages[0]!.getByLabel("Table seats").boundingBox();
+    for (const seat of await pages[0]!.locator(".seat").all()) {
+      const bounds = (await seat.boundingBox())!;
+      expect(bounds.x).toBeGreaterThan(tableBounds!.x);
+      expect(bounds.y).toBeGreaterThan(tableBounds!.y);
+      expect(bounds.x + bounds.width).toBeLessThan(tableBounds!.x + tableBounds!.width);
+      expect(bounds.y + bounds.height).toBeLessThan(tableBounds!.y + tableBounds!.height);
+    }
     await pages[0]!.screenshot({ path: testInfo.outputPath("lobby-desktop.png"), fullPage: true });
     await pages[3]!.setViewportSize({ width: 390, height: 844 });
     await expect.poll(() => pages[3]!.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await pages[3]!.screenshot({ path: testInfo.outputPath("lobby-mobile.png"), fullPage: true });
-    await expect(pages[0]!.getByRole("button", { name: "Play first round", exact: true })).toBeEnabled();
-    for (const page of pages.slice(1)) await expect(page.getByRole("button", { name: "Play first round", exact: true })).toHaveCount(0);
-    await pages[2]!.getByRole("button", { name: "Mark myself not ready", exact: true }).click();
     await expect(pages[0]!.getByText("3 of 4 ready", { exact: true })).toBeVisible();
-    await expect(pages[0]!.getByRole("button", { name: "Play first round", exact: true })).toBeDisabled();
-    await pages[2]!.getByRole("button", { name: "Mark myself ready", exact: true }).click();
-    await expect(pages[0]!.getByRole("button", { name: "Play first round", exact: true })).toBeEnabled();
+    await expect(pages[0]!.getByLabel("Live Sasku round")).toHaveCount(0);
+    await pages[2]!.getByRole("button", { name: "Not ready", exact: true }).click();
+    await expect(pages[0]!.getByText("2 of 4 ready", { exact: true })).toBeVisible();
     const transcripts = await Promise.all(pages.map((page) => page.evaluate(async () => {
       const database = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open("p2pcards"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
@@ -177,9 +183,9 @@ test("four isolated browser identities play and recover the first Sasku round ov
     await expect(pages[0]!.getByRole("button", { name: "Join this table" })).toBeEnabled();
     await configureRelay(pages[0]!, relayUrl);
     await pages[0]!.getByRole("button", { name: "Join this table" }).click();
-    await expect(pages[0]!.getByRole("button", { name: "Play first round", exact: true })).toBeVisible();
+    await expect(pages[0]!.getByText("3 of 4 ready", { exact: true })).toBeVisible();
     await expect(pages[0]!.locator(".diagnostics > summary")).toContainText("3 verified links");
-    await pages[0]!.getByRole("button", { name: "Play first round", exact: true }).click();
+    await pages[2]!.getByRole("button", { name: "Ready", exact: true }).click();
     for (const page of pages) await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "bidding", { timeout: 120_000 });
     for (const page of pages) await expect(page.getByLabel("Your private hand").getByRole("button")).toHaveCount(9);
     for (const page of pages) await expect(page.getByLabel("Your private hand").locator("small")).toHaveCount(0);
@@ -190,7 +196,8 @@ test("four isolated browser identities play and recover the first Sasku round ov
       const order = labels.map(label => {
         const match = /^Play (\w+) of (\w+)$/.exec(label);
         if (!match) throw new Error(`Unexpected card label: ${label}`);
-        return rankOrder.indexOf(match[1]!) * 4 + suitOrder.indexOf(match[2]!);
+        const rank = rankOrder.indexOf(match[1]!), suit = suitOrder.indexOf(match[2]!);
+        return rank < 3 ? 100 - rank * 4 - suit : (3 - suit) * 6 + (8 - rank);
       });
       expect(order).toEqual([...order].sort((left, right) => left - right));
     }
@@ -261,7 +268,7 @@ test("invalid invitations fail without relay traffic and mobile welcome stays us
   page.on("websocket", (socket) => { if (!socket.url().includes(":4317")) { relaySockets.push(socket.url()); } });
   await page.setViewportSize({ width: 320, height: 800 });
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Open a table" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Start a game" })).toBeEnabled();
   await page.getByLabel("Invitation link", { exact: true }).fill("https://example.test/#g=invalid");
   await page.getByRole("button", { name: "Join this table" }).click();
   await expect(page.getByRole("alert")).toContainText("Invitation");
@@ -275,9 +282,9 @@ test("an invitation link leads with joining and keeps the invitation field out o
   await page.goto(`/${fragment}`);
   await expect(page.getByRole("heading", { name: "You're invited to Sasku." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Join this table" })).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Open a new table instead" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start a new game" })).toBeVisible();
   await expect(page.getByLabel("Invitation link", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Open a table", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Start a game", exact: true })).toHaveCount(0);
   await page.setViewportSize({ width: 320, height: 800 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("invitation-mobile.png"), fullPage: true });

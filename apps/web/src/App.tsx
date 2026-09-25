@@ -16,6 +16,7 @@ export function App({ controller, demo = false }: { readonly controller: Browser
   const busy = state.busy !== null;
   const room = state.room;
   const invited = room === null && state.pendingInvitation !== "" && window.location.hash !== "";
+  const joining = room !== null && !room.isHost && !room.seats.some(seat => seat.isSelf);
   const readyCount = room?.seats.filter((seat) => seat.ready).length ?? 0;
   const act = (operation: Promise<void>): void => { void operation.catch(() => undefined); };
   const join = (event: FormEvent): void => {
@@ -48,27 +49,24 @@ export function App({ controller, demo = false }: { readonly controller: Browser
               <h1 id="welcome-title">You're invited<br /><em>to Sasku.</em></h1>
               <p className="lede">Take your seat in a private four-player game.</p>
             </> : <>
-              <p className="eyebrow">Tablefolk · Sasku</p>
-              <h1 id="welcome-title">Play Sasku<br /><em>together.</em></h1>
+              <h1 id="welcome-title">Sasku</h1>
               <p className="lede">A four-player partnership trick-taking game. Bid for trump, play nine tricks, and score with your partner.</p>
               <div className="welcome__links">
                 <a className="reference-link" href="./how-it-works.html">How it works <span aria-hidden="true">→</span></a>
                 <a className="reference-link" href="./scoring.html">Scoring reference <span aria-hidden="true">→</span></a>
-                <a className="reference-link" href="./demo.html">Try the four-player demo <span aria-hidden="true">→</span></a>
+                <a className="reference-link" href="./demo.html">Demo <span aria-hidden="true">→</span></a>
               </div>
             </>}
           </div>
           <div className="entry-panel">
             {invited ? <>
-              <h2>Join the table</h2>
               <button className="button button--primary" disabled={busy || state.identity === null} onClick={() => act(controller.join(invitation, relays))}>
                 {state.busy === "joining" ? "Joining table..." : "Join this table"}<span aria-hidden="true">→</span>
               </button>
-              <button className="entry-alternative" disabled={busy || state.identity === null} onClick={() => act(controller.create(relays))}>Open a new table instead</button>
+              <button className="entry-alternative" disabled={busy || state.identity === null} onClick={() => act(controller.create(relays))}>Start a new game</button>
             </> : <>
-              <h2>Start a game</h2>
               <button className="button button--primary" disabled={busy || state.identity === null} onClick={() => act(controller.create(relays))}>
-                {state.busy === "hosting" ? "Opening table..." : "Open a table"}<span aria-hidden="true">+</span>
+                {state.busy === "hosting" ? "Opening table..." : "Start a game"}<span aria-hidden="true">+</span>
               </button>
               <div className="entry-divider"><span>or join a table</span></div>
               <form onSubmit={join}>
@@ -94,21 +92,21 @@ export function App({ controller, demo = false }: { readonly controller: Browser
         </section>
       ) : (
         <details className={`table-settings${playing ? " table-settings--playing" : ""}`} open={playing ? undefined : true}>
-        <summary>Table & connections <span>{state.peers.filter(peer => peer.state === "authenticated").length} / 3 connected</span></summary>
+        <summary>Table <span>{state.peers.filter(peer => peer.state === "authenticated").length} / 3 connected</span></summary>
         <section className="lobby" aria-labelledby="lobby-title">
           <div className="lobby-heading">
-            <div><p className="eyebrow">{state.phase === "agreed" && readyCount === 4 ? "Ready to play" : "Waiting room"}</p><h1 id="lobby-title">Sasku</h1></div>
+            <div><p className="eyebrow">{playing ? "At the table" : "Waiting room"}</p><h1 id="lobby-title">Sasku</h1></div>
             {!demo && <button className="button button--quiet" onClick={() => act(controller.leave().then(() => setInvitation("")))} disabled={state.busy === "leaving"}>Leave table</button>}
           </div>
           <div className="lobby-layout">
             <div className="table-panel">
-              <div className="table-caption" aria-live="polite">{room.seats.length} / 4 seated</div>
+              <div className="table-caption" aria-live="polite">{joining ? <span className="joining-status" role="status"><span className="loading-spinner" aria-hidden="true" />Loading players…</span> : `${room.seats.length} / 4 seated`}</div>
               <div className="felt-table" aria-label="Table seats">
                 {Array.from({ length: 4 }, (_, index) => {
                   const seat = room.seats[index];
                   return <div className={`seat seat--${index + 1}${seat === undefined ? " seat--empty" : ""}`} key={index}>
                     <span className="seat__number">0{index + 1}</span>
-                    {seat === undefined ? <h3>Open seat</h3> : <>
+                    {seat === undefined ? <h3>{joining ? "Loading…" : "Open seat"}</h3> : <>
                       <h3>{seat.isSelf ? "You" : `Player ${index + 1}`} {seat.isHost && <span className="seat__host">Host</span>}</h3>
                       <details className="seat-identity"><summary>Identity</summary><p className="seat__fingerprint">{seat.fingerprint}</p></details>
                       <p className="seat__connection"><span className={seat.connected ? "status-dot status-dot--verified" : "status-dot"} aria-hidden="true" />{seat.isSelf ? "This browser" : seat.connected ? "Identity verified" : "Not connected"}</p>
@@ -125,18 +123,16 @@ export function App({ controller, demo = false }: { readonly controller: Browser
                 <button className="button button--secondary" onClick={() => { void copyInvite(); }}>Copy invitation</button>
                 <p className="copy-status" role="status">{copySource === room.invitation ? copyStatus : ""}</p>
               </>}
-              <div className="agreement-status" aria-live="polite">
+              {!playing && <div className="agreement-status" aria-live="polite">
                 <strong>{readyCount} of 4 ready</strong>
-                <p>{!room.ownReady ? "You are marked not ready." : room.seats.length < 4 ? "Waiting for four players." : readyCount < 4 ? "Waiting for everyone to be ready." : state.phase !== "agreed" ? "Preparing the table." : room.isHost ? room.canStart ? "Everyone is ready. Start the round." : "Syncing the table." : "Waiting for player 1 to start."}</p>
-              </div>
-              {!state.game && <button className="button button--secondary" disabled={busy} onClick={() => act(controller.setReady(!room.ownReady))}>{room.ownReady ? "Mark myself not ready" : "Mark myself ready"}</button>}
-              {room.isHost && state.phase === "agreed" && !state.game && controller.startRound && <button className="button button--primary" disabled={!room.canStart || busy} onClick={() => act(controller.startRound!())}>Play first round</button>}
-
-              {!demo && <details className="settings"><summary>Signed roster</summary><p>Game ID</p><code>{room.gameId}</code><p>Roster hash</p><code>{room.rosterHash ?? "Waiting for the host's signed roster"}</code></details>}
+                <p>{!room.ownReady ? "Mark ready to play." : room.seats.length < 4 ? "Waiting for players." : readyCount < 4 ? "Waiting for everyone to be ready." : "Starting the game…"}</p>
+              </div>}
+              {!state.game && <button className="button button--secondary" disabled={busy} onClick={() => act(controller.setReady(!room.ownReady))}>{room.ownReady ? "Not ready" : "Ready"}</button>}
             </aside>
           </div>
           {!demo && <details className="diagnostics">
-            <summary>Connection diagnostics <span>{state.peers.filter(({ state }) => state === "authenticated").length} verified links</span></summary>
+            <summary>Details <span>{state.peers.filter(({ state }) => state === "authenticated").length} verified links</span></summary>
+            <div className="roster-details"><h3>Signed roster</h3><p>Game ID</p><code>{room.gameId}</code><p>Roster hash</p><code>{room.rosterHash ?? "Loading…"}</code></div>
             <div className="diagnostics__columns">
               <div><h3>Peer links</h3>{state.peers.length === 0 ? <p>No peer connections yet. Guests connect after opening your invitation.</p> : <ul className="connection-list">{state.peers.map((peer) => <li key={peer.publicKey}>
                 <div><strong>{peer.fingerprint}</strong><span>{peer.state === "authenticated" ? "Identity verified" : peer.state} / {peer.path} path</span></div>

@@ -24,12 +24,11 @@ All other cards are worth nothing.
 
 ## Trumps and card ranking
 
-**All court cards (King, Queen, Jack of every suit) are permanent trumps.** They rank by
-suit, from strongest to weakest: **clubs → spades → hearts → diamonds**.
+**All court cards (King, Queen, Jack of every suit) are permanent trumps.** Kings beat all queens, and queens beat all jacks. Within each rank, suits run from strongest to weakest: **clubs → spades → hearts → diamonds**.
 
 High to low, the courts run:
 
-> K♣ Q♣ J♣ · K♠ Q♠ J♠ · K♥ Q♥ J♥ · K♦ Q♦ J♦
+> K♣ K♠ K♥ K♦ · Q♣ Q♠ Q♥ Q♦ · J♣ J♠ J♥ J♦
 
 So the **King of clubs** is the strongest court card — and the strongest card in the game.
 The **Jack of diamonds** is the weakest court card.
