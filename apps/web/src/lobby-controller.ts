@@ -14,6 +14,7 @@ import { TrysteroNostrSignalingAdapter, type MeshPeerConnectionFactory } from "@
 import { connectionRulesHash, lobbyIceConfigHash, parseRelayText } from "./lobby-config";
 import { createLobbyInvitation, identityFingerprint, parseLobbyInvitation, type LobbyInvitation } from "./lobby-invitation";
 import { LobbyTransport, type LobbyTransportLike, type LobbyTransportOptions } from "./lobby-transport";
+import { parseRoundCompletionMarker, roundCompletionMarker, sameRoundCompletion } from "./round-completion-marker";
 import type { BrowserLobbyActions, BrowserLobbySnapshot } from "./lobby-types";
 
 interface Room {
@@ -33,12 +34,16 @@ interface Room {
   recordCount: number;
   releaseLease: (() => void) | null;
   readonly flushes: Map<string, { generation: number; dirty: boolean }>;
+  readonly sentThrough: Map<string, { generation: number; seq: number }>;
+  readonly ackWaiters: Map<string, Set<() => void>>;
   game: LiveRound | null;
   playing: boolean;
   localReady: boolean;
   autoReadyRequested: boolean;
   readonly peerReady: Map<string, { generation: number; ready: boolean }>;
   readonly barriers: Map<string, { generation: number; barrier: PeerHistoryBarrier }>;
+  readonly roundCompletions: Map<string, Map<number, { generation: number; marker: Uint8Array }>>;
+  readonly sentRoundCompletions: Map<string, Map<number, { generation: number; marker: Uint8Array }>>;
   readonly early: { remote: IdentityPublicKey; payload: Uint8Array }[];
   readonly paths: Map<string, "direct" | "relayed" | "unknown">;
 }
@@ -134,7 +139,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       room = {
         invitation, host, stored, authored, author: new PersistentEnvelopeAuthor(invitation.gameId, self.secretKey, authored),
         abort: new AbortController(), lobby, receiver: new PersistentLobbyReceiver(lobby, stored),
-        signaling: null, transport: null, queue: Promise.resolve(), pending: 0, blocked: false, recordCount: 0, releaseLease: null, flushes: new Map(), paths: new Map(), game: null, playing: false, localReady: true, autoReadyRequested: false, peerReady: new Map(), barriers: new Map(), early: [],
+        signaling: null, transport: null, queue: Promise.resolve(), pending: 0, blocked: false, recordCount: 0, releaseLease: null, flushes: new Map(), sentThrough: new Map(), ackWaiters: new Map(), paths: new Map(), game: null, playing: false, localReady: true, autoReadyRequested: false, peerReady: new Map(), barriers: new Map(), roundCompletions: new Map(), sentRoundCompletions: new Map(), early: [],
       };
       this.#room = room;
       this.#refresh(room);
@@ -142,8 +147,8 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       this.#require(room, epoch);
       const records = await stored.loadTranscript(invitation.gameId);
       this.#require(room, epoch);
-      if (records.length > 512 || records.some(({ artifact }) => artifact.canonicalBytes.length > 65536)) {
-        throw new Error("Stored history exceeds this connection-check profile; it will not be discarded automatically");
+      if (records.length > 4096 || records.some(({ artifact }) => artifact.canonicalBytes.length > 65536)) {
+        throw new Error("Stored history exceeds this Sasku match profile; it will not be discarded automatically");
       }
       const lobbyRecords = records.filter(({ artifact }) => ["JOIN", "ROSTER", "READY"].includes(artifact.envelope.type));
       room.recordCount = lobbyRecords.length;
@@ -182,7 +187,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       } else if (host) {
         await this.#publish(room, { round: 0, phase: "lobby", type: "ROSTER", body: encodeRosterBody({ ...context, seats: [parseIdentityPublicKey(self.publicKey)] }) });
       } else {
-        await room.author.author({ round: 0, phase: "lobby", type: "JOIN", body: encodeJoinBody({ pkId: parseIdentityPublicKey(self.publicKey), rulesHash: context.rulesHash, clientVersion: "sasku-first-round-candidate/1" }) });
+        await room.author.author({ round: 0, phase: "lobby", type: "JOIN", body: encodeJoinBody({ pkId: parseIdentityPublicKey(self.publicKey), rulesHash: context.rulesHash, clientVersion: "sasku-match-candidate/2" }) });
         room.recordCount += 1;
       }
       this.#require(room, epoch);
@@ -210,7 +215,11 @@ export class BrowserLobbyController implements BrowserLobbyActions {
         onAuthenticated: (remote, generation) => {
           if (this.#room !== current) { return; }
           current.barriers.set(bytesToHex(remote), { generation, barrier: new PeerHistoryBarrier() });
+          current.sentThrough.delete(bytesToHex(remote));
+          this.#notifyAck(current, bytesToHex(remote));
           current.peerReady.delete(bytesToHex(remote));
+          current.roundCompletions.delete(bytesToHex(remote));
+          current.sentRoundCompletions.delete(bytesToHex(remote));
           this.#event(`Identity verified: ${identityFingerprint(remote)}`);
           void current.transport!.send(remote, generation, Uint8Array.of(1, current.localReady ? 1 : 0)).catch((cause: unknown) => {
             if (this.#room === current) this.#event(`Ready status delivery failed: ${message(cause)}`);
@@ -227,8 +236,12 @@ export class BrowserLobbyController implements BrowserLobbyActions {
           if (this.#room !== current) { return; }
           current.barriers.delete(bytesToHex(remote));
           current.peerReady.delete(bytesToHex(remote));
+          current.roundCompletions.delete(bytesToHex(remote));
+          current.sentRoundCompletions.delete(bytesToHex(remote));
           current.paths.delete(bytesToHex(remote));
           current.flushes.delete(bytesToHex(remote));
+          current.sentThrough.delete(bytesToHex(remote));
+          this.#notifyAck(current, bytesToHex(remote));
           if (!current.lobby.isRosterMember(remote)) { current.transport?.remove(remote); }
           this.#refresh(current);
         },
@@ -255,11 +268,23 @@ export class BrowserLobbyController implements BrowserLobbyActions {
   async #incoming(room: Room, remote: IdentityPublicKey, payload: Uint8Array, generation: number): Promise<void> {
     if (this.#room !== room || room.transport?.generation(remote) !== generation) return;
     if (payload[0] === 0) {
-      room.barriers.get(bytesToHex(remote))?.barrier.receive(payload); this.#refresh(room); return;
+      const key = bytesToHex(remote);
+      room.barriers.get(key)?.barrier.receive(payload); this.#notifyAck(room, key); this.#refresh(room); return;
     }
     if (payload[0] === 1) {
       if (payload.length !== 2 || (payload[1] !== 0 && payload[1] !== 1)) throw new LobbyProtocolError("Invalid ready status");
       room.peerReady.set(bytesToHex(remote), { generation, ready: payload[1] === 1 });
+      this.#refresh(room); return;
+    }
+    if (payload[0] === 2) {
+      const marker = parseRoundCompletionMarker(payload), key = bytesToHex(remote);
+      const byRound = room.roundCompletions.get(key) ?? new Map();
+      const previous = byRound.get(marker[1]!);
+      if (previous?.generation === generation && !sameRoundCompletion(previous.marker, marker)) {
+        throw new LobbyProtocolError("Peer changed its verified round result");
+      }
+      byRound.set(marker[1]!, { generation, marker });
+      room.roundCompletions.set(key, byRound);
       this.#refresh(room); return;
     }
     if (payload.length > 65536) throw new LobbyProtocolError("Envelope exceeds 64 KiB");
@@ -362,9 +387,31 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     void (async () => {
       while (flush.dirty && this.#room === room && room.transport?.generation(remote) === generation) {
         flush.dirty = false;
+        let acknowledgedSeq = room.sentThrough.get(key)?.generation === generation ? room.sentThrough.get(key)!.seq : -1;
+        let batchHead: EnvelopeArtifact | null = null;
+        let batchSize = 0;
+        const acknowledgeBatch = async (): Promise<void> => {
+          const head = batchHead;
+          if (head === null) return;
+          const entry = room.barriers.get(key);
+          if (entry?.generation !== generation) throw new Error("History channel changed during delivery");
+          await room.transport!.send(remote, generation, entry.barrier.announce(head));
+          await this.#waitForAck(room, key, remote, generation, head);
+          acknowledgedSeq = head.envelope.seq;
+          room.sentThrough.set(key, { generation, seq: acknowledgedSeq });
+          batchHead = null;
+          batchSize = 0;
+          this.#refresh(room);
+        };
         const result = await replayAuthoredHistory(room.authored, room.invitation.gameId, parseIdentityPublicKey(this.#self().publicKey),
-          (bytes) => room.transport!.send(remote, generation, bytes),
-          { signal: room.abort.signal, maxEnvelopes: 128, maxBytes: 4 * 1024 * 1024 });
+          async (bytes) => {
+            const artifact = decodeAndVerifyEnvelope(bytes);
+            if (artifact.envelope.seq <= acknowledgedSeq) return;
+            await room.transport!.send(remote, generation, bytes);
+            batchHead = artifact;
+            if (++batchSize >= 4) await acknowledgeBatch();
+          },
+          { signal: room.abort.signal, maxEnvelopes: 4096, maxBytes: 64 * 1024 * 1024 });
         if (result.status === "failed") {
           if (this.#room === room && result.stage !== "send") {
             room.blocked = true;
@@ -374,6 +421,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
           throw result.error;
         }
         if (result.status === "cancelled") { return; }
+        await acknowledgeBatch();
         const entry = room.barriers.get(key);
         const head = await room.author.readHead();
         if (head && entry?.generation === generation && room.transport?.generation(remote) === generation) {
@@ -391,6 +439,34 @@ export class BrowserLobbyController implements BrowserLobbyActions {
           this.#flush(room, remote, generation);
         }
       }
+    });
+  }
+
+  #notifyAck(room: Room, key: string): void {
+    for (const wake of room.ackWaiters.get(key) ?? []) wake();
+  }
+
+  #waitForAck(room: Room, key: string, remote: IdentityPublicKey, generation: number, head: EnvelopeArtifact): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const waiters = room.ackWaiters.get(key) ?? new Set<() => void>();
+      room.ackWaiters.set(key, waiters);
+      const cleanup = () => {
+        clearTimeout(timeout);
+        room.abort.signal.removeEventListener("abort", wake);
+        waiters.delete(wake);
+        if (waiters.size === 0) room.ackWaiters.delete(key);
+      };
+      const wake = () => {
+        if (this.#room !== room || room.abort.signal.aborted || room.transport?.generation(remote) !== generation) {
+          cleanup(); reject(new Error("History channel closed during delivery"));
+        } else if (room.barriers.get(key)?.generation === generation && room.barriers.get(key)!.barrier.acknowledged(head)) {
+          cleanup(); resolve();
+        }
+      };
+      const timeout = setTimeout(() => { cleanup(); reject(new Error("Timed out waiting for peer history acknowledgement")); }, 30_000);
+      waiters.add(wake);
+      room.abort.signal.addEventListener("abort", wake);
+      wake();
     });
   }
 
@@ -478,6 +554,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     if (room === null) { return; }
     if (this.#room === room) { this.#room = null; }
     room.abort.abort();
+    for (const key of room.ackWaiters.keys()) this.#notifyAck(room, key);
     await room.transport?.close().catch(() => undefined);
     await room.queue;
     await room.game?.close();
@@ -547,6 +624,41 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     const synchronized = roster.length === 4 && roster.every(key => bytesEqual(key, self) ||
       (room.transport?.authenticated(key) && room.barriers.get(bytesToHex(key))?.barrier.ready));
     room.game?.connected(room.playing && synchronized);
+    const gameView = room.game?.view;
+    const audited = gameView?.state?.audit?.result;
+    const completion = gameView && audited?.status === "valid" && gameView.match.completed.length < gameView.match.round
+      ? roundCompletionMarker(gameView.match.round, audited.score) : null;
+    const markers = gameView?.match.completed.map(item => roundCompletionMarker(item.round, item.score)) ?? [];
+    if (completion !== null) markers.push(completion);
+    for (const peer of room.transport?.peers ?? []) {
+      if (!room.transport?.authenticated(peer.identity)) continue;
+      const key = bytesToHex(peer.identity), sent = room.sentRoundCompletions.get(key) ?? new Map();
+      room.sentRoundCompletions.set(key, sent);
+      for (const marker of markers) {
+        const previous = sent.get(marker[1]!);
+        if (previous?.generation === peer.generation && sameRoundCompletion(previous.marker, marker)) continue;
+        sent.set(marker[1]!, { generation: peer.generation, marker });
+        void room.transport.send(peer.identity, peer.generation, marker).catch((cause: unknown) => {
+          if (this.#room === room) {
+            sent.delete(marker[1]!);
+            this.#event(`Round completion delivery failed: ${message(cause)}`);
+          }
+        });
+      }
+    }
+    if (completion !== null && !room.blocked && roster.some(key => {
+      if (bytesEqual(key, self)) return false;
+      const remote = room.roundCompletions.get(bytesToHex(key))?.get(completion[1]!);
+      return remote !== undefined && remote.generation === room.transport?.generation(key) && !sameRoundCompletion(remote.marker, completion);
+    })) {
+      room.blocked = true;
+      this.#set({ error: "Players disagree on the verified round result; reopen the table to inspect signed history" });
+    }
+    const allComplete = completion !== null && roster.length === 4 && roster.every(key => bytesEqual(key, self) || (() => {
+      const remote = room.roundCompletions.get(bytesToHex(key))?.get(completion[1]!);
+      return remote !== undefined && remote.generation === room.transport?.generation(key) && sameRoundCompletion(remote.marker, completion);
+    })()) && !room.blocked;
+    room.game?.roundReady(allComplete ? gameView!.match.round : 0);
     const canReady = !room.blocked && room.recordCount < 128 && room.lobby.state !== "finalized" && roster.length === 4 && ownSeat >= 0 &&
       !readySeats.includes(ownSeat) && roster.every((key) => room.lobby.headOf(key) !== null) && seats.every(({ connected }) => connected);
     const allReadyKnown = room.localReady && roster.length === 4 && roster.every(key => bytesEqual(key, self) || (

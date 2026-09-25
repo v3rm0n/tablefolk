@@ -15,7 +15,7 @@ export function createLobbyInvitation(baseUrl: string, gameId: GameId, host: Ide
   const identity = parseIdentityPublicKey(importEd25519PublicKey(host));
   url.search = "";
   url.hash = new URLSearchParams({
-    g: bytesToHex(game), h: bytesToHex(identity), r: "sasku-first-round-candidate@1", s: "trystero-nostr",
+    g: bytesToHex(game), h: bytesToHex(identity), r: "sasku-match-candidate@2", s: "trystero-nostr",
   }).toString();
   return url.toString();
 }
@@ -39,8 +39,8 @@ export function parseLobbyInvitation(input: string): LobbyInvitation {
   if (!/^[0-9a-f]{32}$/.test(game) || !/^[0-9a-f]{64}$/.test(host)) {
     throw new Error("Invitation contains an invalid game or host identity");
   }
-  if (params.get("r") !== "sasku-first-round-candidate@1" || params.get("s") !== "trystero-nostr") {
-    throw new Error("This invitation requires the Sasku first-round candidate profile over Nostr");
+  if (params.get("r") !== "sasku-match-candidate@2" || params.get("s") !== "trystero-nostr") {
+    throw new Error("This invitation requires the Sasku match candidate profile over Nostr");
   }
   return Object.freeze({
     gameId: parseGameId(hexToBytes(game)),

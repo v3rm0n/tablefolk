@@ -14,6 +14,8 @@ it("requires both a durable incoming prefix and acknowledgement of its own prefi
   expect(a.ready).toBe(false); expect(b.ready).toBe(false);
   expect(b.acknowledge(() => undefined)).toBeNull();
   a.receive(b.acknowledge(() => first)!);
+  expect(a.acknowledged(first)).toBe(true);
+  expect(a.acknowledged(second)).toBe(false);
   expect(a.ready).toBe(false);
   b.receive(a.acknowledge(() => second)!);
   expect(a.ready).toBe(true); expect(b.ready).toBe(true);
@@ -29,7 +31,9 @@ it("ignores acknowledgements from replaced generations and older outgoing prefix
   peer.receive(current.announce(first)); current.receive(stale); expect(current.ready).toBe(false);
   const ack = peer.acknowledge(() => first)!;
   current.announce(next); current.receive(ack); expect(current.ready).toBe(false);
+  expect(current.acknowledged(first)).toBe(false);
   peer.receive(current.announce(next)); current.receive(peer.acknowledge(() => next)!); expect(current.ready).toBe(true);
+  expect(current.acknowledged(next)).toBe(true);
 });
 it("rejects conflicting admitted heads and malformed or oversized markers", () => {
   const a = new PeerHistoryBarrier(), b = new PeerHistoryBarrier();

@@ -2,8 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 import { WebSocketServer, WebSocket } from "ws";
 
-test("four isolated browser identities play and recover the first Sasku round over real WebRTC", async ({ browser, baseURL }, testInfo) => {
-  test.setTimeout(300_000);
+test("four isolated browser identities play a complete Sasku match and recover a hand over real WebRTC", async ({ browser, baseURL }, testInfo) => {
+  test.setTimeout(900_000);
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const address = server.address();
@@ -96,6 +96,7 @@ test("four isolated browser identities play and recover the first Sasku round ov
     });
   }
   const pages = await Promise.all(contexts.map((context) => context.newPage()));
+  for (const page of pages) page.setDefaultTimeout(30_000);
   const errors: string[] = [];
   pages.forEach((page, index) => page.on("pageerror", (error) => errors.push(`${index}: ${error.message}`)));
   try {
@@ -187,6 +188,7 @@ test("four isolated browser identities play and recover the first Sasku round ov
     await expect(pages[0]!.locator(".diagnostics > summary")).toContainText("3 verified links");
     await pages[2]!.getByRole("button", { name: "Ready", exact: true }).click();
     for (const page of pages) await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "bidding", { timeout: 120_000 });
+    const seatedPages = await seatOrderedPages(pages);
     for (const page of pages) await expect(page.getByLabel("Your private hand").getByRole("button")).toHaveCount(9);
     for (const page of pages) await expect(page.getByLabel("Your private hand").locator("small")).toHaveCount(0);
     const rankOrder = ["king", "queen", "jack", "ace", "ten", "nine", "eight", "seven", "six"];
@@ -216,20 +218,12 @@ test("four isolated browser identities play and recover the first Sasku round ov
     await pages[2]!.getByRole("button", { name: "Join this table" }).click();
     await expect(pages[2]!.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "bidding", { timeout: 120_000 });
     await expect.poll(() => pages[2]!.getByLabel("Your private hand").getByRole("button").evaluateAll(buttons => buttons.map(b => b.getAttribute("aria-label")))).toEqual(beforeHand);
-    await pages[0]!.getByLabel("Live Sasku round").getByRole("button", { name: /^Bid / }).first().click();
-    for (const page of pages.slice(1)) await page.getByLabel("Live Sasku round").getByRole("button", { name: "Pass", exact: true }).click();
-    await pages[0]!.getByLabel("Live Sasku round").getByRole("button", { name: /^Choose clubs/ }).click();
+    await seatedPages[0]!.getByLabel("Live Sasku round").getByRole("button", { name: /^Bid / }).first().click();
+    for (const page of seatedPages.slice(1)) await page.getByLabel("Live Sasku round").getByRole("button", { name: "Pass", exact: true }).click();
+    await seatedPages[0]!.getByLabel("Live Sasku round").getByRole("button", { name: /^Choose clubs/ }).click();
     for (let play = 0; play < 36; play++) {
-      let turn = -1;
-      await expect.poll(async () => {
-        const choices = await Promise.all(pages.map(p => p.getByLabel("Your private hand").locator("button:enabled").count()));
-        turn = choices.findIndex(count => count > 0); return turn;
-      }).toBeGreaterThanOrEqual(0);
-      await pages[turn]!.getByLabel("Your private hand").locator("button:enabled").first().click();
-      await expect.poll(async () => {
-        const counts = await Promise.all(pages.map(p => p.getByLabel("Your private hand").getByRole("button").count()));
-        return counts.reduce((sum, count) => sum + count, 0);
-      }).toBe(35 - play);
+      const turn = await synchronizedTurn(seatedPages);
+      await playNetworkCard(seatedPages, turn, 35 - play);
       if (play === 3) {
         for (const page of pages) await expect(page.getByLabel("Last completed trick")).toBeVisible();
         await pages[0]!.locator(".live-history > summary").click();
@@ -238,10 +232,26 @@ test("four isolated browser identities play and recover the first Sasku round ov
         await pages[3]!.screenshot({ path: testInfo.outputPath("live-trick-mobile.png"), fullPage: true });
       }
     }
+    for (const page of pages) await expect(page.getByLabel("Match scoreboard")).toContainText("1 round verified", { timeout: 60_000 });
+
+    for (let round = 2; round <= 10; round += 1) {
+      const phases = await Promise.all(pages.map(page => page.getByLabel("Live Sasku round").getAttribute("data-phase")));
+      if (phases.every(phase => phase === "match_complete")) break;
+      for (const page of pages) {
+        await expect(page.getByText(`Sasku · Round ${round}`)).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByLabel("Your private hand").getByRole("button")).toHaveCount(9, { timeout: 120_000 });
+      }
+      const dealer = (3 + round - 1) % 4;
+      await seatedPages[(dealer + 1) % 4]!.getByLabel("Live Sasku round").getByRole("button", { name: "Call diamonds" }).click();
+      for (let play = 0; play < 36; play += 1) {
+        const turn = await synchronizedTurn(seatedPages);
+        await playNetworkCard(seatedPages, turn, 35 - play);
+      }
+      for (const page of pages) await expect(page.getByLabel("Match scoreboard")).toContainText(`${round} rounds verified`, { timeout: 60_000 });
+    }
     for (const page of pages) {
-      await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "complete", { timeout: 60_000 });
-      await expect(page.getByText("Round verified by this browser:", { exact: false })).toBeVisible();
-      await expect(page.getByLabel("Your private hand").getByRole("button")).toHaveCount(0);
+      await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "match_complete", { timeout: 60_000 });
+      await expect(page.getByRole("heading", { name: /won the game/ })).toBeVisible();
     }
     expect(errors).toEqual([]);
 
@@ -278,7 +288,7 @@ test("invalid invitations fail without relay traffic and mobile welcome stays us
 });
 
 test("an invitation link leads with joining and keeps the invitation field out of view", async ({ page }, testInfo) => {
-  const fragment = `#g=${"11".repeat(16)}&h=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a&r=sasku-first-round-candidate%401&s=trystero-nostr`;
+  const fragment = `#g=${"11".repeat(16)}&h=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a&r=sasku-match-candidate%402&s=trystero-nostr`;
   await page.goto(`/${fragment}`);
   await expect(page.getByRole("heading", { name: "You're invited to Sasku." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Join this table" })).toBeEnabled();
@@ -291,6 +301,48 @@ test("an invitation link leads with joining and keeps the invitation field out o
   await page.goto("/");
   await expect(page.getByLabel("Invitation link", { exact: true })).toBeVisible();
 });
+
+async function synchronizedTurn(pages: readonly Page[]): Promise<number> {
+  let turn = -1;
+  await expect.poll(async () => {
+    const [turns, choices] = await Promise.all([
+      Promise.all(pages.map(page => page.evaluate(() => document.querySelector("[aria-label='Live Sasku round']")?.getAttribute("data-turn") ?? ""))),
+      Promise.all(pages.map(page => page.getByLabel("Your private hand").locator("button:enabled").count())),
+    ]);
+    turn = Number(turns[0]);
+    return Number.isInteger(turn) && turn >= 0 && turn < pages.length && turns.every(value => value === String(turn)) &&
+      choices.every((count, seat) => (seat === turn ? count > 0 : count === 0)) ? turn : -1;
+  }, { timeout: 30_000 }).toBeGreaterThanOrEqual(0);
+  return turn;
+}
+
+async function seatOrderedPages(pages: readonly Page[]): Promise<Page[]> {
+  const seats = await Promise.all(pages.map(async page => Number(await page.getByLabel("Live Sasku round").getAttribute("data-seat"))));
+  expect([...seats].sort()).toEqual([0, 1, 2, 3]);
+  return [0, 1, 2, 3].map(seat => pages[seats.indexOf(seat)]!);
+}
+
+async function playNetworkCard(pages: readonly Page[], turn: number, expectedTotal: number): Promise<void> {
+  const page = pages[turn]!;
+  const hand = page.getByLabel("Your private hand").getByRole("button");
+  const before = await hand.count();
+  let advanced = false;
+  for (let attempt = 0; attempt < 3 && !advanced; attempt += 1) {
+    await page.getByLabel("Your private hand").locator("button.is-playable:enabled").first().click({ timeout: 10_000 });
+    try {
+      await expect.poll(() => hand.count(), { timeout: 5_000 }).toBe(before - 1);
+      advanced = true;
+    } catch {
+      const alerts = await page.getByRole("alert").allInnerTexts();
+      if (alerts.length) throw new Error(alerts.join("; "));
+    }
+  }
+  if (!advanced) throw new Error(`Player ${turn + 1}'s card play did not advance`);
+  await expect.poll(async () => {
+    const counts = await Promise.all(pages.map(player => player.getByLabel("Your private hand").getByRole("button").count()));
+    return counts.reduce((sum, count) => sum + count, 0);
+  }).toBe(expectedTotal);
+}
 
 async function configureRelay(page: Page, relayUrl: string): Promise<void> {
   await page.getByText("Connection settings", { exact: true }).click();

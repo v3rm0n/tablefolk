@@ -10,6 +10,9 @@ export class PeerHistoryBarrier {
   #acked = false;
   #received = false;
   get ready(): boolean { return this.#acked && this.#received; }
+  acknowledged(head: EnvelopeArtifact): boolean {
+    return this.#acked && this.#sent?.seq === head.envelope.seq && this.#sent.hash === bytesToHex(head.hash);
+  }
   announce(head: EnvelopeArtifact): Uint8Array {
     const hash = bytesToHex(head.hash);
     // Replaying an unchanged, already acknowledged prefix must not flicker readiness.

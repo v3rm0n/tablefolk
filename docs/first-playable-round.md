@@ -1,5 +1,9 @@
 # First playable Sasku round
 
+This document records the original single-round milestone. The current browser
+profile is `sasku-match-candidate@2`: it continues verified rounds with rotating
+dealers and cumulative scoring until a partnership reaches 12 P. See `RULES.md`.
+
 The browser now supports one complete four-player round using real WebRTC,
 IndexedDB, and candidate Bayer–Groth shuffle proofs in disposable WASM workers.
 This is an experimental playable build, not a reviewed cryptographic release.

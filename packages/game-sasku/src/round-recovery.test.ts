@@ -300,6 +300,15 @@ describe("Sasku round recovery", () => {
     }
   });
 
+  it("lets a match replay one round while retaining other rounds in the signed sender chains", async () => {
+    const c = await context({}, undefined, false);
+    await append(c, 0, { round: c.f.round - 1, phase: `round.${c.f.round - 1}.audit`, type: "AUDIT_DISCLOSE", body: {} });
+    await append(c, 1, { round: c.f.round + 1, phase: `round.${c.f.round + 1}.shuffle.1`, type: "SHUFFLE", body: {} });
+    const recovered = PersistentSaskuRoundReceiver.recover(c.options, { allowOtherRounds: true });
+    expect(recovered.snapshot).toEqual(c.game.snapshot);
+    expect(c.session.heads().map(head => head.seq)).toEqual([3, 3, 2, 2]);
+  });
+
   it("ignores explicit lobby/housekeeping bodies and current-round shuffle provenance, including nested SYNC traffic", async () => {
     const c = await context({}, undefined, false);
     const nested = c.f.action(0, [], 20, "diamonds");

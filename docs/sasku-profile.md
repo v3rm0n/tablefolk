@@ -529,15 +529,18 @@ The `scoring.html` page uses this same package for manual examples.
 Changing its inputs has no lobby, identity, storage, or network effect. Invalid
 totals show a validation message instead of a misleading score. Pass-round mode
 disables the named-suit/declarer inputs and always represents default diamonds.
-The existing connection-check rules bundle and lobby agreement are unchanged.
+The browser now binds a match profile with a fixed initial dealer, rotating
+subsequent dealers, and a 12 P target. Its signed rules hash differs from the
+original single-round profile. The candidate browser profile caps a table at
+32 hands; it stops without declaring a winner if repeated zero-point hands
+keep both partnerships below 12 P at that limit.
 
 ## Remaining Decisions
 
-- Initial dealer selection and match termination/target score
+- Independent review of the candidate initial-dealer and 12 P match policy
 - Production deal distribution and its binding to the verified encrypted deck
-- Browser integration of the durable receiver, verified shuffle/schedule provenance,
-  private-hand rendering/input, readiness-aware round-message delivery, outgoing
-  setup coordination, automatic contribution scheduling, and round/match finalization
+- Generalized catch-up and peer-signed final-result agreement beyond the
+  browser's verified, locally derived match result
 - A complete content-addressed Sasku rules bundle and integration with verified
   shuffle/deal/play, persistence, and offline replay
 

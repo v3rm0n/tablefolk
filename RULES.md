@@ -55,8 +55,9 @@ Court cards are excluded from the suit count, so each court counts only once.
 
 - Bidding starts with the player after the dealer and proceeds cyclically in
   seat order **1 → 2 → 3 → 4**.
-- On your turn, pass or bid your **exact calculated hand strength**, provided
-  it strictly exceeds the current highest bid. Equal bids cannot replace it.
+- On your turn, pass or bid a whole number **from 3 up to your calculated hand
+  strength**, provided it strictly exceeds the current highest bid. Equal bids
+  cannot replace it.
 - Passing does not eliminate you: you may bid on a later turn if bidding continues.
 - Three consecutive passes after a bid end the auction. The **highest bidder
   then names the trump suit**.
@@ -87,8 +88,14 @@ card of the led plain suit wins; an off-suit discard cannot win.
 The trump declarer leads the first trick. In a pass-round, the player after the
 dealer leads. Play follows the same cyclic seat order as bidding, and each
 trick's winner leads the next trick. After the ninth trick, score the hand and
-advance the dealer one seat. Initial dealer selection and match termination are
-still to be specified.
+advance the dealer one seat. In Tablefolk, player 4 deals the first hand.
+
+## Winning a game
+
+Partnerships add their game points from each audited hand. The first partnership
+to reach **12 P** wins the game. If neither partnership reaches 12 P, shuffle and
+deal a new hand with the next dealer. A hand that awards no points still advances
+the dealer. An invalid hand audit does not award points or start a new hand.
 
 ## Scoring
 

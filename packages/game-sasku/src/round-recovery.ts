@@ -9,6 +9,8 @@ export const DEFAULT_MAX_SASKU_RECOVERY_BYTES = 16 * 1024 * 1024;
 export interface SaskuRoundRecoveryLimits {
   readonly maxEnvelopes?: number;
   readonly maxBytes?: number;
+  /** The match driver verifies other rounds separately before accepting their scores. */
+  readonly allowOtherRounds?: boolean;
 }
 
 export class SaskuRoundRecoveryError extends Error {
@@ -26,10 +28,12 @@ export function captureSaskuRoundHistory(
   limits: SaskuRoundRecoveryLimits = {},
 ): { readonly bySeat: readonly (readonly EnvelopeArtifact[])[]; readonly assertUnchanged: () => void } {
   if (typeof limits !== "object" || limits === null) { throw new TypeError("Sasku recovery limits must be an object"); }
-  const { maxEnvelopes = DEFAULT_MAX_SASKU_RECOVERY_ENVELOPES, maxBytes = DEFAULT_MAX_SASKU_RECOVERY_BYTES } = limits;
+  const { maxEnvelopes = DEFAULT_MAX_SASKU_RECOVERY_ENVELOPES, maxBytes = DEFAULT_MAX_SASKU_RECOVERY_BYTES,
+    allowOtherRounds = false } = limits;
   if (!Number.isSafeInteger(maxEnvelopes) || maxEnvelopes < 1 || !Number.isSafeInteger(maxBytes) || maxBytes < 1) {
     throw new RangeError("Sasku recovery limits must be positive safe integers");
   }
+  if (typeof allowOtherRounds !== "boolean") throw new TypeError("Invalid other-round recovery policy");
 
   try {
     const game = parseGameId(setup.gameId);
@@ -79,13 +83,16 @@ export function captureSaskuRoundHistory(
           case "SHARES":
           case "ACTION":
           case "AUDIT_DISCLOSE":
-            if (envelope.round !== round || !revealed || artifact.canonicalBytes.length > MAX_ROUND_REVEAL_ENVELOPE_BYTES) {
+            if ((!allowOtherRounds && envelope.round !== round) || !revealed ||
+                artifact.canonicalBytes.length > MAX_ROUND_REVEAL_ENVELOPE_BYTES) {
               throw new SaskuRoundRecoveryError("Invalid Sasku recovery round traffic or setup order");
             }
-            bySeat[seat]!.push(artifact);
+            if (envelope.round === round) bySeat[seat]!.push(artifact);
             break;
           case "SHUFFLE":
-            if (envelope.round !== round) { throw new SaskuRoundRecoveryError("Sasku recovery does not support other-round traffic"); }
+            if ((!allowOtherRounds && envelope.round !== round) || !revealed) {
+              throw new SaskuRoundRecoveryError("Invalid Sasku recovery shuffle traffic or setup order");
+            }
             break;
           case "JOIN":
           case "ROSTER":

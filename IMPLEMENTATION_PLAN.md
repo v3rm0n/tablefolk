@@ -72,12 +72,12 @@ after the protocol has passed review.
 - [x] Confirm the 36-card deck and exact rank set.
 - [x] Define bidding order, values, passes, ties, and termination.
 - [x] Define first leader, turn order, and between-hand dealer rotation.
-- [ ] Define initial dealer selection.
+- [x] Define initial dealer selection for the candidate match: player 4.
 - [x] Define plain-suit and chosen-trump ranking completely.
 - [x] Define follow obligations when a court or other trump is led.
 - [x] Clarify whether the printed suit of a court matters when following suit.
 - [x] Define legal play when void in the led suit.
-- [ ] Define whether a match is one hand or has a target game-point score.
+- [x] Define the candidate match target: first partnership to 12 game points.
 - [x] Turn all scoring boundaries and special results into decision tables.
 
 ## Phase 1: Workspace and Quality Baseline

@@ -10,7 +10,7 @@ const HOST = parseIdentityPublicKey(hexToBytes("d75a980182b10ab7d54bfed3c964073a
 describe("browser lobby invitation profile", () => {
   it("round trips exact fragment fields while preserving the deployment path", () => {
     const url = createLobbyInvitation("https://example.test/cards/?tracking=1#old", GAME, HOST);
-    expect(url).toBe(`https://example.test/cards/#g=${"11".repeat(16)}&h=${Array.from(HOST, (v) => v.toString(16).padStart(2, "0")).join("")}&r=sasku-first-round-candidate%401&s=trystero-nostr`);
+    expect(url).toBe(`https://example.test/cards/#g=${"11".repeat(16)}&h=${Array.from(HOST, (v) => v.toString(16).padStart(2, "0")).join("")}&r=sasku-match-candidate%402&s=trystero-nostr`);
     expect(parseLobbyInvitation(url)).toEqual({ gameId: GAME, host: HOST });
     expect(parseLobbyInvitation(new URL(url).hash)).toEqual({ gameId: GAME, host: HOST });
     const parsed = parseLobbyInvitation(url);
@@ -23,14 +23,14 @@ describe("browser lobby invitation profile", () => {
   });
   it("rejects unsupported rules, strategies, protocols and weak identities", () => {
     const valid = createLobbyInvitation("https://example.test", GAME, HOST);
-    for (const bad of [valid.replace("sasku-first-round-candidate%401", "sasku%401"), valid.replace("trystero-nostr", "manual"), valid.replace("https:", "javascript:"), valid.replace(/h=[0-9a-f]+/, `h=${"00".repeat(32)}`), "x".repeat(4097)]) {
+    for (const bad of [valid.replace("sasku-match-candidate%402", "sasku%401"), valid.replace("trystero-nostr", "manual"), valid.replace("https:", "javascript:"), valid.replace(/h=[0-9a-f]+/, `h=${"00".repeat(32)}`), "x".repeat(4097)]) {
       expect(() => parseLobbyInvitation(bad)).toThrow();
     }
   });
   it("matches the independent SHA256/base32 human fingerprint fixture", () => {
     expect(identityFingerprint(HOST)).toBe("EH7D DX5B KSRG CYTL 7BKA I36S E4");
   });
-  it("binds the first-round rules bundle and ICE configuration to stable independent snapshots", () => {
+  it("binds the match rules bundle and ICE configuration to stable independent snapshots", () => {
     const hash = connectionRulesHash();
     expect(hash).toHaveLength(32);
     hash.fill(0xff);

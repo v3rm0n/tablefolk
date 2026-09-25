@@ -65,3 +65,38 @@ test("one tab runs four local Sasku players with switchable private views", asyn
   expect(sockets).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+test("the local four-player table finishes a match to twelve points", async ({ page, baseURL }) => {
+  test.setTimeout(600_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto(`${baseURL}/demo.html`);
+  await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "bidding", { timeout: 120_000 });
+  for (let round = 1; round <= 10; round += 1) {
+    if (await page.getByLabel("Live Sasku round").getAttribute("data-phase") === "match_complete") break;
+    await expect(page.getByText(`Sasku · Round ${round}`)).toBeVisible({ timeout: 120_000 });
+    await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "bidding", { timeout: 120_000 });
+    await page.getByRole("button", { name: "Call diamonds" }).click();
+    await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-actions", "1");
+    for (let play = 0; play < 36; play += 1) {
+      await playDemoCard(page, play + 2);
+    }
+    await expect(page.getByLabel("Match scoreboard")).toContainText(`${round} ${round === 1 ? "round" : "rounds"} verified`, { timeout: 90_000 });
+  }
+  await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "match_complete");
+  await expect(page.getByRole("heading", { name: /won the game/ })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+async function playDemoCard(page: import("@playwright/test").Page, expectedActions: number): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await page.getByLabel("Your private hand").locator("button.is-playable:enabled").first().click();
+    try {
+      await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-actions", String(expectedActions), { timeout: 5000 });
+      return;
+    } catch {
+      if (await page.locator("[role='alert']").count()) throw new Error((await page.locator("[role='alert']").allInnerTexts()).join("; "));
+    }
+  }
+  throw new Error(`Card play did not advance to action ${expectedActions}`);
+}

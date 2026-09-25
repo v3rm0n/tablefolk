@@ -6,9 +6,11 @@ card games, starting with Sasku. Three-player games such as 500 and 1000 are pla
 [Play Tablefolk](https://cards.maido.io/) · [GitHub](https://github.com/v3rm0n/tablefolk)
 The first playable rules module is Sasku.
 
-The browser now plays one complete four-player Sasku round: authenticated lobby,
-verified candidate shuffles, private hands, bidding, nine tricks, and audited
-scoring. Reloading restores the same private hand and signed history.
+The browser plays a four-player Sasku match to 12 game points: authenticated
+lobby, verified candidate shuffles and private hands for each round, bidding,
+nine tricks, audited scoring, and dealer rotation. Reloading restores the
+signed match history and the current private hand.
+The candidate profile supports up to 32 hands per table.
 The proof backend remains experimental and awaits independent review.
 See [the first playable round](docs/first-playable-round.md).
 
@@ -23,9 +25,9 @@ See [the first playable round](docs/first-playable-round.md).
 - `docs/protocol-profile.md`: byte-level implementation decisions
 - `docs/sasku-profile.md`: confirmed deck/following rules, scoring, and outstanding game decisions
 
-The first-round milestone is implemented. Further rounds, general catch-up,
-offline transcript export, cross-browser deployment, and independent security
-review remain separate follow-up work.
+The first-round milestone is implemented, and the candidate match profile now
+continues through successive audited rounds. General catch-up, offline transcript
+export, cross-browser deployment, and independent security review remain follow-up work.
 
 The isolated [shuffle-backend evaluation](experiments/shuffle-backend/README.md)
 now supports experimental Ristretto255 adapters as well as upstream secp256k1.
@@ -93,7 +95,7 @@ npm run check
 `npm run check` runs every workspace type check, the unit test suite, and the
 production build.
 
-## Play the First Round
+## Play a Match
 
 1. Run `npm run dev` and open the displayed application URL.
 2. Choose **Open a table**, then share its invitation with three other devices or
@@ -101,9 +103,10 @@ production build.
    the same table concurrently.
 3. Guests open or paste the invitation and choose **Join this table**.
 4. Players are ready by default and may mark themselves not ready while waiting.
-5. Once all four are ready, player 1 chooses **Play first round**. The other players join automatically. After setup and dealing,
-   bid or pass, choose trump, and play highlighted legal cards. The round ends
-   after nine tricks and four verified audit disclosures.
+5. Once all four are ready, player 1 starts the table. After setup and dealing,
+   bid or pass, choose trump, and play highlighted legal cards. Each round ends
+   after nine tricks and four verified audit disclosures. The dealer rotates and
+   a new hand begins automatically until one partnership reaches 12 P.
 
 For a one-tab test, choose **Try the four-player demo** on the landing page or
 open `demo.html`. It opens four isolated local player stores and delivers their
