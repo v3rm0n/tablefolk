@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="referrer" content="no-referrer" />
-    <meta name="description" content="See how four browsers connect and play Sasku with private hands and a verifiable shared game." />
+    <meta name="description" content="The connection, signed history, shuffle proofs, private deal, and audit behind peer-to-peer Sasku." />
     <meta name="theme-color" content="#ebe2cc" />
-    <title>How it works — Tablefolk</title>
+    <title>Connection and private dealing — Tablefolk</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
@@ -14,9 +14,9 @@
       <a class="reference-back" href="./">← Back to game</a>
 
       <section class="technical-hero" aria-labelledby="technical-title">
-        <p class="eyebrow">How Sasku works</p>
-        <h1 id="technical-title">Four browsers.<br /><em>One private table.</em></h1>
-        <p class="technical-lede">Players connect to each other, build one encrypted deck, and verify the same game. Each browser can read its own hand, while everyone can check what happens at the table.</p>
+        <p class="eyebrow">Technical walkthrough</p>
+        <h1 id="technical-title">Connecting players.<br /><em>Dealing private cards.</em></h1>
+        <p class="technical-lede">Sasku uses Nostr relays to set up WebRTC connections. The four browsers then exchange signed game records, jointly shuffle an encrypted deck, open private hands, and audit every play.</p>
         <nav class="technical-jump" aria-label="On this page">
           <a href="#connection"><span>01</span> Connect the players <span aria-hidden="true">↘</span></a>
           <a href="#game"><span>02</span> Play the game <span aria-hidden="true">↘</span></a>
@@ -56,6 +56,16 @@
         </ol>
         <div class="technical-connection-result"><span aria-hidden="true">✓</span><p><strong>Now the table is connected.</strong> Game actions travel between the browsers over authenticated peer links. The relay’s job was the introduction.</p></div>
         <p class="technical-connection-caveat">Some networks block browser-to-browser links. This build has no TURN fallback, so a table cannot start if those links fail.</p>
+        <div class="technical-trace" aria-labelledby="connection-trace-title">
+          <div class="technical-trace-heading"><p class="eyebrow">Protocol trace / connection</p><div><h3 id="connection-trace-title">From invitation to a ready peer.</h3><p>These checks establish identity and catch up history before anyone makes a new move.</p></div></div>
+          <dl class="technical-trace-list">
+            <div><dt><code>g · h · r · s</code> Invitation fragment</dt><dd>The URL fragment names the 16-byte game ID, the host’s Ed25519 public key, and the rules and signaling profiles. The host key is the first identity to trust. URL fragments are not sent with the page’s HTTP request.</dd></div>
+            <div><dt><code>SDP / ICE</code> Signaling</dt><dd>Browsers exchange WebRTC offers, answers, and ICE candidates through Nostr relay WebSockets. A room-derived AES-GCM key encrypts this traffic, but does not prove a player’s identity; the later HELLO does. STUN helps find reachable addresses; this build has no TURN relay.</dd></div>
+            <div><dt><code>HELLO</code> Peer authentication</dt><dd>After a WebRTC data channel opens, each side signs a message binding its Ed25519 identity, this game ID, and both observed DTLS certificate fingerprints. Application messages remain blocked until both directions pass.</dd></div>
+            <div><dt><code>ROSTER / READY</code> Table agreement</dt><dd>The host signs the four-seat roster and the rules hash. Every player signs readiness for that exact roster hash, so a peer cannot quietly change the players or first-round rules.</dd></div>
+            <div><dt><code>seq / prev</code> History and catch-up</dt><dd>Every durable record uses canonical CBOR and an Ed25519 signature, with its author’s sequence number and previous hash. Peers replay the original bytes, reject gaps or conflicts, and acknowledge an exact history prefix only after saving and validating it. New actions wait for all three peers to catch up.</dd></div>
+          </dl>
+        </div>
       </section>
 
       <section class="technical-chapter" id="game" aria-labelledby="game-title">
@@ -78,9 +88,19 @@
           </li>
           <li class="technical-game-card">
             <div class="technical-game-art technical-game-art--audit" aria-hidden="true"><div class="technical-audit-sheet"><span>✓ <i>36 cards accounted for</i></span><span>✓ <i>Plays and ownership checked</i></span><span>✓ <i>Score agreed</i></span></div></div>
-            <div class="technical-game-copy"><span class="technical-step-label">04 / Audit</span><h3>Check the finished hand</h3><p>After the ninth trick, all cards are disclosed. Every browser checks ownership, bids, following suit, and scoring against the signed record. Hidden-hand violations can be caught at this final audit.</p></div>
+            <div class="technical-game-copy"><span class="technical-step-label">04 / Audit</span><h3>Check the finished hand</h3><p>By the ninth trick, all 36 cards are open. Every browser checks ownership, bids, following suit, and scoring against the signed record. Hidden-hand violations can be caught at this final audit.</p></div>
           </li>
         </ol>
+        <div class="technical-trace" aria-labelledby="game-trace-title">
+          <div class="technical-trace-heading"><p class="eyebrow">Protocol trace / round</p><div><h3 id="game-trace-title">What each signed message does.</h3><p>The same record is checked independently by all four browsers.</p></div></div>
+          <dl class="technical-trace-list">
+            <div><dt><code>KEY_SHARE</code> Joint encryption key</dt><dd>Each seat publishes a public key share with a proof that it knows the matching secret. The shares form one public deck key; no browser has the whole private key. The four players also commit and reveal a seed, while this first-round profile fixes the dealer and deal order.</dd></div>
+            <div><dt><code>SHUFFLE</code> Verified mixing</dt><dd>The 36 known cards become encrypted positions. Each seat permutes and re-encrypts the deck in turn, then publishes a candidate Bayer–Groth shuffle proof. Peers verify it in a temporary WASM worker before accepting the next shuffle.</dd></div>
+            <div><dt><code>SHARES</code> Private deal</dt><dd>Each seat receives nine encrypted positions. The three non-owners publish proven decryption shares for those positions. Only the owner combines them with its own secret share to learn the cards; its game key is saved locally so the hand can be rebuilt after a reload.</dd></div>
+            <div><dt><code>ACTION</code> Bids, trump, and plays</dt><dd>A signed action records each turn. A play includes the owner’s missing decryption share and proof, so everyone can open that one card and verify the public trick. Whether an earlier player illegally failed to follow suit cannot be known until their whole hand is open.</dd></div>
+            <div><dt><code>AUDIT_DISCLOSE</code> Final replay</dt><dd>Once all 36 cards have been played, each seat signs a final participation marker. The markers disclose no additional cards in this one-round game. Each browser reconstructs the original hands, replays the action history, and computes a valid score or a specific violation locally.</dd></div>
+          </dl>
+        </div>
       </section>
 
       <section class="technical-privacy" aria-labelledby="privacy-title">
@@ -92,7 +112,8 @@
         <p class="eyebrow">Current build</p>
         <h2 id="scope-title">One experimental round.</h2>
         <p>All four players must stay connected. On reload, a browser rechecks saved signatures and shuffle proofs before rebuilding its hand from its local key. The one-tab demo uses local message delivery in place of WebRTC; the game steps are the same.</p>
-        <p>The shuffle proof backend still awaits independent review. This privacy design depends on its cryptographic assumptions and on players keeping their own browsers and keys private.</p>
+        <p>The shuffle proof backend still awaits independent review. Privacy assumes working cryptography, at least one honest shuffler, and private local keys. A player can also stall the game by withholding messages or disconnecting.</p>
+        <p class="technical-further">For exact formats and limits, read the <a href="https://github.com/v3rm0n/tablefolk/blob/main/docs/first-playable-round.md">first-round implementation profile</a> and <a href="https://github.com/v3rm0n/tablefolk/blob/main/docs/protocol-profile.md">wire protocol</a>.</p>
         <div class="technical-next"><a class="button button--primary" href="./">Play Sasku <span aria-hidden="true">→</span></a><a class="reference-link" href="./scoring.html">Scoring reference <span aria-hidden="true">→</span></a></div>
       </section>
     </main>

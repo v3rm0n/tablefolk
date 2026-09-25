@@ -135,7 +135,7 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .reference-back { display: inline-block; margin-bottom: clamp(2rem, 6vw, 5rem); font-size: 0.85rem; font-weight: 700; text-underline-offset: 0.25em; }
 .shell--technical { max-width: 1200px; padding-bottom: 5rem; }
 .technical-hero { padding-bottom: clamp(3rem, 6vw, 5rem); border-bottom: 1px solid var(--line); }
-.technical-hero h1 { font-size: clamp(3.5rem, 7vw, 6.5rem); }
+.technical-hero h1 { font-size: clamp(3.2rem, 6vw, 5.6rem); }
 .technical-lede { max-width: 44rem; margin: 1.8rem 0 0; font-size: clamp(1.08rem, 1.5vw, 1.3rem); }
 .technical-jump { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 2rem; }
 .technical-jump a { display: inline-flex; align-items: center; gap: .7rem; min-height: 2.8rem; padding: .55rem .8rem; border: 1px solid var(--line); border-radius: .35rem; text-decoration: none; font-size: .82rem; font-weight: 700; }
@@ -178,6 +178,17 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .technical-connection-result > span { display: grid; place-items: center; flex: 0 0 auto; width: 2rem; height: 2rem; border-radius: 50%; background: var(--felt); color: white; }
 .technical-connection-result p { margin: 0; font-size: .85rem; }
 .technical-connection-caveat { margin: .8rem 0 0; color: oklch(42% .035 72deg); font-size: .75rem; }
+.technical-trace { margin-top: clamp(2rem, 4vw, 3rem); overflow: hidden; border: 1px solid var(--line); border-radius: .65rem; background: var(--paper); }
+.technical-trace-heading { display: grid; grid-template-columns: minmax(0, .4fr) minmax(0, 1fr); gap: 2rem; padding: 1.6rem 2rem; background: oklch(90% .03 83deg); }
+.technical-trace-heading .eyebrow { margin: .45rem 0 0; }
+.technical-trace-heading h3 { margin: 0; font-size: clamp(1.6rem, 2.6vw, 2.1rem); }
+.technical-trace-heading p:last-child { margin: .45rem 0 0; font-size: .82rem; }
+.technical-trace-list { margin: 0; }
+.technical-trace-list > div { display: grid; grid-template-columns: minmax(0, .4fr) minmax(0, 1fr); gap: 2rem; padding: 1.2rem 2rem; border-top: 1px solid var(--line); }
+.technical-trace-list > div:nth-child(even) { background: oklch(97% .018 83deg); }
+.technical-trace-list dt { display: grid; justify-items: start; align-content: start; gap: .4rem; font-size: .83rem; font-weight: 800; }
+.technical-trace-list code { display: inline-block; padding: .23rem .45rem; border-radius: .2rem; background: var(--felt); color: var(--paper); font: 700 .68rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .02em; }
+.technical-trace-list dd { margin: 0; font-size: .82rem; line-height: 1.65; }
 .technical-game-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .technical-game-card { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: .65rem; background: var(--paper); }
 .technical-game-art { position: relative; display: flex; align-items: center; justify-content: center; gap: 1.2rem; min-height: 12rem; overflow: hidden; background: oklch(86% .045 84deg); }
@@ -217,6 +228,8 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .technical-scope { max-width: 51rem; }
 .technical-scope h2 { margin-bottom: 1.25rem; }
 .technical-scope > p:not(.eyebrow) { font-size: .9rem; }
+.technical-further { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.technical-further a { font-weight: 700; text-underline-offset: .22em; }
 .technical-next { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem 2rem; margin-top: 2rem; }
 .technical-next .button { min-width: 12rem; }
 .scoring-reference { padding-bottom: 2rem; }
@@ -270,6 +283,8 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
   .technical-section-heading, .technical-privacy { grid-template-columns: 1fr; gap: 0.8rem; }
   .technical-section-heading { margin-bottom: 1.5rem; }
   .technical-section-heading .eyebrow { margin-top: 0; }
+  .technical-trace-heading, .technical-trace-list > div { grid-template-columns: 1fr; gap: .6rem; padding-inline: 1.2rem; }
+  .technical-trace-heading .eyebrow { margin: 0; }
   .technical-connection-flow { grid-template-columns: 1fr; }
   .technical-connection-step { display: grid; grid-template-columns: minmax(12rem, .65fr) minmax(0, 1fr); gap: 1rem; align-items: center; padding: .75rem; }
   .technical-connection-art { margin: 0; }
