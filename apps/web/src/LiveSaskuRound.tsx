@@ -3,6 +3,7 @@ import type { SaskuActionIntent } from "@p2pcards/game-sasku";
 import { SASKU_SUITS, parseSaskuCard } from "@p2pcards/rules-sasku";
 import type { LiveRoundView } from "./live-round";
 import { SaskuCardFace, saskuCardName, SASKU_SUIT_MARKS } from "./sasku-card-display";
+import { compareSaskuHandCards } from "./sasku-hand-order";
 
 export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (intent: SaskuActionIntent) => Promise<void> }) {
   const [error, setError] = useState<string | null>(null);
@@ -28,12 +29,8 @@ export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (inten
     : !view.connected ? "Syncing the table. Your hand is saved." : submitting ? "Saving your move…" : view.phase === "bidding" ? mine ? "Bid up to your hand’s maximum, pass, or call diamonds." : "You can review your hand while you wait."
     : view.phase === "choosing_trump" ? mine ? "Choose the trump suit for this round." : "The auction winner is choosing trump."
     : mine ? state?.trick.length ? "Follow the led suit. Highlighted cards are legal." : "You lead. Choose any card from your hand." : "The next play will appear on the table.";
-  // Sort the displayed cards by strength, then suit, without changing signed deck positions.
-  const cards = [...view.hand].sort((a, b) => {
-    const left = parseSaskuCard(a.card), right = parseSaskuCard(b.card);
-    const ranks = ["K", "Q", "J", "A", "10", "9", "8", "7", "6"];
-    return ranks.indexOf(left.rank) - ranks.indexOf(right.rank) || SASKU_SUITS.indexOf(left.suit) - SASKU_SUITS.indexOf(right.suit);
-  });
+  // Keep signed deck positions intact while ordering only the displayed cards.
+  const cards = [...view.hand].sort((a, b) => compareSaskuHandCards(a.card, b.card));
   const firstBid = Math.max(3, (state?.highestBid?.value ?? 2) + 1);
   return <section className="live-round" aria-label="Live Sasku round" data-phase={view.phase}>
     <header className="live-heading">

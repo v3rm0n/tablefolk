@@ -293,20 +293,21 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .live-actions .hand-action-buttons { margin: 0; gap: .5rem; }
 .live-actions .button { min-height: 44px; padding: .65rem 1rem; font-size: .8rem; width: auto; }
 .trump-choices { width: 100%; }
-.trump-choice { --suit-ink: #24334a; display: inline-flex; align-items: center; justify-content: center; gap: .7rem; min-width: 8.5rem; min-height: 3.7rem; padding: .5rem .9rem; border: 1px solid currentColor; border-radius: .7rem; background: #fffdf8; color: var(--suit-ink); font-weight: 700; text-transform: capitalize; box-shadow: 0 3px 0 color-mix(in srgb, var(--suit-ink) 22%, transparent); transition: transform 140ms, box-shadow 140ms, background 140ms; }
+.trump-choice { --suit-ink: #24334a; display: inline-flex; align-items: center; justify-content: center; gap: .7rem; min-width: 8.5rem; min-height: 3.7rem; padding: .5rem .9rem; border: 1px solid color-mix(in srgb, var(--suit-ink) 35%, #ddd4c4); border-radius: .7rem; background: #fffdf8; color: var(--suit-ink); font-weight: 700; text-transform: capitalize; box-shadow: 0 2px 5px #17202b12; transition: transform 140ms, box-shadow 140ms, background 140ms; }
 .trump-choice--hearts, .trump-choice--diamonds { --suit-ink: #b51f32; }
 .trump-choice__mark { font-size: 1.9rem; line-height: 1; }
-.trump-choice:hover:not(:disabled) { transform: translateY(-3px); background: color-mix(in srgb, var(--suit-ink) 7%, white); box-shadow: 0 6px 0 color-mix(in srgb, var(--suit-ink) 22%, transparent); }
-.trump-choice:focus-visible { outline: 3px solid var(--suit-ink); outline-offset: 3px; }
+.trump-choice:hover:not(:disabled) { transform: translateY(-2px); background: color-mix(in srgb, var(--suit-ink) 6%, white); box-shadow: 0 6px 12px #17202b20; }
+.trump-choice:focus-visible { outline: 2px solid var(--suit-ink); outline-offset: 2px; }
 .live-hand-heading { display: flex; justify-content: space-between; gap: .5rem; margin: .4rem 0 .7rem; font-size: .8rem; font-weight: 700; }
 .live-hand-heading small { font-size: .7rem; font-weight: 400; }
 .live-hand { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: .55rem; min-height: 0; }
 .live-hand-card { display: flex; flex-direction: column; justify-content: space-between; min-width: 0; min-height: 125px; text-align: left; padding: .65rem; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: .45rem; box-shadow: 0 2px 3px #0001; transition: transform 140ms, box-shadow 140ms; }
 .live-hand-card:disabled { opacity: 1; cursor: default; }
-.live-hand-card.is-playable { border: 2px solid var(--felt); padding: calc(.65rem - 1px); box-shadow: 0 3px 0 var(--felt); cursor: pointer; }
-.live-hand-card.is-playable:hover { transform: translateY(-5px); box-shadow: 0 7px 0 var(--felt); }
+.live-hand-card.is-playable { box-shadow: 0 2px 7px #17202b26; cursor: pointer; }
+.live-hand-card.is-playable::after { content: ""; position: absolute; bottom: -.2rem; left: 28%; right: 28%; height: 2px; border-radius: 2px; background: #b9965b; pointer-events: none; }
+.live-hand-card.is-playable:hover { transform: translateY(-4px); box-shadow: 0 7px 13px #17202b29; }
 .live-hand-card.is-playable:active { transform: translateY(-1px); }
-.live-hand-card:focus-visible { outline: 3px solid var(--rust); outline-offset: 3px; }
+.live-hand-card:focus-visible { outline: 2px solid var(--rust); outline-offset: 2px; }
 .live-hand-card.is-red, .live-played-card.is-red { color: var(--rust); }
 .live-preparation { min-height: 330px; padding: 2rem 1rem; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; background: var(--felt); color: var(--paper); border-radius: 0 0 .8rem .8rem; }
 .live-preparation-mark { font: 3rem var(--serif); }
@@ -371,7 +372,7 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 /* Card faces are self-contained vectors with a standard 5:7 playing-card ratio. */
 .playing-card-face { display: block; width: 100%; height: auto; aspect-ratio: 5 / 7; flex: 0 0 auto; }
 .live-hand-card { position: relative; padding: 0; min-height: 0; background: #fffdf8; overflow: visible; border-radius: .5rem; }
-.live-hand-card.is-playable { padding: 0; border: 1px solid var(--felt); outline: 2px solid var(--felt); outline-offset: 1px; }
+.live-hand-card.is-playable { padding: 0; }
 .live-played-card { padding: 0; width: 49px; height: auto; aspect-ratio: 5 / 7; background: transparent; }
 @media (max-width: 620px) {
   .live-hand-card, .live-hand-card.is-playable { min-height: 0; padding: 0; }
