@@ -1,13 +1,13 @@
 import { bytesEqual, type RistrettoScalar } from "@p2pcards/crypto";
-import { PersistentCandidateShuffleReceiver, type CandidateShuffleSnapshot } from "@p2pcards/engine";
+import { PersistentCandidateShuffleReceiver, recoverSetup, type CandidateShuffleSnapshot } from "@p2pcards/engine";
 import { decodeAndVerifyEnvelope, decodeRosterBody, encodeRosterBody, parseIdentityPublicKey,
   decodeSyncRequestBody, encodeSyncRequestBody, decodeSyncResponseBody, encodeSyncResponseBody, encodeUnsignedEnvelope, expectExactMap, expectArray,
   type EnvelopeArtifact, type IdentityPublicKey, type SyncRequestBody, type UnsignedEnvelope } from "@p2pcards/protocol";
 import { SASKU_DECK_SPEC, MAX_SASKU_HAND_ACTIONS } from "@p2pcards/rules-sasku";
 import { PersistentEnvelopeAuthor, preflightSyncResponse, captureSessionHistory,
   type PersistentSyncReceiveResult, type SyncCancellationSignal } from "@p2pcards/session";
-import { captureCandidateSaskuPolicy, recoverCandidateShuffledSaskuRound, type CandidateShuffledSaskuRoundOptions } from "./candidate-shuffled-round";
-import type { PersistentSaskuRoundReceiver, SaskuActionIntent, SaskuRoundSnapshot } from "./persistent-round-receiver";
+import { captureCandidateSaskuPolicy, type CandidateShuffledSaskuRoundOptions } from "./candidate-shuffled-round";
+import { PersistentSaskuRoundReceiver, type SaskuActionIntent, type SaskuRoundSnapshot } from "./persistent-round-receiver";
 
 export interface CandidateRoundOwnerOptions extends CandidateShuffledSaskuRoundOptions {
   readonly maxPendingEnvelopes?: number;
@@ -388,11 +388,25 @@ export class CandidateSaskuRoundOwner {
   }
   async #promote(): Promise<void> {
     if (this.#closed || this.#round || !this.#shuffle.snapshot.complete) return;
+    let round: PersistentSaskuRoundReceiver | undefined;
     try {
-      const round = await recoverCandidateShuffledSaskuRound(this.#options);
+      // The live shuffle owner has already verified each original before its
+      // durable receipt and is checkpoint-bound to the same session. Reuse its
+      // verified final deck; reopening after a restart still re-verifies all
+      // stored proofs in PersistentCandidateShuffleReceiver.open.
+      const history = captureSessionHistory(this.#options.session, this.#options.historyLimits);
+      const setup = recoverSetup(this.#options.roster.gameId, this.#options.setupRound,
+        this.#options.roster.seats, history.envelopes).coordinator;
+      const deck = this.#shuffle.finalDeck;
+      history.assertUnchanged();
+      round = PersistentSaskuRoundReceiver.recover({ setup, round: this.#options.round, deck,
+        dealer: this.#options.dealer, schedule: this.#options.schedule, session: this.#options.session,
+        sessionReceiver: this.#options.sessionReceiver }, this.#options.roundHistoryLimits);
+      history.assertUnchanged();
       if (this.#closed) { round.close(); return; }
       this.#round = round; this.#shuffle.close();
     } catch (error) {
+      round?.close();
       this.#failure = new Error("Round handoff requires recovery", { cause: error }); throw this.#failure;
     }
   }

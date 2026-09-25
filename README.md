@@ -360,7 +360,9 @@ semantic-capable durable receiver. It reports partial progress and stops on
 failure; a received range is not whole-session readiness.
 
 `replayAuthoredHistory` verifies a captured local authored prefix before sending,
-then revalidates bounded pages and submits the original signed bytes. It does
+then revalidates bounded pages and submits the original signed bytes. On an
+unchanged authenticated channel, the browser anchors new delivery to the last
+verified and acknowledged prefix; reconnects verify the complete history. It does
 not allocate sequences, re-sign records, repair a lost authored checkpoint, or
 grant session readiness. This supports predecessor delivery before fresh chained
 controls without adding a chain exemption.

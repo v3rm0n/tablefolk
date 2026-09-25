@@ -18,8 +18,9 @@ Exactly one operation runs at a time. Incoming messages, historical originals,
 and local authoring therefore cannot advance the session while a shuffle proof
 is being verified. After the fourth shuffle commits, the owner opens the
 shuffle-backed Sasku round receiver and only then processes deal contributions.
-The handoff re-verifies durable shuffle provenance; this costs extra proof work
-but avoids adding a trusted in-memory bypass. Exact old shuffle replays can confirm
+The handoff reuses the live receiver's already verified, durably admitted shuffle deck,
+which remains bound to the captured sender history. Reopening the owner after a restart
+re-verifies every stored proof. Exact old shuffle replays can confirm
 storage after handoff; new shuffle contributions cannot re-enter the completed phase.
 
 Queue limits default to 32 operations and 1 MiB, counting active work. Incoming

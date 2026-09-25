@@ -4,10 +4,10 @@ import type { SaskuActionIntent } from "@p2pcards/game-sasku";
 import { bytesEqual, bytesToHex, hexToBytes, importEd25519PublicKey, randomBytes, type Ed25519KeyPair } from "@p2pcards/crypto";
 import {
   decodeAndVerifyEnvelope, decodeJoinBody, decodeRosterBody, decodeReadyBody, deriveSignalingRoomId,
-  encodeJoinBody, encodeReadyBody, encodeRosterBody, parseGameId, parseIdentityPublicKey,
+  encodeJoinBody, encodeReadyBody, encodeRosterBody, parseGameId, parseHash256, parseIdentityPublicKey,
   type EnvelopeArtifact, type IdentityPublicKey,
 } from "@p2pcards/protocol";
-import { LobbyChainRegistry, PersistentEnvelopeAuthor, PersistentLobbyReceiver, recoverLobby, replayAuthoredHistory, type EnvelopeContent } from "@p2pcards/session";
+import { LobbyChainRegistry, PersistentEnvelopeAuthor, PersistentLobbyReceiver, recoverLobby, replayAuthoredHistory, type ChainHead, type EnvelopeContent } from "@p2pcards/session";
 import { IndexedDbAuthoredEnvelopeStore, IndexedDbIdentityStore, IndexedDbSessionStore, type IndexedDbStoreOptions } from "@p2pcards/storage";
 import { TrysteroNostrSignalingAdapter, type MeshPeerConnectionFactory } from "@p2pcards/transport";
 
@@ -34,7 +34,7 @@ interface Room {
   recordCount: number;
   releaseLease: (() => void) | null;
   readonly flushes: Map<string, { generation: number; dirty: boolean }>;
-  readonly sentThrough: Map<string, { generation: number; seq: number }>;
+  readonly sentThrough: Map<string, { generation: number; checkpoint: ChainHead }>;
   readonly ackWaiters: Map<string, Set<() => void>>;
   game: LiveRound | null;
   playing: boolean;
@@ -387,7 +387,8 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     void (async () => {
       while (flush.dirty && this.#room === room && room.transport?.generation(remote) === generation) {
         flush.dirty = false;
-        let acknowledgedSeq = room.sentThrough.get(key)?.generation === generation ? room.sentThrough.get(key)!.seq : -1;
+        const previous = room.sentThrough.get(key);
+        let acknowledgedSeq = previous?.generation === generation ? previous.checkpoint.seq : -1;
         let batchHead: EnvelopeArtifact | null = null;
         let batchSize = 0;
         const acknowledgeBatch = async (): Promise<void> => {
@@ -398,7 +399,8 @@ export class BrowserLobbyController implements BrowserLobbyActions {
           await room.transport!.send(remote, generation, entry.barrier.announce(head));
           await this.#waitForAck(room, key, remote, generation, head);
           acknowledgedSeq = head.envelope.seq;
-          room.sentThrough.set(key, { generation, seq: acknowledgedSeq });
+          room.sentThrough.set(key, { generation, checkpoint: Object.freeze({ from: parseIdentityPublicKey(this.#self().publicKey),
+            seq: acknowledgedSeq, hash: parseHash256(head.hash) }) });
           batchHead = null;
           batchSize = 0;
           this.#refresh(room);
@@ -411,7 +413,8 @@ export class BrowserLobbyController implements BrowserLobbyActions {
             batchHead = artifact;
             if (++batchSize >= 4) await acknowledgeBatch();
           },
-          { signal: room.abort.signal, maxEnvelopes: 4096, maxBytes: 64 * 1024 * 1024 });
+          { signal: room.abort.signal, maxEnvelopes: 4096, maxBytes: 64 * 1024 * 1024,
+            ...(previous?.generation === generation ? { after: previous.checkpoint } : {}) });
         if (result.status === "failed") {
           if (this.#room === room && result.stage !== "send") {
             room.blocked = true;

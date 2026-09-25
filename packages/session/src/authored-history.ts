@@ -33,6 +33,8 @@ export interface AuthoredHistoryReplayOptions {
   readonly signal?: SyncCancellationSignal;
   readonly maxEnvelopes?: number;
   readonly maxBytes?: number;
+  /** Previously verified and acknowledged prefix on the same live channel. Reconnects must replay from genesis. */
+  readonly after?: ChainHead;
 }
 
 export type AuthoredHistoryReplayResult = {
@@ -67,6 +69,12 @@ export async function replayAuthoredHistory(
   importEd25519PublicKey(author);
   const maxEnvelopes = positiveInteger(options.maxEnvelopes ?? DEFAULT_MAX_AUTHORED_REPLAY_ENVELOPES);
   const maxBytes = positiveInteger(options.maxBytes ?? DEFAULT_MAX_AUTHORED_REPLAY_BYTES);
+  const after = options.after === undefined ? null : Object.freeze({
+    from: parseIdentityPublicKey(options.after.from), seq: options.after.seq, hash: parseHash256(options.after.hash),
+  });
+  if (after !== null && (!Number.isSafeInteger(after.seq) || after.seq < 0 || !bytesEqual(after.from, author))) {
+    throw new TypeError("Invalid previously verified authored checkpoint");
+  }
   const signal = options.signal;
   let checkpoint: ChainHead | null = null;
   let submittedCount = 0;
@@ -90,6 +98,7 @@ export async function replayAuthoredHistory(
       return cancelled();
     }
     if (candidate === null) {
+      if (after !== null) throw new Error("Previously verified authored checkpoint has no stored head");
       return Object.freeze({ status: "replayed", ...progress() });
     }
     const headBytes = candidate.canonicalBytes;
@@ -101,11 +110,23 @@ export async function replayAuthoredHistory(
     }
     checkpoint = Object.freeze({ from: author, seq: head.envelope.seq, hash: parseHash256(head.hash) });
 
-    // Verify the entire prefix before sending. Keep page hashes, not the whole decoded transcript.
+    // Verify the entire unsent suffix before sending. A live channel may reuse
+    // its previously verified and acknowledged prefix, anchored to exact bytes.
     stage = "verify";
     const pages: VerifiedPage[] = [];
-    let fromSeq = 0;
-    let prev = parseHash256(new Uint8Array(32));
+    let fromSeq = after === null ? 0 : after.seq + 1;
+    let prev = after === null ? parseHash256(new Uint8Array(32)) : after.hash;
+    if (after !== null) {
+      if (after.seq > checkpoint.seq) throw new Error("Authored checkpoint is beyond the captured head");
+      const candidates = await store.readAuthoredPage(parseGameId(game), parseIdentityPublicKey(author), after.seq, after.seq);
+      if (signal?.aborted) return cancelled();
+      if (candidates.length !== 1) throw new Error("Previously verified authored checkpoint is missing");
+      const anchored = decodeAndVerifyEnvelope(candidates[0]!.canonicalBytes);
+      requireScope(anchored, game, author);
+      if (anchored.envelope.seq !== after.seq || !bytesEqual(anchored.hash, after.hash)) {
+        throw new Error("Previously verified authored checkpoint changed");
+      }
+    }
     let verifiedBytes = 0;
     while (fromSeq <= checkpoint.seq) {
       if (signal?.aborted) {

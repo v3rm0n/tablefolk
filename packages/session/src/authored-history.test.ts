@@ -165,6 +165,30 @@ describe("authored history replay", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("replays only a suffix anchored to a previously verified live prefix", async () => {
+    const records = chain(4), source = historyStore(records, 1), sent: Uint8Array[] = [];
+    const after = { from: SELF, seq: 1, hash: records[1]!.hash };
+    const result = await replayAuthoredHistory(source, GAME, SELF, async bytes => { sent.push(bytes); }, { after });
+    expect(result).toMatchObject({ status: "replayed", checkpoint: { seq: 3 }, submittedCount: 2 });
+    expect(sent).toEqual(records.slice(2).map(record => record.canonicalBytes));
+    expect(source.readAuthoredPage.mock.calls.every(([, , from]) => from >= 1)).toBe(true);
+    source.readAuthoredPage.mockClear();
+    await expect(replayAuthoredHistory(source, GAME, SELF, async () => undefined,
+      { after: { from: SELF, seq: 3, hash: records[3]!.hash } })).resolves.toMatchObject({ status: "replayed", submittedCount: 0 });
+    expect(source.readAuthoredPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a changed or missing live prefix before sending the suffix", async () => {
+    const records = chain(3), source = historyStore(records), send = vi.fn(async () => undefined);
+    const after = { from: SELF, seq: 1, hash: records[1]!.hash };
+    const changed = signEnvelope({ ...records[1]!.envelope, body: { heads: [], changed: true } }, SECRET);
+    source.readAuthoredPage.mockImplementation(async (_game, _sender, from, to) =>
+      from === 1 && to === 1 ? [changed] : records.slice(from, to + 1));
+    await expect(replayAuthoredHistory(source, GAME, SELF, send, { after })).resolves.toMatchObject({ status: "failed", stage: "verify", submittedCount: 0 });
+    expect(send).not.toHaveBeenCalled();
+    await expect(replayAuthoredHistory(historyStore([]), GAME, SELF, send, { after })).resolves.toMatchObject({ status: "failed", stage: "head" });
+  });
+
   it("rejects invalid limits and a send callback without an awaited result", async () => {
     const source = historyStore(chain(1));
     await expect(replayAuthoredHistory(source, GAME, SELF, async () => undefined, { maxBytes: 0 })).rejects.toThrow(/positive safe integers/);

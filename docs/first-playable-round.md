@@ -50,9 +50,10 @@ Web Locks prevent a second tab with the same identity from writing the table.
 
 ## Readiness exchange
 
-The first-round browser path uses full original-author replay, not automatic
-`SYNC_REQ`/`SYNC_RESP` range discovery. Each authenticated peer connection has a
-fresh random readiness token. After replay, it announces a sender-prefix
+The browser replays full original-author history on each new connection and
+only the verified, acknowledged suffix while that connection remains active.
+It does not use automatic `SYNC_REQ`/`SYNC_RESP` range discovery. Each authenticated
+peer connection has a fresh random readiness token. After replay, it announces a sender-prefix
 sequence/hash. The receiver acknowledges only after that exact prefix has been
 durably and semantically admitted. Both incoming-prefix admission and an
 acknowledgement of the current outgoing prefix are required. All three peers must

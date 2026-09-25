@@ -41,7 +41,8 @@ test("one tab runs four local Sasku players with switchable private views", asyn
   await expect(page.locator(".live-contract .trump-symbol")).toHaveText("♦");
   await expect(page.locator(".live-contract .trump-symbol")).toHaveCSS("color", "rgb(181, 31, 50)");
   await expect(page.locator(".live-felt")).not.toContainText("♦");
-  for (let play = 0; play < 4; play++) await page.getByLabel("Your private hand").locator("button.is-playable").first().click();
+  const firstPlay = Number(await page.getByLabel("Live Sasku round").getAttribute("data-actions"));
+  for (let play = 0; play < 4; play++) await playDemoCard(page, firstPlay + play + 1);
   await expect(page.locator(".live-history > summary")).toContainText("1 / 9");
   await page.screenshot({ path: testInfo.outputPath("demo-first-trick.png"), fullPage: true });
   for (const width of [1280, 620, 390, 320]) {

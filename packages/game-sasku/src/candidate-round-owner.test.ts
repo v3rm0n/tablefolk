@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import { deferred } from "../../engine/src/persistent-setup.test-fixture";
 import { CandidateSaskuRoundOwner } from "./candidate-round-owner";
 import { fixture } from "./candidate-round-owner.test-fixture";
+import { PersistentSaskuRoundReceiver } from "./persistent-round-receiver";
 
 it("schedules reverse-order shuffle and deal traffic through an exclusive handoff", async () => {
   const c = await fixture(true);
@@ -15,6 +16,10 @@ it("schedules reverse-order shuffle and deal traffic through an exclusive handof
   expect(snapshot.state.ledger.deal).toBeNull();
   expect(Object.keys(c.owner.readPrivateHand(c.f.secrets[0]!)!.dealt)).toHaveLength(9);
   expect((await c.owner.receiveHistory(c.shuffles[0]!)).status).toBe("duplicate"); c.owner.close();
+  expect(c.verifier.verify).toHaveBeenCalledTimes(4);
+  const reopened = await CandidateSaskuRoundOwner.open(c.options);
+  expect(c.verifier.verify).toHaveBeenCalledTimes(8);
+  expect(reopened.snapshot.phase).toBe("round"); reopened.close();
 }, 30_000);
 it("serializes incoming traffic behind in-flight proof verification", async () => {
   const c = await fixture(), gate = deferred(), started = deferred();
@@ -60,10 +65,11 @@ it("finishes active persistence on close but cancels deferred operations", async
 }, 30_000);
 it("rejects deferred work and requires recovery when the durable phase handoff fails", async () => {
   const c = await fixture(true);
-  c.verifier.verify.mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+  const recovery = vi.spyOn(PersistentSaskuRoundReceiver, "recover").mockImplementationOnce(() => { throw new Error("Simulated handoff failure"); });
   const deferredDeal = expect(c.owner.receiveHistory(c.deals[0]!)).rejects.toThrow(/handoff/);
   for (const artifact of c.shuffles.slice(0, 3)) expect((await c.owner.receiveHistory(artifact)).status).toBe("accepted");
   await expect(c.owner.receiveHistory(c.shuffles[3]!)).rejects.toThrow(/handoff/);
+  recovery.mockRestore();
   await deferredDeal; await c.owner.whenIdle();
   expect(c.owner.failure).not.toBeNull(); expect(c.owner.pendingBytes).toBe(0);
   await expect(c.owner.receiveHistory(c.deals[0]!)).rejects.toThrow(/handoff/);
