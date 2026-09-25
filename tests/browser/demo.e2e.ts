@@ -26,12 +26,40 @@ test("one tab runs four local Sasku players with switchable private views", asyn
   await expect(page.getByRole("heading", { name: "Your turn to bid" })).toBeVisible();
   for (let pass = 0; pass < 3; pass++) await page.getByLabel("Live Sasku round").getByRole("button", { name: "Pass", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Choose your trump" })).toBeVisible();
-  await page.getByRole("button", { name: "Choose clubs" }).click();
+  await expect(page.locator(".live-felt")).not.toContainText(/Trump choice|[♠♣♥♦]/);
+  for (const width of [1280, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const choices = await page.getByRole("group", { name: "Choose trump" }).boundingBox();
+    const first = (await page.getByRole("button", { name: "Choose clubs" }).boundingBox())!;
+    const last = (await page.getByRole("button", { name: "Choose diamonds" }).boundingBox())!;
+    expect(Math.abs((first.x + last.x + last.width) / 2 - (choices!.x + choices!.width / 2))).toBeLessThan(2);
+    expect(first.y).toBe(last.y);
+    await page.screenshot({ path: testInfo.outputPath(`trump-choice-${width}.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole("button", { name: "Choose diamonds" }).click();
+  await expect(page.locator(".live-contract .trump-symbol")).toHaveText("♦");
+  await expect(page.locator(".live-contract .trump-symbol")).toHaveCSS("color", "rgb(181, 31, 50)");
+  await expect(page.locator(".live-felt")).not.toContainText("♦");
   for (let play = 0; play < 4; play++) await page.getByLabel("Your private hand").locator("button.is-playable").first().click();
   await expect(page.locator(".live-history > summary")).toContainText("1 / 9");
   await page.screenshot({ path: testInfo.outputPath("demo-first-trick.png"), fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  for (const width of [1280, 620, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const cards = await page.locator(".live-played-card").evaluateAll(elements => elements.map(element => {
+      const { x, y, width, height } = element.getBoundingClientRect();
+      return { x, y, width, height };
+    }));
+    expect(cards).toHaveLength(4);
+    for (const [index, card] of cards.entries()) {
+      expect(card.width).toBeGreaterThanOrEqual(width > 620 ? 100 : 74);
+      for (const other of cards.slice(index + 1)) {
+        expect(card.x + card.width <= other.x || other.x + other.width <= card.x || card.y + card.height <= other.y || other.y + other.height <= card.y).toBe(true);
+      }
+    }
+    await page.screenshot({ path: testInfo.outputPath(`played-cards-${width}.png`), fullPage: true });
+  }
   await page.getByRole("button", { name: "New demo table" }).click();
   await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "bidding", { timeout: 120_000 });
   expect(sockets).toEqual([]);

@@ -350,35 +350,41 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .live-scoreboard strong small { font-family: "Avenir Next", sans-serif; font-size: .65rem; }
 .live-scoreboard .live-contract { text-align: center; text-transform: capitalize; }
 .live-scoreboard .live-contract strong { font-size: 1.25rem; }
-.live-felt { position: relative; height: 330px; color: var(--paper); background: radial-gradient(ellipse at center, oklch(41% .08 157deg), oklch(29% .06 157deg)); border-radius: 0 0 .8rem .8rem; overflow: hidden; border: 1px solid oklch(20% .03 157deg); }
-.live-felt::before { content: ""; position: absolute; inset: 1rem 12%; border: 1px solid oklch(80% .04 100deg / .15); border-radius: 50%; pointer-events: none; }
-.live-table-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; display: grid; gap: .4rem; }
-.live-table-center > span { font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; }
-.live-table-center > strong { font: 2rem var(--serif); }
-.live-table-center > small { font-size: .63rem; opacity: .65; }
-.live-player { position: absolute; display: flex; align-items: center; gap: .7rem; }
-.live-player--0 { bottom: .75rem; left: 50%; transform: translateX(-50%); flex-direction: column-reverse; gap: .3rem; }
-.live-player--1 { left: 1.1rem; top: 50%; transform: translateY(-50%); }
-.live-player--2 { top: .75rem; left: 50%; transform: translateX(-50%); flex-direction: column; gap: .3rem; }
-.live-player--3 { right: 1.1rem; top: 50%; transform: translateY(-50%); flex-direction: row-reverse; }
-.live-player-label { text-align: center; min-width: 5.4rem; padding: .35rem .6rem; border: 1px solid transparent; border-radius: .5rem; }
+.live-felt { color: var(--paper); background: radial-gradient(ellipse at center, oklch(41% .08 157deg), oklch(29% .06 157deg)); border-radius: 0 0 1rem 1rem; border: 1px solid oklch(20% .03 157deg); }
+.live-trick-status { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .4rem 1rem; min-height: 2.6rem; padding: .7rem 1.2rem; border-bottom: 1px solid #fff2; font-size: .75rem; }
+.live-trick-status > span { opacity: .8; }
+.live-trick-status > strong { font-weight: 600; }
+.live-trick-layout { position: relative; width: min(100%, 720px); height: 480px; margin-inline: auto; }
+.live-trick-layout::before { content: ""; position: absolute; inset: 2rem 8%; border: 1px solid #fff1; border-radius: 50%; pointer-events: none; }
+.live-auction-status { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; display: grid; gap: .4rem; }
+.live-auction-status > span { font-size: .7rem; opacity: .7; }
+.live-auction-status > strong { font: 2rem var(--serif); white-space: nowrap; }
+.live-auction-status > small { font-size: .7rem; }
+.live-player { position: absolute; display: flex; flex-direction: column; align-items: center; gap: .6rem; width: 120px; }
+.live-player--0 { bottom: 1rem; left: 50%; transform: translateX(-50%); flex-direction: column-reverse; }
+.live-player--1 { left: 8%; top: 50%; transform: translateY(-50%); }
+.live-player--2 { top: 1rem; left: 50%; transform: translateX(-50%); }
+.live-player--3 { right: 8%; top: 50%; transform: translateY(-50%); }
+.live-player-label { text-align: center; padding: .35rem .6rem; border: 1px solid transparent; border-radius: .5rem; }
 .live-player-label > span { display: block; font-size: .8rem; font-weight: 700; }
 .live-player-label > small { display: block; font-size: .6rem; opacity: .7; margin-top: .15rem; }
 .live-player.is-active .live-player-label { background: oklch(95% .04 100deg / .12); border-color: oklch(85% .11 100deg / .65); }
-.live-card-space, .live-played-card { width: 49px; height: 64px; border-radius: .3rem; display: grid; place-items: center; }
-.live-card-space { color: oklch(85% .11 100deg); border: 1px dashed oklch(90% .02 100deg / .2); }
-.live-played-card { color: var(--ink); background: var(--paper); padding: .25rem; box-shadow: 0 3px 8px #0003; }
+.live-card-space, .live-played-card { width: 110px; aspect-ratio: 5 / 7; border-radius: .5rem; display: grid; place-items: center; }
+.live-card-space { color: oklch(85% .11 100deg); border: 1px dashed #fff2; }
+.live-played-card { color: var(--ink); background: #fffdf8; box-shadow: 0 8px 18px #0005; }
+.live-felt--auction .live-trick-layout { height: 240px; }
+.live-felt--auction .live-card-space { display: none; }
 .live-actions { min-height: 3rem; padding: .8rem 0; display: flex; justify-content: space-between; align-items: center; gap: .7rem; flex-wrap: wrap; }
 .live-actions > p { font-size: .78rem; margin: 0; }
 .live-actions .hand-action-buttons { margin: 0; gap: .5rem; }
 .live-actions .button { min-height: 44px; padding: .65rem 1rem; font-size: .8rem; width: auto; }
-.trump-choices { width: 100%; }
-.trump-choice { --suit-ink: #24334a; display: inline-flex; align-items: center; justify-content: center; gap: .7rem; min-width: 8.5rem; min-height: 3.7rem; padding: .5rem .9rem; border: 1px solid color-mix(in srgb, var(--suit-ink) 35%, #ddd4c4); border-radius: .7rem; background: #fffdf8; color: var(--suit-ink); font-weight: 700; text-transform: capitalize; box-shadow: 0 2px 5px #17202b12; transition: transform 140ms, box-shadow 140ms, background 140ms; }
+.trump-choices { width: 100%; justify-content: center; }
+.trump-choice { --suit-ink: #24334a; display: inline-flex; align-items: center; justify-content: center; gap: .7rem; width: clamp(3.5rem, 12vw, 5rem); min-height: 4rem; padding: .5rem .9rem; border: 1px solid color-mix(in srgb, var(--suit-ink) 35%, #ddd4c4); border-radius: .7rem; background: #fffdf8; color: var(--suit-ink); font-weight: 700; text-transform: capitalize; box-shadow: 0 2px 5px #17202b12; transition: transform 140ms, box-shadow 140ms, background 140ms; }
 .trump-choice--hearts, .trump-choice--diamonds { --suit-ink: #b51f32; }
 .trump-choice__mark { font-size: 1.9rem; line-height: 1; }
 .trump-choice:hover:not(:disabled) { transform: translateY(-2px); background: color-mix(in srgb, var(--suit-ink) 6%, white); box-shadow: 0 6px 12px #17202b20; }
 .trump-choice:focus-visible { outline: 2px solid var(--suit-ink); outline-offset: 2px; }
-.live-hand-heading { display: flex; justify-content: space-between; gap: .5rem; margin: .4rem 0 .7rem; font-size: .8rem; font-weight: 700; }
+.live-hand-heading { padding-top: .8rem; display: flex; justify-content: space-between; gap: .5rem; margin: .4rem 0 .7rem; font-size: .8rem; font-weight: 700; }
 .live-hand-heading small { font-size: .7rem; font-weight: 400; }
 .live-hand { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: .55rem; min-height: 0; }
 .live-hand-card { display: flex; flex-direction: column; justify-content: space-between; min-width: 0; min-height: 125px; text-align: left; padding: .65rem; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: .45rem; box-shadow: 0 2px 3px #0001; transition: transform 140ms, box-shadow 140ms; }
@@ -423,15 +429,17 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
   .live-scoreboard strong { font-size: 1.35rem; }
   .live-scoreboard strong small { display: block; font-size: .55rem; }
   .live-scoreboard .live-contract strong { font-size: 1rem; }
-  .live-felt { height: 285px; }
-  .live-player--1 { left: .5rem; flex-direction: column; gap: .3rem; }
-  .live-player--3 { right: .5rem; flex-direction: column; gap: .3rem; }
-  .live-player-label { min-width: 3.5rem; padding: .25rem .3rem; }
-  .live-player-label > span { font-size: .7rem; }
+  .live-trick-status { padding: .65rem .7rem; font-size: .7rem; }
+  .live-trick-layout { height: 420px; }
+  .live-player { width: 30%; gap: .4rem; }
+  .live-player--1 { left: 1%; }
+  .live-player--3 { right: 1%; }
+  .live-player-label { padding: .25rem .3rem; }
+  .live-player-label > span { font-size: .75rem; }
   .live-player-label > small { font-size: .55rem; }
-  .live-card-space, .live-played-card { width: 40px; height: 51px; }
-  .live-table-center > strong { font-size: 1.4rem; }
-  .live-table-center > span, .live-table-center > small { font-size: .55rem; }
+  .live-card-space, .live-played-card { width: clamp(74px, 22vw, 100px); }
+  .live-auction-status > strong { font-size: 1.35rem; }
+  .live-felt--auction .live-trick-layout { height: 220px; }
   .live-actions { justify-content: center; text-align: center; padding: .6rem 0; }
   .live-actions .hand-action-buttons { justify-content: center; flex-wrap: wrap; }
   .live-actions .button { font-size: .72rem; padding: .6rem .7rem; }
@@ -445,27 +453,19 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
   .live-hand-card { transition: none; }
 }
 
-.live-table-center { line-height: 1.2; }
-.live-table-center > .live-trick-winner { font-size: 1.3rem; }
-@media (max-width: 620px) { .live-table-center > .live-trick-winner { font-size: 1rem; } }
-
 /* Card faces are self-contained vectors with a standard 5:7 playing-card ratio. */
 .playing-card-face { display: block; width: 100%; height: auto; aspect-ratio: 5 / 7; flex: 0 0 auto; }
 .live-hand-card { position: relative; padding: 0; min-height: 0; background: #fffdf8; overflow: visible; border-radius: .5rem; }
 .live-hand-card.is-playable { padding: 0; }
-.live-played-card { padding: 0; width: 49px; height: auto; aspect-ratio: 5 / 7; background: transparent; }
 @media (max-width: 620px) {
   .live-hand-card, .live-hand-card.is-playable { min-height: 0; padding: 0; }
-  .live-played-card { width: 40px; height: auto; }
 }
 
 .live-heading--your-turn { background: #e5eddb; border-left: 5px solid var(--felt); padding: 1rem; border-radius: .5rem; margin-bottom: 1rem; }
 .live-turn-badge.is-yours { font-size: 1rem; font-weight: 800; }
 .suit-red { color: #b51f32; }
 .live-scoreboard .live-contract .trump-symbol { font-size: 2rem; color: #24334a; }
-.live-scoreboard .trump-symbol.suit-red { color: #b51f32; }
-.table-trump { background: var(--paper); color: #24334a; border-radius: .4rem; padding: .1rem .5rem; }
-.table-trump.suit-red { color: #b51f32; }
+.live-scoreboard .live-contract .trump-symbol.suit-red { color: #b51f32; }
 .joining-status { display: inline-flex; align-items: center; gap: .6rem; }
 .loading-spinner { width: 1rem; height: 1rem; border: 2px solid var(--line); border-top-color: var(--felt); border-radius: 50%; animation: loading-spin 1s linear infinite; }
 @keyframes loading-spin { to { transform: rotate(360deg); } }

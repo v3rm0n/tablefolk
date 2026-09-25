@@ -20,6 +20,7 @@ export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (inten
   const trump = state?.contract?.kind === "pass_round" ? "diamonds" : state?.contract?.suit;
   const preparing = ["setup", "shuffle", "dealing"].includes(view.phase);
   const done = view.phase === "complete";
+  const auction = view.phase === "bidding" || view.phase === "choosing_trump";
   const team = view.seat % 2;
   const last = state?.completedTricks.at(-1);
   const showingLast = Boolean(last && state?.trick.length === 0);
@@ -49,27 +50,34 @@ export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (inten
       <h3>{view.phase === "setup" ? "Everyone is getting ready" : view.phase === "shuffle" ? "Shuffling the deck" : "Dealing nine cards to you"}</h3>
       <p>Keep this tab open. Your hand will appear here automatically.</p>
       <ol aria-label="Hand preparation">{["Setup", "Shuffle", "Deal"].map((label, i) => <li key={label} aria-current={i === ["setup", "shuffle", "dealing"].indexOf(view.phase) ? "step" : undefined} className={i < ["setup", "shuffle", "dealing"].indexOf(view.phase) ? "is-complete" : ""}><span>{i + 1}</span>{label}</li>)}</ol>
-    </div> : <div className="live-felt" aria-label={showingLast ? "Last completed trick" : "Current live trick"}>
-      <div className="live-table-center"><span>{showingLast ? "Last trick" : done ? "Round complete" : view.phase === "bidding" ? "Auction" : view.phase === "choosing_trump" ? "Trump choice" : `Trick ${Math.min((state?.completedTricks.length ?? 0) + 1, 9)} of 9`}</span>
-        <strong className={showingLast ? "live-trick-winner" : trump ? `table-trump${trump === "hearts" || trump === "diamonds" ? " suit-red" : ""}` : undefined}>{showingLast ? `${last!.winner.seat === view.seat ? "You" : `Player ${last!.winner.seat + 1}`} won` : view.phase === "bidding" ? state?.highestBid ? `Bid ${state.highestBid.value}` : "Open bidding" : trump ? SASKU_SUIT_MARKS[trump] : "♠"}</strong>
-        {showingLast ? <small>{last!.cardPoints} card points</small> : state?.highestBid && view.phase === "bidding" ? <small>Player {state.highestBid.seat + 1}</small> : null}</div>
-      {[0, 1, 2, 3].map(relative => {
-        const seat = (view.seat + relative) % 4, play = displayedTrick.find(p => p.seat === seat);
-        const active = state?.turn === seat && !done && view.phase !== "audit";
-        return <div key={seat} className={`live-player live-player--${relative}${active ? " is-active" : ""}`} aria-current={active ? "true" : undefined}>
-          <div className="live-player-label"><span>{relative === 0 ? "You" : `Player ${seat + 1}`}</span><small>{relative === 2 ? "Your partner" : relative === 0 ? `Player ${seat + 1}` : "Opponent"}</small></div>
-          {play ? <div className={`live-played-card ${["hearts", "diamonds"].includes(parseSaskuCard(play.card).suit) ? "is-red" : ""}`} aria-label={`Player ${seat + 1}: ${saskuCardName(play.card)}`}><SaskuCardFace id={play.card} /></div>
-            : <div className="live-card-space" aria-hidden="true">{active ? "•••" : ""}</div>}
-        </div>;
-      })}
+    </div> : <div className={`live-felt${auction ? " live-felt--auction" : ""}`} aria-label={showingLast ? "Last completed trick" : "Current live trick"}>
+      {!auction && <div className="live-trick-status" role="status">
+        <span>{showingLast ? "Last trick" : done ? "Round complete" : `Trick ${Math.min((state?.completedTricks.length ?? 0) + 1, 9)} of 9`}</span>
+        {showingLast && <strong>{last!.winner.seat === view.seat ? "You won" : `Player ${last!.winner.seat + 1} won`} · {last!.cardPoints} points</strong>}
+      </div>}
+      <div className="live-trick-layout">
+        {view.phase === "bidding" && <div className="live-auction-status">
+          <span>{state?.highestBid ? "Highest bid" : "Auction"}</span>
+          <strong>{state?.highestBid?.value ?? "Open bidding"}</strong>
+          {state?.highestBid && <small>Player {state.highestBid.seat + 1}</small>}
+        </div>}
+        {[0, 1, 2, 3].map(relative => {
+          const seat = (view.seat + relative) % 4, play = displayedTrick.find(p => p.seat === seat);
+          const active = state?.turn === seat && !done && view.phase !== "audit";
+          return <div key={seat} className={`live-player live-player--${relative}${active ? " is-active" : ""}`} aria-current={active ? "true" : undefined}>
+            <div className="live-player-label"><span>{relative === 0 ? "You" : `Player ${seat + 1}`}</span><small>{relative === 2 ? "Your partner" : relative === 0 ? `Player ${seat + 1}` : "Opponent"}</small></div>
+            {play ? <div className={`live-played-card ${["hearts", "diamonds"].includes(parseSaskuCard(play.card).suit) ? "is-red" : ""}`} aria-label={`Player ${seat + 1}: ${saskuCardName(play.card)}`}><SaskuCardFace id={play.card} /></div>
+              : <div className="live-card-space" aria-hidden="true">{active ? "•••" : ""}</div>}
+          </div>;
+        })}
+      </div>
     </div>}
-    {!preparing && !done && <div className="live-actions">
+    {!preparing && !done && auction && <div className="live-actions">
       {view.phase === "bidding" ? <><p>Maximum bid <strong>{view.strength}</strong>{state?.highestBid ? ` · Highest bid ${state.highestBid.value}` : " · No bid yet"}</p><div className="hand-action-buttons">
         {Array.from({ length: Math.max(0, (view.strength ?? 0) - firstBid + 1) }, (_, index) => firstBid + index).map(value => <button key={value} className="button button--primary" disabled={!enabled} onClick={() => void send({ type: "bid", value })}>Bid {value}</button>)}
         <button className="button button--secondary" disabled={!enabled} onClick={() => void send({ type: "pass" })}>Pass</button>
         <button className="button button--secondary" disabled={!enabled} onClick={() => void send({ type: "diamonds" })}>Call diamonds</button>
-      </div></> : view.phase === "choosing_trump" ? <div className="hand-action-buttons trump-choices">{SASKU_SUITS.map(suit => <button className={`trump-choice trump-choice--${suit}`} key={suit} disabled={!enabled} onClick={() => void send({ type: "choose_trump", suit })} aria-label={`Choose ${suit}`}><span className="trump-choice__mark" aria-hidden="true">{SASKU_SUIT_MARKS[suit]}</span></button>)}</div>
-        : <p>{last ? <>Last trick: <strong>{last.winner.seat === view.seat ? "you" : `player ${last.winner.seat + 1}`}</strong> took {last.cardPoints} points.</> : "Courts are trumps. Follow the effective suit when you can."}</p>}
+      </div></> : <div className="hand-action-buttons trump-choices" role="group" aria-label="Choose trump">{SASKU_SUITS.map(suit => <button className={`trump-choice trump-choice--${suit}`} key={suit} disabled={!enabled} onClick={() => void send({ type: "choose_trump", suit })} aria-label={`Choose ${suit}`}><span className="trump-choice__mark" aria-hidden="true">{SASKU_SUIT_MARKS[suit]}</span></button>)}</div>}
     </div>}
     <div className="live-hand-heading"><span>{done ? "All cards played" : "Your hand"}</span></div>
     <div className="live-hand" aria-label="Your private hand">{cards.map(({ position, card, playable }) => {
