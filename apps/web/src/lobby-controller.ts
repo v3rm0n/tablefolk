@@ -9,7 +9,7 @@ import {
 } from "@p2pcards/protocol";
 import { LobbyChainRegistry, PersistentEnvelopeAuthor, PersistentLobbyReceiver, recoverLobby, replayAuthoredHistory, type EnvelopeContent } from "@p2pcards/session";
 import { IndexedDbAuthoredEnvelopeStore, IndexedDbIdentityStore, IndexedDbSessionStore, type IndexedDbStoreOptions } from "@p2pcards/storage";
-import { TrysteroNostrSignalingAdapter, type MeshPeerConnectionFactory } from "@p2pcards/transport";
+import { TrysteroNostrSignalingAdapter, type MeshPeerConnectionFactory, type SignalingAdapter } from "@p2pcards/transport";
 
 import { connectionRulesHash, lobbyIceConfigHash, parseRelayText } from "./lobby-config";
 import { createLobbyInvitation, identityFingerprint, parseLobbyInvitation, type LobbyInvitation } from "./lobby-invitation";
@@ -25,7 +25,7 @@ interface Room {
   readonly abort: AbortController;
   lobby: LobbyChainRegistry;
   receiver: PersistentLobbyReceiver;
-  signaling: TrysteroNostrSignalingAdapter | null;
+  signaling: SignalingAdapter | null;
   transport: LobbyTransport | null;
   queue: Promise<void>;
   pending: number;
@@ -48,6 +48,8 @@ export interface BrowserLobbyControllerOptions {
   readonly initialInvitation?: string;
   readonly storage?: IndexedDbStoreOptions & { readonly keyRange?: Pick<typeof IDBKeyRange, "bound"> };
   readonly createPeerConnection?: MeshPeerConnectionFactory;
+  readonly createSignaling?: () => SignalingAdapter;
+  readonly manageHistory?: boolean;
 }
 
 class LobbyProtocolError extends Error {}
@@ -184,12 +186,12 @@ export class BrowserLobbyController implements BrowserLobbyActions {
         room.recordCount += 1;
       }
       this.#require(room, epoch);
-      if (typeof window !== "undefined") { window.history.replaceState(null, "", createLobbyInvitation(this.#baseUrl, invitation.gameId, invitation.host)); }
+      if (this.#options.manageHistory !== false && typeof window !== "undefined") { window.history.replaceState(null, "", createLobbyInvitation(this.#baseUrl, invitation.gameId, invitation.host)); }
       if (room.lobby.state === "finalized") {
         this.#event("Saved agreement restored. Synchronizing signed history with the other players.");
       }
       const current = room;
-      const signaling = new TrysteroNostrSignalingAdapter({
+      const signaling = this.#options.createSignaling?.() ?? new TrysteroNostrSignalingAdapter({
         ...(relayUrls === undefined ? {} : { relayUrls, relayRedundancy: relayUrls.length }),
         onRelayStateChange: () => { if (this.#room === current) { this.#refresh(current); } },
         onError: (error) => { if (this.#room === current) { this.#event(message(error)); } },
@@ -470,7 +472,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     ++this.#epoch;
     this.#set({ busy: "leaving" });
     await this.#closeRoom(this.#room);
-    if (typeof window !== "undefined") { const url = new URL(this.#baseUrl); url.hash = ""; window.history.replaceState(null, "", url); }
+    if (this.#options.manageHistory !== false && typeof window !== "undefined") { const url = new URL(this.#baseUrl); url.hash = ""; window.history.replaceState(null, "", url); }
     this.#set({ phase: "welcome", room: null, game: null, peers: [], relays: [], busy: null, error: null, events: [] });
   }
 
@@ -558,7 +560,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       room: Object.freeze({ gameId: bytesToHex(room.invitation.gameId), host: bytesToHex(room.invitation.host), isHost: room.host,
         invitation: createLobbyInvitation(this.#baseUrl, room.invitation.gameId, room.invitation.host), seats: Object.freeze(seats),
         rosterHash: room.lobby.rosterHash === null ? null : bytesToHex(room.lobby.rosterHash), canReady, canStart, ownReady: room.localReady }),
-      peers: Object.freeze(peers), relays: Object.freeze((room.signaling?.relayDiagnostics ?? []).map((relay) => Object.freeze({
+      peers: Object.freeze(peers), relays: Object.freeze((room.signaling instanceof TrysteroNostrSignalingAdapter ? room.signaling.relayDiagnostics : []).map((relay) => Object.freeze({
         url: relay.url, state: relay.state, error: relay.lastError === null ? null : message(relay.lastError),
       }))),
     });

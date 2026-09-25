@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } fro
 
 import type { BrowserLobbyActions } from "./lobby-types";
 
-export function App({ controller }: { readonly controller: BrowserLobbyActions }) {
+export function App({ controller, demo = false }: { readonly controller: BrowserLobbyActions; readonly demo?: boolean }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [invitation, setInvitation] = useState(state.pendingInvitation);
   const [relays, setRelays] = useState("");
@@ -54,6 +54,7 @@ export function App({ controller }: { readonly controller: BrowserLobbyActions }
               <div className="welcome__links">
                 <a className="reference-link" href="./how-it-works.html">How it works <span aria-hidden="true">→</span></a>
                 <a className="reference-link" href="./scoring.html">Scoring reference <span aria-hidden="true">→</span></a>
+                <a className="reference-link" href="./demo.html">Try the four-player demo <span aria-hidden="true">→</span></a>
               </div>
             </>}
           </div>
@@ -97,7 +98,7 @@ export function App({ controller }: { readonly controller: BrowserLobbyActions }
         <section className="lobby" aria-labelledby="lobby-title">
           <div className="lobby-heading">
             <div><p className="eyebrow">{state.phase === "agreed" && readyCount === 4 ? "Ready to play" : "Waiting room"}</p><h1 id="lobby-title">Sasku</h1></div>
-            <button className="button button--quiet" onClick={() => act(controller.leave().then(() => setInvitation("")))} disabled={state.busy === "leaving"}>Leave table</button>
+            {!demo && <button className="button button--quiet" onClick={() => act(controller.leave().then(() => setInvitation("")))} disabled={state.busy === "leaving"}>Leave table</button>}
           </div>
           <div className="lobby-layout">
             <div className="table-panel">
@@ -117,11 +118,13 @@ export function App({ controller }: { readonly controller: BrowserLobbyActions }
                 })}
               </div>
             </div>
-            <aside className="lobby-actions" aria-label="Invitation and readiness">
-              <label htmlFor="share-invitation">Share this invitation</label>
-              <input id="share-invitation" ref={inviteField} readOnly value={room.invitation} onFocus={() => inviteField.current?.select()} />
-              <button className="button button--secondary" onClick={() => { void copyInvite(); }}>Copy invitation</button>
-              <p className="copy-status" role="status">{copySource === room.invitation ? copyStatus : ""}</p>
+            <aside className="lobby-actions" aria-label={demo ? "Readiness" : "Invitation and readiness"}>
+              {demo ? <p className="demo-lobby-note">All four players are running locally in this tab. Choose any seat above to see its view.</p> : <>
+                <label htmlFor="share-invitation">Share this invitation</label>
+                <input id="share-invitation" ref={inviteField} readOnly value={room.invitation} onFocus={() => inviteField.current?.select()} />
+                <button className="button button--secondary" onClick={() => { void copyInvite(); }}>Copy invitation</button>
+                <p className="copy-status" role="status">{copySource === room.invitation ? copyStatus : ""}</p>
+              </>}
               <div className="agreement-status" aria-live="polite">
                 <strong>{readyCount} of 4 ready</strong>
                 <p>{!room.ownReady ? "You are marked not ready." : room.seats.length < 4 ? "Waiting for four players." : readyCount < 4 ? "Waiting for everyone to be ready." : state.phase !== "agreed" ? "Preparing the table." : room.isHost ? room.canStart ? "Everyone is ready. Start the round." : "Syncing the table." : "Waiting for player 1 to start."}</p>
@@ -129,10 +132,10 @@ export function App({ controller }: { readonly controller: BrowserLobbyActions }
               {!state.game && <button className="button button--secondary" disabled={busy} onClick={() => act(controller.setReady(!room.ownReady))}>{room.ownReady ? "Mark myself not ready" : "Mark myself ready"}</button>}
               {room.isHost && state.phase === "agreed" && !state.game && controller.startRound && <button className="button button--primary" disabled={!room.canStart || busy} onClick={() => act(controller.startRound!())}>Play first round</button>}
 
-              <details className="settings"><summary>Signed roster</summary><p>Game ID</p><code>{room.gameId}</code><p>Roster hash</p><code>{room.rosterHash ?? "Waiting for the host's signed roster"}</code></details>
+              {!demo && <details className="settings"><summary>Signed roster</summary><p>Game ID</p><code>{room.gameId}</code><p>Roster hash</p><code>{room.rosterHash ?? "Waiting for the host's signed roster"}</code></details>}
             </aside>
           </div>
-          <details className="diagnostics">
+          {!demo && <details className="diagnostics">
             <summary>Connection diagnostics <span>{state.peers.filter(({ state }) => state === "authenticated").length} verified links</span></summary>
             <div className="diagnostics__columns">
               <div><h3>Peer links</h3>{state.peers.length === 0 ? <p>No peer connections yet. Guests connect after opening your invitation.</p> : <ul className="connection-list">{state.peers.map((peer) => <li key={peer.publicKey}>
@@ -142,7 +145,7 @@ export function App({ controller }: { readonly controller: BrowserLobbyActions }
               <div><h3>Signaling relays</h3>{state.relays.length === 0 ? <p>No active relay subscriptions.</p> : <ul className="relay-list">{state.relays.map((relay) => <li key={relay.url}><span>{relay.url}</span><strong>{relay.state}</strong>{relay.error !== null && <small>{relay.error}</small>}</li>)}</ul>}<p className="privacy-note">Relays carry encrypted signaling, not game messages. TURN is not configured.</p></div>
             </div>
             {state.events.length > 0 && <ol className="event-log" aria-label="Recent connection events">{state.events.map((event, index) => <li key={`${index}:${event}`}>{event}</li>)}</ol>}
-          </details>
+          </details>}
         </section>
         </details>
       )}

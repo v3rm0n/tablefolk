@@ -105,6 +105,13 @@ production build.
    bid or pass, choose trump, and play highlighted legal cards. The round ends
    after nine tricks and four verified audit disclosures.
 
+For a one-tab test, choose **Try the four-player demo** on the landing page or
+open `demo.html`. It opens four isolated local player stores and connects them
+with in-memory signaling and real WebRTC. Start as player 1, then let **Follow
+the turn automatically** switch seats after each move. Use the seat buttons to
+inspect any player's view, or **New demo table** to start over. Demo signaling
+does not use public relays or affect a normal table's identity.
+
 Blank relay settings use the pinned Nostr adapter's public defaults. Custom relay
 lists must match on every device. STUN is configured; TURN is not, so some NATs or
 restricted networks will fail to connect. Public relays may reject subscriptions
