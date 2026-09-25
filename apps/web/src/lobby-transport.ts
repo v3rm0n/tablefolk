@@ -31,8 +31,21 @@ export interface LobbyTransportOptions {
   readonly onChange: () => void;
 }
 
+export interface LobbyTransportLike {
+  readonly peers: readonly { readonly identity: IdentityPublicKey; readonly generation: number; readonly connectionState: RTCPeerConnectionState }[];
+  authenticated(remote: IdentityPublicKey): boolean;
+  generation(remote: IdentityPublicKey): number | undefined;
+  start(): Promise<void>;
+  admit(remote: IdentityPublicKey): Promise<void>;
+  remove(remote: IdentityPublicKey): void;
+  retry(remote: IdentityPublicKey): Promise<void>;
+  path(remote: IdentityPublicKey): Promise<{ readonly path: "direct" | "relayed" | "unknown" }>;
+  send(remote: IdentityPublicKey, generation: number, payload: Uint8Array): Promise<void>;
+  close(): Promise<void>;
+}
+
 /** Authenticated browser mesh. Session readiness is owned by the application history barrier. */
-export class LobbyTransport {
+export class LobbyTransport implements LobbyTransportLike {
   readonly #mesh: FullMeshTransport;
   readonly #options: LobbyTransportOptions;
   readonly #peers = new Map<string, Peer>();

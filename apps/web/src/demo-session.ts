@@ -1,6 +1,5 @@
-import { InMemorySignalingNetwork } from "@p2pcards/transport";
-
 import { BrowserLobbyController } from "./lobby-controller";
+import { LocalDemoTransportNetwork } from "./local-demo-transport";
 
 /** Four isolated identities using the normal lobby and round engines in one page. */
 export class DemoSession {
@@ -8,12 +7,11 @@ export class DemoSession {
   #operation: Promise<void> | null = null;
 
   constructor(baseUrl: string) {
-    const network = new InMemorySignalingNetwork();
+    const network = new LocalDemoTransportNetwork();
     this.controllers = Array.from({ length: 4 }, (_, index) => new BrowserLobbyController({
       baseUrl,
       storage: { databaseName: `p2pcards-demo-player-${index + 1}` },
-      createSignaling: () => network.createAdapter(),
-      createPeerConnection: (_remote, configuration) => new RTCPeerConnection({ ...configuration, iceServers: [] }),
+      createTransport: options => network.createTransport(options),
       manageHistory: false,
     }));
   }

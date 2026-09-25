@@ -106,8 +106,8 @@ production build.
    after nine tricks and four verified audit disclosures.
 
 For a one-tab test, choose **Try the four-player demo** on the landing page or
-open `demo.html`. It opens four isolated local player stores and connects them
-with in-memory signaling and real WebRTC. Start as player 1, then let **Follow
+open `demo.html`. It opens four isolated local player stores and delivers their
+signed game messages inside the tab without WebRTC setup. Start as player 1, then let **Follow
 the turn automatically** switch seats after each move. Use the seat buttons to
 inspect any player's view, or **New demo table** to start over. Demo signaling
 does not use public relays or affect a normal table's identity.

@@ -4,6 +4,9 @@ test("one tab runs four local Sasku players with switchable private views", asyn
   test.setTimeout(180_000);
   const errors: string[] = [];
   const sockets: string[] = [];
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "RTCPeerConnection", { value: class { constructor() { throw new Error("The local demo must not open WebRTC"); } } });
+  });
   page.on("pageerror", error => errors.push(error.message));
   page.on("websocket", socket => sockets.push(socket.url()));
   await page.goto(`${baseURL}/demo.html`);
@@ -27,7 +30,12 @@ test("one tab runs four local Sasku players with switchable private views", asyn
   await page.getByLabel("Live Sasku round").getByRole("button", { name: /^Bid / }).first().click();
   await expect(page.getByRole("tab", { name: /Player 2/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "Your turn to bid" })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("demo-bidding.png"), fullPage: true });
+  for (let pass = 0; pass < 3; pass++) await page.getByLabel("Live Sasku round").getByRole("button", { name: "Pass", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Choose your trump" })).toBeVisible();
+  await page.getByRole("button", { name: "Choose clubs" }).click();
+  for (let play = 0; play < 4; play++) await page.getByLabel("Your private hand").locator("button.is-playable").first().click();
+  await expect(page.locator(".live-history > summary")).toContainText("1 / 9");
+  await page.screenshot({ path: testInfo.outputPath("demo-first-trick.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole("button", { name: "New demo table" }).click();
