@@ -29,6 +29,7 @@ export interface PersistentSetupReceiverOptions {
   readonly maxPendingEnvelopes?: number;
   readonly maxPendingBytes?: number;
   readonly historyLimits?: SessionHistoryCaptureLimits;
+  readonly beaconRequired?: boolean;
 }
 
 /** Public, immutable progress only: no key scalar, beacon preimage, or mutable byte views. */
@@ -127,7 +128,7 @@ export class PersistentSetupReceiver {
         throw new PersistentSetupReceiverError("invalid_envelope");
       }
     }
-    this.#coordinator = recoverSetup(this.#gameId, this.#round, this.#roster, history.envelopes).coordinator;
+    this.#coordinator = recoverSetup(this.#gameId, this.#round, this.#roster, history.envelopes, captured.beaconRequired).coordinator;
     this.#snapshot = this.#view();
     history.assertUnchanged();
   }

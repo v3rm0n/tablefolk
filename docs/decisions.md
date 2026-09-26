@@ -69,3 +69,14 @@ of unnecessary architecture; repeated responsibilities and delivery dependencies
 - Broader recovery automation and speculative abstractions move behind that path.
 - A backend feasibility blocker is recorded explicitly rather than hidden behind
   a placeholder verifier or further unrelated infrastructure work.
+
+## 2026-09-26: Short-lived Sasku startup profile
+
+Status: **Accepted for the next candidate match profile.**
+
+Keep the untrusted-peer checks in D1. Remove the unused setup randomness beacon
+from this match profile, and batch the four-seat private deal by donor while
+retaining every signed share and proof. Reuse workers where private witnesses are
+cleared and cancellation remains reliable. Measure readiness acknowledgements
+before changing their scope. The precise wire change and compatibility boundary
+are recorded in [round-start-performance.md](round-start-performance.md).

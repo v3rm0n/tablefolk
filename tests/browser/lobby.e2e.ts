@@ -148,9 +148,15 @@ test("four isolated browser identities play a complete Sasku match and recover a
     await pages[3]!.screenshot({ path: testInfo.outputPath("lobby-mobile.png"), fullPage: true });
     await expect(pages[0]!.getByText("3 of 4 ready", { exact: true })).toBeVisible();
     await expect(pages[0]!.getByLabel("Live Sasku round")).toHaveCount(0);
-    await pages[2]!.getByRole("button", { name: "Not ready", exact: true }).click();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (await pages[2]!.getByRole("button", { name: "Ready", exact: true }).isVisible()) break;
+      await pages[2]!.getByRole("button", { name: "Not ready", exact: true }).click();
+      try { await expect(pages[2]!.getByRole("button", { name: "Ready", exact: true })).toBeVisible({ timeout: 2_000 }); break; }
+      catch { /* Retry a missed browser click. */ }
+    }
+    await expect(pages[2]!.getByRole("button", { name: "Ready", exact: true })).toBeVisible();
     await expect(pages[0]!.getByText("2 of 4 ready", { exact: true })).toBeVisible();
-    const transcripts = await Promise.all(pages.map((page) => page.evaluate(async () => {
+    const readTranscripts = () => Promise.all(pages.map((page) => page.evaluate(async () => {
       const database = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open("p2pcards"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
       });
@@ -161,7 +167,8 @@ test("four isolated browser identities play a complete Sasku match and recover a
       database.close();
       return rows.map(({ bytes }) => Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")).sort();
     })));
-    expect(transcripts[0]).toHaveLength(11);
+    await expect.poll(async () => (await readTranscripts()).map(rows => rows.length)).toEqual([11, 11, 11, 11]);
+    const transcripts = await readTranscripts();
     for (const transcript of transcripts.slice(1)) { expect(transcript).toEqual(transcripts[0]); }
     expect(errors).toEqual([]);
     // Model a locally authored roster committed before its derived snapshot was written.
@@ -186,8 +193,10 @@ test("four isolated browser identities play a complete Sasku match and recover a
     await pages[0]!.getByRole("button", { name: "Join this table" }).click();
     await expect(pages[0]!.getByText("3 of 4 ready", { exact: true })).toBeVisible();
     await expect(pages[0]!.locator(".diagnostics > summary")).toContainText("3 verified links");
+    const roundStart = performance.now();
     await pages[2]!.getByRole("button", { name: "Ready", exact: true }).click();
     for (const page of pages) await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "bidding", { timeout: 120_000 });
+    console.log(`WebRTC round startup to bidding: ${Math.round(performance.now() - roundStart)} ms`);
     const seatedPages = await seatOrderedPages(pages);
     for (const page of pages) await expect(page.getByLabel("Your private hand").getByRole("button")).toHaveCount(9);
     for (const page of pages) await expect(page.getByLabel("Your private hand").locator("small")).toHaveCount(0);
@@ -288,7 +297,7 @@ test("invalid invitations fail without relay traffic and mobile welcome stays us
 });
 
 test("an invitation link leads with joining and keeps the invitation field out of view", async ({ page }, testInfo) => {
-  const fragment = `#g=${"11".repeat(16)}&h=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a&r=sasku-match-candidate%402&s=trystero-nostr`;
+  const fragment = `#g=${"11".repeat(16)}&h=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a&r=sasku-match-candidate%403&s=trystero-nostr`;
   await page.goto(`/${fragment}`);
   await expect(page.getByRole("heading", { name: "You're invited to Sasku." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Join this table" })).toBeEnabled();

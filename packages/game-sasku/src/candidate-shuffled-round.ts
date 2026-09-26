@@ -9,6 +9,7 @@ export interface CandidateShuffledSaskuRoundOptions extends Omit<PersistentCandi
   readonly dealer: SaskuSeat;
   readonly schedule: readonly PrivateDealStep[];
   readonly roundHistoryLimits?: SaskuRoundRecoveryLimits;
+  readonly batchDeal?: boolean;
 }
 
 /** Re-verifies the complete durable shuffle chain before restoring private dealing/play. No supplied deck is accepted. */
@@ -17,14 +18,15 @@ export async function recoverCandidateShuffledSaskuRound(input: CandidateShuffle
   const options = { ...input, deckSpec: SASKU_DECK_SPEC };
   const roundLimits = input.roundHistoryLimits === undefined ? undefined : Object.freeze({ ...input.roundHistoryLimits });
   const history = captureSessionHistory(options.session, options.historyLimits);
-  const setup = recoverSetup(options.session.gameId, options.setupRound, options.session.roster, history.envelopes).coordinator;
+  const setup = recoverSetup(options.session.gameId, options.setupRound, options.session.roster, history.envelopes, options.beaconRequired).coordinator;
   const shuffle = await PersistentCandidateShuffleReceiver.open(options);
   let round: PersistentSaskuRoundReceiver | undefined;
   try {
     history.assertUnchanged();
     if (!shuffle.snapshot.complete) throw new Error("Sasku requires all four verified shuffle contributions");
     round = PersistentSaskuRoundReceiver.recover({ setup, round: options.round, deck: shuffle.finalDeck,
-      dealer, schedule, session: options.session, sessionReceiver: options.sessionReceiver }, roundLimits);
+      dealer, schedule, ...(options.batchDeal === undefined ? {} : { batchDeal: options.batchDeal }),
+      session: options.session, sessionReceiver: options.sessionReceiver }, roundLimits);
     history.assertUnchanged();
     return round;
   } catch (error) { round?.close(); throw error; }

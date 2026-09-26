@@ -21,7 +21,7 @@ The first playable milestone is one complete four-player Sasku hand over the
 authenticated P2P path, with Bayer-Groth shuffles in a worker, private dealing,
 legal play, and audited scoring. Resolve the shuffle implementation/profile and
 review path before expanding surrounding orchestration. Explicit agreed dealer,
-deal, and beacon policies remain prerequisites; this milestone does not select a
+deal, and setup randomness policies remain prerequisites; this milestone does not select a
 match-termination policy.
 
 Retain the existing durable authoring, secrets, and read-only recovery foundations.
@@ -936,3 +936,17 @@ The scope remains one experimental round. Independent proof/profile review,
 public relay/TURN and cross-browser validation, peer-signed result agreement,
 general range-based sync, multiple rounds, and offline transcript export remain
 follow-up work; none is claimed complete by the playable first-round milestone.
+
+- 2026-09-26: Introduced `sasku-match-candidate@3` after documenting the
+  [round-start performance decision](docs/round-start-performance.md). The live
+  match now completes setup after four signed, proof-checked game keys without
+  the unused beacon, and accepts four donor-wide 27-share batches instead of
+  twelve recipient batches. Each share still has its original Chaum–Pedersen
+  proof; every shuffle remains proved and verified. A reusable verifier worker
+  avoids repeated WASM startup while proof workers remain disposable.
+  Invitations and rules hashes separate the new transcript from `@2`. Workspace
+  typechecks, 1,994 unit tests, build, and six production browser scenarios pass,
+  including a full four-browser match with reload. In a same-browser comparison,
+  local startup to bidding measured 18.3–18.4 s versus 25.6–26.4 s for the prior
+  beacon and deal schedule. One four-browser startup measured 8.6 s from the
+  final ready click. Acknowledgement timing was not changed.

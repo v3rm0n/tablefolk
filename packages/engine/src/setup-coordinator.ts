@@ -56,23 +56,26 @@ export class SetupCoordinator {
   readonly #gameId: GameId;
   readonly #round: number;
   readonly #seatCount: number;
+  readonly #beaconRequired: boolean;
   readonly #proofContext: ProofContext;
   readonly #keyShares: Array<GameKeyShare | null>;
   #state: SetupState = "keys";
   #aggregateKey: RistrettoPoint | null = null;
   #beacon: RandomnessBeacon | null = null;
 
-  constructor(gameId: GameId, round: number, seatCount: number) {
+  constructor(gameId: GameId, round: number, seatCount: number, beaconRequired = true) {
     if (!Number.isSafeInteger(round) || round < 0) {
       throw new RangeError("Setup round must be an unsigned safe integer");
     }
     if (!Number.isInteger(seatCount) || seatCount < 3 || seatCount > 8) {
       throw new RangeError("Setup seat count must be an integer from 3 through 8");
     }
+    if (typeof beaconRequired !== "boolean") throw new TypeError("Invalid setup beacon policy");
 
     this.#gameId = parseGameId(gameId);
     this.#round = round;
     this.#seatCount = seatCount;
+    this.#beaconRequired = beaconRequired;
     this.#proofContext = Object.freeze({
       gameId: this.#gameId,
       round,
@@ -151,7 +154,7 @@ export class SetupCoordinator {
       });
     }
 
-    return setupResult("accepted", seat, "rand_commit");
+    return setupResult("accepted", seat, this.#beaconRequired ? "rand_commit" : "complete");
   }
 
   acceptKeyShare(seat: number, share: GameKeyShare): SetupIngestResult {
@@ -165,11 +168,11 @@ export class SetupCoordinator {
       this.#state = "failed";
       return classification;
     }
-    if (classification.state === "rand_commit") {
+    if (classification.state === "rand_commit" || classification.state === "complete") {
       this.#aggregateKey = aggregatePublicKeys(
         this.#keyShares.map((value) => value!.H),
       );
-      this.#beacon = new RandomnessBeacon(this.#gameId, this.#round, this.#seatCount);
+      if (this.#beaconRequired) this.#beacon = new RandomnessBeacon(this.#gameId, this.#round, this.#seatCount);
     }
     this.#state = classification.state;
     return classification;

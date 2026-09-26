@@ -3,7 +3,7 @@ import { PersistentSetupReceiver } from "@p2pcards/engine";
 import { CandidateSaskuRoundOwner, type SaskuActionIntent, type SaskuRoundSnapshot } from "@p2pcards/game-sasku";
 import { decodeAndVerifyEnvelope, type EnvelopeArtifact, type IdentityPublicKey, type RosterBody } from "@p2pcards/protocol";
 import { captureSessionHistory, PersistentEnvelopeAuthor, PersistentSessionReceiver, type SessionChainRegistry } from "@p2pcards/session";
-import { IndexedDbGameSecretStore, IndexedDbSetupBeaconSecretStore, type IndexedDbStoreOptions, type IndexedDbSessionStore } from "@p2pcards/storage";
+import { IndexedDbGameSecretStore, type IndexedDbStoreOptions, type IndexedDbSessionStore } from "@p2pcards/storage";
 import { legalSaskuCards, saskuBidStrength, type SaskuCardId } from "@p2pcards/rules-sasku";
 import { CandidateShuffleClient } from "./candidate-shuffle-client";
 import { FIRST_DEAL, FIRST_ROUND } from "./live-profile";
@@ -33,7 +33,6 @@ export class LiveRound {
   readonly #options: Options;
   readonly #setup: PersistentSetupReceiver;
   readonly #keys: IndexedDbGameSecretStore;
-  readonly #beacon: IndexedDbSetupBeaconSecretStore;
   readonly #client = new CandidateShuffleClient();
   readonly #durable: PersistentSessionReceiver;
   readonly #pending = new Map<string, EnvelopeArtifact>();
@@ -52,9 +51,9 @@ export class LiveRound {
   constructor(options: Options) {
     this.#options = options;
     this.#keys = new IndexedDbGameSecretStore(options.storage);
-    this.#beacon = new IndexedDbSetupBeaconSecretStore(options.storage);
     this.#durable = new PersistentSessionReceiver(options.session, options.stored);
-    this.#setup = new PersistentSetupReceiver({ round: 0, self: options.self, session: options.session, sessionReceiver: this.#durable });
+    this.#setup = new PersistentSetupReceiver({ round: 0, self: options.self, session: options.session, sessionReceiver: this.#durable,
+      beaconRequired: false });
     this.#view = { phase: "setup", match: this.#match, message: "Synchronizing signed histories", seat: options.session.seatOf(options.self)!, connected: false, busy: true, hand: [], strength: null, state: null, error: null };
     this.#kick();
   }
@@ -141,8 +140,7 @@ export class LiveRound {
         const s = this.#setup.snapshot;
         if (!s.pendingSenders.includes(seat)) break;
         const result = s.state === "keys" ? await this.#setup.authorKeyShare(this.#options.author, this.#keys, s)
-          : s.state === "rand_commit" ? await this.#setup.authorRandCommit(this.#options.author, this.#beacon, s)
-          : s.state === "rand_reveal" ? await this.#setup.authorRandReveal(this.#options.author, this.#beacon, s) : null;
+          : null;
         if (!result || result.status !== "accepted") throw new Error("Local setup contribution failed");
         this.#options.published(); continue;
       }
@@ -175,6 +173,7 @@ export class LiveRound {
     return CandidateSaskuRoundOwner.open({ session: this.#options.session, sessionReceiver: this.#durable,
       roster: this.#options.roster, self: this.#options.self, setupRound: 0, round: this.#match.round,
       dealer: dealerForSaskuRound(this.#match.round), schedule: FIRST_DEAL, verifier: this.#client,
+      beaconRequired: false, batchDeal: true,
       historyLimits: MATCH_HISTORY_LIMITS, roundHistoryLimits: { ...MATCH_HISTORY_LIMITS, allowOtherRounds: true } });
   }
   #validateMatchHistory(): void {
@@ -239,7 +238,7 @@ export class LiveRound {
     this.#closed = true; this.#client.close();
     await this.#running; this.#setup.close(); this.#owner?.close();
     this.#action?.reject(new Error("Round closed")); this.#action = null;
-    await Promise.all([this.#keys.close(), this.#beacon.close()]);
+    await this.#keys.close();
   }
 }
 

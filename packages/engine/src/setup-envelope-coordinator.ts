@@ -66,8 +66,9 @@ export class SetupEnvelopeCoordinator {
   readonly #roster: readonly IdentityPublicKey[];
   readonly #seats: ReadonlyMap<string, number>;
   readonly #setup: SetupCoordinator;
+  readonly #beaconRequired: boolean;
 
-  constructor(gameId: GameId, round: number, roster: readonly IdentityPublicKey[]) {
+  constructor(gameId: GameId, round: number, roster: readonly IdentityPublicKey[], beaconRequired = true) {
     this.#gameId = parseGameId(gameId);
     if (!Number.isSafeInteger(round) || round < 0) {
       throw new RangeError("Setup envelope round must be an unsigned safe integer");
@@ -95,8 +96,11 @@ export class SetupEnvelopeCoordinator {
       }),
     );
     this.#seats = seats;
-    this.#setup = new SetupCoordinator(this.#gameId, round, roster.length);
+    this.#beaconRequired = beaconRequired;
+    this.#setup = new SetupCoordinator(this.#gameId, round, roster.length, beaconRequired);
   }
+
+  get beaconRequired(): boolean { return this.#beaconRequired; }
 
   get gameId(): GameId {
     return parseGameId(this.#gameId);

@@ -757,7 +757,8 @@ integers from zero through 127. Both proof generators use fresh non-zero scalar
 nonces from the injectable CSPRNG boundary.
 
 The `KEY_SHARE` body is exactly `{H_i, pop: {R, z}}`. A `SHARES` body is exactly
-`{to, items}`, where `to` is a seat from zero through seven and each item is
+`{to, items}`, where `to` is an integer from zero through seven (normally a
+recipient seat; the Sasku `@3` profile uses `4` as a four-seat batch marker) and each item is
 exactly `{pos, S, R1, R2, z}`. A batch contains 1 to 128 unique positions. Point
 and scalar fields are decoded canonically before proof verification.
 
@@ -769,6 +770,12 @@ consumed seat is a conflict. Once every seat has a valid share, public keys are
 aggregated in ascending seat order. An identity aggregate terminates setup as a
 collective failure and is not blamed on whichever valid share arrived last.
 Randomness commitments are not accepted before aggregate-key completion.
+
+The browser `sasku-match-candidate@3` profile selects key-only setup: all four
+valid key shares and a nonidentity aggregate key complete setup. Its fixed
+dealer and deal schedule do not consume a beacon seed. The generic engine's
+existing beacon-required policy remains the default for other profiles. The
+candidate match rules hash and invitation identifier separate these histories.
 
 The setup envelope coordinator additionally binds `KEY_SHARE` to `setup.keys`
 and `RAND_COMMIT`/`RAND_REVEAL` to `setup.rand`, and checks the exact game,
@@ -810,6 +817,14 @@ their original proof contexts; they are not reinterpreted under a play phase.
 The engine must bind each proof to the sender's accepted game key and the
 scheduled ciphertext. Publicly scheduled reveals still belong to the deal/share
 scheduler; this profile does not add an implicit public-deal authorization.
+
+For `sasku-match-candidate@3`, each of the four seats signs one `SHARES` body
+with `to: 4` in `round.N.deal.0`. That sentinel is confined to this four-seat
+all-recipient schedule. Its 27 items are the ascending positions owned by all
+other seats. The proof for each item uses `round.N.deal.0`, the sender's public
+game key, and that position's verified ciphertext. Wrong, missing, repeated,
+reordered, or invalidly proved items reject the whole batch. Bidding waits for
+all four batches. Other profiles retain their specified recipient schedules.
 
 `decodeActionEnvelope` is a stateless signature/scope/body boundary, not a game
 receiver. It accepts at most 64 KiB of canonical signed-envelope bytes, a game ID,

@@ -9,8 +9,46 @@ import { describe, expect, it, vi } from "vitest";
 import { MAX_ROUND_REVEAL_ENVELOPE_BYTES, RoundRevealError, RoundRevealLedger, type RoundRevealOptions } from "./round-reveal-ledger";
 import { roundRevealFixture } from "./round-reveal.test-fixture";
 import { SetupEnvelopeCoordinator } from "./setup-envelope-coordinator";
+import { recoverSetup } from "./setup-recovery";
 
 describe("private-round reveal ledger", () => {
+  it("recovers key-only setup and accepts four fully proved donor batches before play", () => {
+    const f = roundRevealFixture({ seats: 4, beaconRequired: false, batchDeal: true,
+      deckSpec: { id: "batch-deal-test/v1", cards: Array.from({ length: 36 }, (_, i) => `card-${i}`) },
+      schedule: [0, 1, 2, 3].map(to => ({ to, count: 9 })) });
+    expect(f.setupEnvelopes).toHaveLength(4);
+    expect(f.setup.state).toBe("complete");
+    expect(f.setup.seed).toBeNull();
+    expect(recoverSetup(f.gameId, 0, f.roster, f.setupEnvelopes, false).coordinator.state).toBe("complete");
+    expect(recoverSetup(f.gameId, 0, f.roster, f.setupEnvelopes).coordinator.state).toBe("rand_commit");
+    expect(f.ledger.snapshot.deal).toMatchObject({ to: 4, pendingSenders: [0, 1, 2, 3] });
+    expect(() => f.ledger.classify(f.action(0, [0]), 0)).toThrow(expect.objectContaining({ code: "deal_incomplete" }));
+    const first = f.dealAll(0);
+    expect(first.envelope.body).toMatchObject({ to: 4 });
+    expect((first.envelope.body as unknown as { items: unknown[] }).items).toHaveLength(27);
+    expect(f.ledger.classify(first).status).toBe("accepted");
+    expect(f.ledger.snapshot.deal?.pendingSenders).toEqual([0, 1, 2, 3]);
+    f.ledger.commit(first);
+    expect(f.ledger.commit(first).status).toBe("duplicate");
+    for (const seat of [1, 2, 3]) f.ledger.commit(f.dealAll(seat));
+    expect(f.ledger.snapshot.deal).toBeNull();
+    expect(f.ledger.snapshot.phase).toBe("round.2.play.0");
+    for (const seat of [0, 1, 2, 3]) expect(Object.keys(f.ledger.readPrivateHand(seat, f.secrets[seat]!)!.dealt)).toHaveLength(9);
+  });
+
+  it("rejects missing, foreign, or unproved positions in an all-recipient donor batch", () => {
+    const f = roundRevealFixture({ seats: 4, beaconRequired: false, batchDeal: true,
+      deckSpec: { id: "batch-deal-test/v1", cards: Array.from({ length: 36 }, (_, i) => `card-${i}`) },
+      schedule: [0, 1, 2, 3].map(to => ({ to, count: 9 })) });
+    const good = f.dealAll(0), body = good.envelope.body as unknown as { to: number; items: CborValue[] };
+    const modified = (items: CborValue[], to = 4) => f.sign(0, "SHARES", good.envelope.phase, { to, items });
+    expect(() => f.ledger.commit(modified(body.items.slice(1)))).toThrow(expect.objectContaining({ code: "wrong_positions" }));
+    expect(() => f.ledger.commit(modified([...body.items].reverse()))).toThrow(expect.objectContaining({ code: "wrong_positions" }));
+    expect(() => f.ledger.commit(modified([...body.items.slice(0, -1), { ...(body.items.at(-1) as CborMap), pos: 0 }]))).toThrow(expect.objectContaining({ code: "wrong_positions" }));
+    expect(() => f.ledger.commit(modified(body.items, 0))).toThrow(expect.objectContaining({ code: "wrong_recipient" }));
+    expect(() => f.ledger.commit(modified([{ ...(body.items[0] as CborMap), S: RistrettoPoint.identity().toBytes() }, ...body.items.slice(1)]))).toThrow(expect.objectContaining({ code: "invalid_share_proof" }));
+    expect(f.ledger.snapshot.deal?.pendingSenders).toEqual([0, 1, 2, 3]);
+  });
   it("assigns ascending stock positions to explicit private steps without opening cards", () => {
     const { ledger } = roundRevealFixture();
     expect([0, 1, 2, 3].map((pos) => ledger.ownerAt(pos))).toEqual([0, 0, 1, null]);

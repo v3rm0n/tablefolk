@@ -9,10 +9,12 @@ test("one tab runs four local Sasku players with switchable private views", asyn
   });
   page.on("pageerror", error => errors.push(error.message));
   page.on("websocket", socket => { if (!socket.url().includes(":4317")) sockets.push(socket.url()); });
+  const roundStart = performance.now();
   await page.goto(`${baseURL}/demo.html`);
 
   await expect(page.getByRole("tab", { name: /Player 1/ })).toBeVisible();
   await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "bidding", { timeout: 120_000 });
+  console.log(`Local demo startup to bidding: ${Math.round(performance.now() - roundStart)} ms`);
   await expect(page.getByLabel("Your private hand").getByRole("button")).toHaveCount(9);
   const firstHand = await page.getByLabel("Your private hand").getByRole("button").evaluateAll(cards => cards.map(card => card.getAttribute("aria-label")));
   await page.getByRole("tab", { name: /Player 2/ }).click();

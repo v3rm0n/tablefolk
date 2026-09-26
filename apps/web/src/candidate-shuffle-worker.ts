@@ -8,10 +8,12 @@ interface Backend {
   verify_candidate_shuffle36(statement: Uint8Array, proof: Uint8Array): boolean;
 }
 const scope = globalThis as unknown as { onmessage: ((event: MessageEvent) => void) | null; postMessage(value: unknown): void };
-let started = false;
+let busy = false;
+let proved = false;
+let backendPromise: Promise<Backend> | null = null;
 scope.onmessage = async ({ data }) => {
-  if (started) return; // One operation per worker; owner terminates on every terminal path.
-  started = true;
+  if (busy || proved) { scope.postMessage({ error: "Candidate shuffle worker is busy or spent" }); return; }
+  busy = true;
   try {
     const statement = decodeCandidateShuffleStatement36(data.statement);
     if (data.operation !== "prove" && data.operation !== "verify") throw new Error("Invalid operation");
@@ -22,11 +24,16 @@ scope.onmessage = async ({ data }) => {
     const moduleUrl = import.meta.env.DEV
       ? new URL(`${import.meta.env.BASE_URL}shuffle-candidate/shuffle_backend_evaluation.js`, globalThis.location.origin + "/").href
       : new URL(/* @vite-ignore */ "../shuffle-candidate/shuffle_backend_evaluation.js", import.meta.url).href;
-    const backend = await import(/* @vite-ignore */ moduleUrl) as Backend;
-    await backend.default();
+    backendPromise ??= (async () => {
+      const loaded = await import(/* @vite-ignore */ moduleUrl) as Backend;
+      await loaded.default();
+      return loaded;
+    })();
+    const backend = await backendPromise;
     if (data.operation === "verify") {
       scope.postMessage({ valid: backend.verify_candidate_shuffle36(data.statement, data.proof) });
     } else {
+      proved = true; // A proof worker is never reused after handling a private witness.
       if (!bytesEqual(encodeCandidateShuffleStatement36(statement), encodeCandidateShuffleStatement36({ ...statement, outputDeck: statement.inputDeck }))) throw new Error("Invalid preparation template");
       const shuffled = createUnprovenDeckShuffle(statement.inputDeck, statement.aggregateKey);
       const publicStatement = encodeCandidateShuffleStatement36({ ...statement, outputDeck: shuffled.outputDeck });
@@ -38,4 +45,5 @@ scope.onmessage = async ({ data }) => {
       } finally { witness.permutation.fill(0); witness.randomizers.fill(0); }
     }
   } catch { scope.postMessage({ error: "Candidate shuffle operation failed" }); }
+  finally { busy = false; }
 };

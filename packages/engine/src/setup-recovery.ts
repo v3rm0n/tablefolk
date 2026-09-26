@@ -41,12 +41,13 @@ export function recoverSetup(
   round: number,
   roster: readonly IdentityPublicKey[],
   transcript: readonly EnvelopeArtifact[],
+  beaconRequired = true,
 ): SetupRecoveryResult {
   if (!Array.isArray(transcript)) {
     throw new SetupRecoveryError("Setup transcript must be an array");
   }
   const game = parseGameId(gameId);
-  const coordinator = new SetupEnvelopeCoordinator(game, round, roster);
+  const coordinator = new SetupEnvelopeCoordinator(game, round, roster, beaconRequired);
   const seats = new Map(coordinator.roster.map((identity, seat) => [bytesToHex(identity), seat]));
   const tuples = new Set<string>();
   const setupArtifacts: SetupArtifact[] = [];

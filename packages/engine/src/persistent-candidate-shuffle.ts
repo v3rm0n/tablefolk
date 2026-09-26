@@ -18,6 +18,7 @@ export interface PersistentCandidateShuffleOptions {
   readonly deckSpec: DeckSpec;
   readonly verifier: CandidateShuffleVerifier;
   readonly historyLimits?: SessionHistoryCaptureLimits;
+  readonly beaconRequired?: boolean;
 }
 export interface CandidateShuffleSnapshot { readonly nextSeat: number | null; readonly complete: boolean }
 export type PersistentCandidateShuffleResult =
@@ -53,7 +54,7 @@ export class PersistentCandidateShuffleReceiver {
     const options = Object.freeze({ ...input, roster, self, deckSpec: Object.freeze({ id: input.deckSpec.id, cards: Object.freeze([...input.deckSpec.cards]) }),
       ...(input.historyLimits === undefined ? {} : { historyLimits: Object.freeze({ ...input.historyLimits }) }) });
     const history = captureSessionHistory(options.session, options.historyLimits);
-    const setup = recoverSetup(roster.gameId, options.setupRound, roster.seats, history.envelopes).coordinator;
+    const setup = recoverSetup(roster.gameId, options.setupRound, roster.seats, history.envelopes, options.beaconRequired).coordinator;
     const ledger = new CandidateShuffleLedger({ setup, roster, round: options.round, deckSpec: options.deckSpec, verifier: options.verifier });
     try {
       const contributions = history.envelopes.filter(a => a.envelope.type === "SHUFFLE" && a.envelope.round === options.round);

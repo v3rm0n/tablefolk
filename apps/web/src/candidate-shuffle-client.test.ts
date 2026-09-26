@@ -17,14 +17,16 @@ function fixture() {
 }
 afterEach(() => vi.useRealTimers());
 describe("candidate shuffle worker lifecycle", () => {
-  it("terminates each operation and permits a fresh worker for the next", async () => {
+  it("reuses one verifier worker and terminates it on close", async () => {
     const f = fixture();
     for (const valid of [true, false]) {
       const pending = f.client.verify(statement, proof), w = f.workers.at(-1)!;
       w.onmessage!({ data: { valid } }); expect(await pending).toBe(valid);
-      expect(w.terminate).toHaveBeenCalledOnce(); expect(w.onmessage).toBeNull();
+      expect(w.terminate).not.toHaveBeenCalled(); expect(w.onmessage).toBeNull();
     }
-    expect(f.make).toHaveBeenCalledTimes(2);
+    expect(f.make).toHaveBeenCalledOnce();
+    f.client.close();
+    expect(f.workers[0]!.terminate).toHaveBeenCalledOnce();
   });
   it("rejects busy calls, aborts, and ignores a queued late result", async () => {
     const f = fixture(), abort = new AbortController();

@@ -3,7 +3,7 @@
 The application now has a cancellable `CandidateShuffleClient` and worker, backed
 by the bounded Rust/WASM API. The engine's `CandidateShuffleLedger` checks signed
 shuffle envelopes against completed setup and the preceding verified deck. These
-components are executable candidates; the lobby UI does not start a live game.
+components are executable candidates used by the live match.
 
 ## Worker boundary
 
@@ -17,11 +17,12 @@ been erased.
 
 `verify(statement, proof, signal?)` validates fixed statement/proof framing before
 dispatch, then returns the WASM verifier's boolean result. The client permits one
-operation at a time, creates a fresh worker per operation, and terminates it on
-success, failure, cancellation, timeout, or close. Cancellation terminates the
-worker even while synchronous WASM is running. Late events cannot settle a later
-request. The default timeout is 30 seconds; it is a local resource limit and does
-not establish peer fault or protocol timeout attribution.
+operation at a time and reuses one initialized worker for successful verifier
+calls. Proving always uses a disposable worker; cancellation, failure, timeout,
+or close terminates the affected worker. Cancellation terminates it even while
+synchronous WASM is running. Late events cannot settle a later request. The
+default timeout is 30 seconds; it is a local resource limit and does not establish
+peer fault or protocol timeout attribution.
 
 Generated WASM is not a source dependency. Build `candidate-transcript` and its
 `pkg-transcript` bindings using the experiment README, then explicitly stage them:

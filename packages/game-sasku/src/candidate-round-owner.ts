@@ -396,11 +396,12 @@ export class CandidateSaskuRoundOwner {
       // stored proofs in PersistentCandidateShuffleReceiver.open.
       const history = captureSessionHistory(this.#options.session, this.#options.historyLimits);
       const setup = recoverSetup(this.#options.roster.gameId, this.#options.setupRound,
-        this.#options.roster.seats, history.envelopes).coordinator;
+        this.#options.roster.seats, history.envelopes, this.#options.beaconRequired).coordinator;
       const deck = this.#shuffle.finalDeck;
       history.assertUnchanged();
       round = PersistentSaskuRoundReceiver.recover({ setup, round: this.#options.round, deck,
-        dealer: this.#options.dealer, schedule: this.#options.schedule, session: this.#options.session,
+        dealer: this.#options.dealer, schedule: this.#options.schedule,
+        ...(this.#options.batchDeal === undefined ? {} : { batchDeal: this.#options.batchDeal }), session: this.#options.session,
         sessionReceiver: this.#options.sessionReceiver }, this.#options.roundHistoryLimits);
       history.assertUnchanged();
       if (this.#closed) { round.close(); return; }

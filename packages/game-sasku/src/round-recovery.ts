@@ -78,7 +78,7 @@ export function captureSaskuRoundHistory(
           case "RAND_COMMIT":
           case "RAND_REVEAL":
             setupArtifacts.push(artifact);
-            if (envelope.type === "RAND_REVEAL") revealed = true;
+            if (envelope.type === (setup.beaconRequired ? "RAND_REVEAL" : "KEY_SHARE")) revealed = true;
             break;
           case "SHARES":
           case "ACTION":
@@ -109,12 +109,14 @@ export function captureSaskuRoundHistory(
       }
     }
 
-    const recovered = recoverSetup(game, setupRound, roster, setupArtifacts).coordinator;
+    const recovered = recoverSetup(game, setupRound, roster, setupArtifacts, setup.beaconRequired).coordinator;
     const aggregateKey = setup.aggregateKey;
     const seed = setup.seed;
     const recoveredSeed = recovered.seed;
     if (setup.state !== "complete" || recovered.state !== "complete" || aggregateKey === null ||
-        !recovered.aggregateKey?.equals(aggregateKey) || seed === null || recoveredSeed === null || !bytesEqual(seed, recoveredSeed)) {
+        !recovered.aggregateKey?.equals(aggregateKey) ||
+        (setup.beaconRequired && (seed === null || recoveredSeed === null || !bytesEqual(seed, recoveredSeed))) ||
+        (!setup.beaconRequired && (seed !== null || recoveredSeed !== null))) {
       throw new SaskuRoundRecoveryError("Sasku recovery setup is incomplete or does not match");
     }
     for (let seat = 0; seat < 4; seat += 1) {

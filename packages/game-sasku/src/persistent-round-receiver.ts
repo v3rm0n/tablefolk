@@ -22,6 +22,7 @@ export interface PersistentSaskuRoundOptions {
   readonly round: number;
   readonly deck: readonly MaskedCard[];
   readonly schedule: readonly PrivateDealStep[];
+  readonly batchDeal?: boolean;
   readonly dealer: SaskuSeat;
   readonly session: SessionChainRegistry;
   readonly sessionReceiver: PersistentSessionReceiver;
@@ -139,6 +140,7 @@ export class PersistentSaskuRoundReceiver {
     this.#ledger = new RoundRevealLedger({
       setup: options.setup, round: options.round, deck: options.deck, schedule: options.schedule,
       deckSpec: SASKU_DECK_SPEC, maxActions: MAX_SASKU_HAND_ACTIONS,
+      ...(options.batchDeal === undefined ? {} : { batchDeal: options.batchDeal }),
     });
     this.#round = options.round;
     const counts = [0, 0, 0, 0];

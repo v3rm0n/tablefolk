@@ -22,6 +22,7 @@ export interface RoundRevealOptions {
   readonly deck: readonly MaskedCard[];
   readonly schedule: readonly PrivateDealStep[];
   readonly maxActions: number;
+  readonly batchDeal?: boolean;
 }
 
 export interface RoundRevealSnapshot {
@@ -81,6 +82,7 @@ export class RoundRevealLedger {
   readonly #schedule: readonly ScheduledDeal[];
   readonly #owners: readonly (number | null)[];
   readonly #maxActions: number;
+  readonly #batchDeal: boolean;
   readonly #shares: readonly Map<number, RistrettoPoint>[];
   readonly #contributors = new Set<number>();
   readonly #revealed = new Map<number, string>();
@@ -91,7 +93,7 @@ export class RoundRevealLedger {
   constructor(options: RoundRevealOptions) {
     if (typeof options !== "object" || options === null ||
         !(options.setup instanceof SetupEnvelopeCoordinator) || options.setup.state !== "complete") {
-      throw new TypeError("Round reveals require completed key and beacon setup");
+      throw new TypeError("Round reveals require completed key setup");
     }
     if (!Number.isSafeInteger(options.round) || options.round < options.setup.round || Object.is(options.round, -0)) {
       throw new RangeError("Round must be a safe integer no earlier than setup");
@@ -102,6 +104,9 @@ export class RoundRevealLedger {
     this.#gameId = options.setup.gameId;
     this.#round = options.round;
     this.#roster = options.setup.roster;
+    if (options.batchDeal !== undefined && typeof options.batchDeal !== "boolean") throw new TypeError("Invalid deal batch policy");
+    this.#batchDeal = options.batchDeal ?? false;
+    if (this.#batchDeal && this.#roster.length !== 4) throw new TypeError("All-recipient deal batches require four seats");
     this.#seats = new Map(this.#roster.map((identity, seat) => [bytesToHex(identity), seat]));
     this.#publicKeys = this.#roster.map((_, seat) => {
       const key = options.setup.publicKeyAt(seat);
@@ -137,6 +142,9 @@ export class RoundRevealLedger {
       return Object.freeze({ to: step.to, positions });
     }));
     this.#owners = Object.freeze(owners);
+    if (this.#batchDeal && owners.some(owner => owner === null)) {
+      throw new RangeError("All-recipient deal batches must assign every deck position");
+    }
     this.#shares = Array.from({ length: this.#deck.length }, () => new Map<number, RistrettoPoint>());
     this.#maxActions = options.maxActions;
   }
@@ -148,9 +156,10 @@ export class RoundRevealLedger {
     return Object.freeze({
       phase: this.#phase(), dealIndex: this.#dealIndex, actionIndex: this.#actionIndex,
       deal: deal === undefined ? null : Object.freeze({
-        to: deal.to, positions: deal.positions,
+        to: this.#batchDeal ? 4 : deal.to,
+        positions: this.#batchDeal ? Object.freeze(this.#owners.map((_, pos) => pos)) : deal.positions,
         pendingSenders: Object.freeze(this.#roster.flatMap((_, seat) =>
-          seat !== deal.to && !this.#contributors.has(seat) ? [seat] : [])),
+          (this.#batchDeal || seat !== deal.to) && !this.#contributors.has(seat) ? [seat] : [])),
       }),
       revealed: Object.freeze(Object.fromEntries(this.#revealed)),
     });
@@ -195,7 +204,7 @@ export class RoundRevealLedger {
     this.#requireLocalKey(seat, secretKey);
     const step = this.#schedule[this.#dealIndex];
     if (step === undefined) { throw new RoundRevealError("wrong_phase"); }
-    if (seat === step.to) { throw new RoundRevealError("unexpected_sender"); }
+    if (!this.#batchDeal && seat === step.to) { throw new RoundRevealError("unexpected_sender"); }
     const requirePending = (): void => {
       if (this.#schedule[this.#dealIndex] !== step) { throw new RoundRevealError("wrong_phase"); }
       if (this.#contributors.has(seat)) { throw new RoundRevealError("conflicting_contribution"); }
@@ -209,12 +218,13 @@ export class RoundRevealLedger {
       requirePending();
     } };
     const items: PositionShare[] = [];
-    for (const pos of step.positions) {
+    const positions = this.#batchDeal ? this.#owners.flatMap((owner, pos) => owner !== seat ? [pos] : []) : step.positions;
+    for (const pos of positions) {
       const share = createProvenDecryptionShare(context, pos, secretKey, this.#deck[pos]!.A, guardedSource);
       requirePending();
       items.push(Object.freeze({ pos, ...share }));
     }
-    return Object.freeze({ to: step.to, items: Object.freeze(items) });
+    return Object.freeze({ to: this.#batchDeal ? 4 : step.to, items: Object.freeze(items) });
   }
 
   /** Prepares deliberate disclosure for the current action phase; does not sign, persist, or consume the position. */
@@ -288,10 +298,12 @@ export class RoundRevealLedger {
       }
       const step = this.#schedule[this.#dealIndex];
       if (step === undefined || envelope.phase !== this.#phase()) { throw new RoundRevealError("wrong_phase"); }
-      if (seat === step.to) { throw new RoundRevealError("unexpected_sender"); }
+      if (!this.#batchDeal && seat === step.to) { throw new RoundRevealError("unexpected_sender"); }
       if (this.#contributors.has(seat)) { throw new RoundRevealError("conflicting_contribution"); }
-      if (body.to !== step.to) { throw new RoundRevealError("wrong_recipient"); }
-      if (body.items.length !== step.positions.length || body.items.some(({ pos }) => !step.positions.includes(pos))) {
+      if (body.to !== (this.#batchDeal ? 4 : step.to)) { throw new RoundRevealError("wrong_recipient"); }
+      const positions = this.#batchDeal ? this.#owners.flatMap((owner, pos) => owner !== seat ? [pos] : []) : step.positions;
+      if (body.items.length !== positions.length || body.items.some(({ pos }, index) => this.#batchDeal
+        ? pos !== positions[index] : !positions.includes(pos))) {
         throw new RoundRevealError("wrong_positions");
       }
       for (const item of body.items) {
@@ -303,8 +315,8 @@ export class RoundRevealLedger {
         for (const item of body.items) this.#shares[item.pos]!.set(seat, item.S);
         this.#contributors.add(seat);
         this.#accepted.set(hash, Object.freeze({}));
-        if (this.#contributors.size === this.#roster.length - 1) {
-          this.#dealIndex += 1;
+        if (this.#contributors.size === (this.#batchDeal ? this.#roster.length : this.#roster.length - 1)) {
+          this.#dealIndex += this.#batchDeal ? this.#schedule.length : 1;
           this.#contributors.clear();
         }
       }

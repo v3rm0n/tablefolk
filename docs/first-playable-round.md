@@ -1,21 +1,22 @@
 # First playable Sasku round
 
 This document records the original single-round milestone. The current browser
-profile is `sasku-match-candidate@2`: it continues verified rounds with rotating
+profile is `sasku-match-candidate@3`: it continues verified rounds with rotating
 dealers and cumulative scoring until a partnership reaches 12 P. See `RULES.md`.
 
-The browser now supports one complete four-player round using real WebRTC,
-IndexedDB, and candidate Bayer–Groth shuffle proofs in disposable WASM workers.
+The browser supports a complete four-player match using real WebRTC,
+IndexedDB, and candidate Bayer–Groth shuffle proofs in WASM workers.
 This is an experimental playable build, not a reviewed cryptographic release.
 
 ## Play
 
 Run `npm run dev`. Open a table and share the invitation with three devices or
 isolated browser profiles. Players are ready by default and can opt out. Once
-all four are ready, player 1 chooses **Play first round**. Setup, the four sequential shuffles, and private
-shares run automatically. Players bid or pass, choose trump, and click legal
+all four are ready, player 1 chooses **Play first round**. Key-only setup, the four sequential shuffles, and private
+share batches run automatically. Players bid or pass, choose trump, and click legal
 cards on their own turns. After nine tricks, every browser verifies all four
-audit disclosures and displays its audited score. No second round starts.
+audit disclosures and displays its audited score. A new round starts with the
+next dealer until a partnership reaches 12 P.
 
 During play, the live table replaces the lobby as the main view. Your seat stays
 at the bottom, your partner sits opposite, and the active player is highlighted.
@@ -25,12 +26,13 @@ visible until the next card is played. Scores, turn instructions, and completed
 trick history are available in the round view. Invitation, connection retry, and
 leaving controls remain under **Table & connections**.
 
-The signed roster binds the first-round rules hash: the Sasku card, hand, and
+The signed roster binds the match rules hash: the Sasku card, hand, and
 scoring implementations, setup round 0, game round 1, dealer seat 4, opening seat
 1, and nine consecutive shuffled positions per seat in seat order. All four
-players commit and reveal beacon contributions; this profile records the seed
-but deliberately fixes dealer and deal order. Invitations identify
-`sasku-first-round-candidate@1`; old connection-check invitations are unsupported.
+players prove possession of their aggregate-key shares; this profile does not
+run the unused setup beacon and fixes dealer and deal order. Invitations identify
+`sasku-match-candidate@3`; older match invitations are unsupported. See the
+[round-start performance profile](round-start-performance.md).
 
 ## Ownership and recovery
 

@@ -13,6 +13,8 @@ signed match history and the current private hand.
 The candidate profile supports up to 32 hands per table.
 The proof backend remains experimental and awaits independent review.
 See [the first playable round](docs/first-playable-round.md).
+The current `@3` match profile omits the unused setup beacon and deals through
+four proved donor batches; see [round-start performance](docs/round-start-performance.md).
 
 ## Documents
 

@@ -187,7 +187,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       } else if (host) {
         await this.#publish(room, { round: 0, phase: "lobby", type: "ROSTER", body: encodeRosterBody({ ...context, seats: [parseIdentityPublicKey(self.publicKey)] }) });
       } else {
-        await room.author.author({ round: 0, phase: "lobby", type: "JOIN", body: encodeJoinBody({ pkId: parseIdentityPublicKey(self.publicKey), rulesHash: context.rulesHash, clientVersion: "sasku-match-candidate/2" }) });
+        await room.author.author({ round: 0, phase: "lobby", type: "JOIN", body: encodeJoinBody({ pkId: parseIdentityPublicKey(self.publicKey), rulesHash: context.rulesHash, clientVersion: "sasku-match-candidate/3" }) });
         room.recordCount += 1;
       }
       this.#require(room, epoch);
