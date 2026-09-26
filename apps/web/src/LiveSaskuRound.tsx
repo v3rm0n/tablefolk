@@ -47,8 +47,18 @@ export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (inten
       <div><span>Opponents <small>{team === 0 ? "2 + 4" : "1 + 3"}</small></span><strong>{state?.cardPoints[1 - team] ?? 0}<small> card points</small></strong></div>
     </div>
     <div className="live-match-score" aria-label="Match scoreboard" role="status">
-      <strong>Game points · {view.match.totals[team]}–{view.match.totals[1 - team]}</strong>
-      <span>First to 12 P · {view.match.completed.length} {view.match.completed.length === 1 ? "round" : "rounds"} verified</span>
+      <div className="live-match-score__main">
+        <span className="live-match-score__label">Game points</span>
+        <div className="live-match-score__totals">
+          <span className="live-match-score__team"><small>Your team</small><strong>{view.match.totals[team]}</strong></span>
+          <span className="live-match-score__divider" aria-hidden="true">–</span>
+          <span className="live-match-score__team"><small>Opponents</small><strong>{view.match.totals[1 - team]}</strong></span>
+        </div>
+      </div>
+      <div className="live-match-score__progress">
+        <span>First to 12 P</span>
+        <span>{view.match.completed.length} {view.match.completed.length === 1 ? "round" : "rounds"} verified</span>
+      </div>
     </div>
     {preparing ? <div className="live-preparation">
       <span className="live-preparation-mark" aria-hidden="true">♠</span>

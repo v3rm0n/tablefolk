@@ -350,6 +350,17 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
 .live-scoreboard strong small { font-family: "Avenir Next", sans-serif; font-size: .65rem; }
 .live-scoreboard .live-contract { text-align: center; text-transform: capitalize; }
 .live-scoreboard .live-contract strong { font-size: 1.25rem; }
+.live-match-score { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .65rem 1.2rem; background: oklch(91% .03 83deg); border: 1px solid var(--line); border-top: 0; }
+.live-match-score__main { display: flex; align-items: center; gap: 1.5rem; }
+.live-match-score__label { color: var(--rust); font-size: .65rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.live-match-score__totals { display: flex; align-items: center; gap: .6rem; }
+.live-match-score__team { display: flex; flex-direction: column; gap: .1rem; text-align: center; }
+.live-match-score__team small { color: oklch(38% .045 72deg); font-size: .63rem; }
+.live-match-score__team strong { font: 500 1.5rem/1 var(--serif); }
+.live-match-score__divider { color: var(--rust); font: 1.1rem var(--serif); }
+.live-match-score__progress { display: flex; flex-direction: column; gap: .2rem; padding-left: 1rem; border-left: 1px solid var(--line); font-size: .68rem; white-space: nowrap; }
+.live-match-score__progress span:first-child { font-weight: 700; }
+.live-match-score__progress span:last-child { color: oklch(38% .045 72deg); }
 .live-felt { color: var(--paper); background: radial-gradient(ellipse at center, oklch(41% .08 157deg), oklch(29% .06 157deg)); border-radius: 0 0 1rem 1rem; border: 1px solid oklch(20% .03 157deg); }
 .live-trick-status { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .4rem 1rem; min-height: 2.6rem; padding: .7rem 1.2rem; border-bottom: 1px solid #fff2; font-size: .75rem; }
 .live-trick-status > span { opacity: .8; }
@@ -429,6 +440,11 @@ code { display: block; font-size: 0.75rem; line-height: 1.6; overflow-wrap: anyw
   .live-scoreboard strong { font-size: 1.35rem; }
   .live-scoreboard strong small { display: block; font-size: .55rem; }
   .live-scoreboard .live-contract strong { font-size: 1rem; }
+  .live-match-score { align-items: stretch; flex-direction: column; gap: .45rem; padding: .6rem .7rem; }
+  .live-match-score__main { justify-content: space-between; gap: .5rem; }
+  .live-match-score__label { font-size: .6rem; }
+  .live-match-score__team strong { font-size: 1.3rem; }
+  .live-match-score__progress { flex-direction: row; justify-content: space-between; gap: .5rem; padding: .4rem 0 0; border-left: 0; border-top: 1px solid var(--line); font-size: .63rem; }
   .live-trick-status { padding: .65rem .7rem; font-size: .7rem; }
   .live-trick-layout { height: 420px; }
   .live-player { width: 30%; gap: .4rem; }
