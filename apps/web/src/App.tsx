@@ -1,12 +1,15 @@
 import { LiveSaskuRound } from "./LiveSaskuRound";
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 
-import type { BrowserLobbyActions } from "./lobby-types";
+import { parseRelayText, readRelayPreference, saveRelayPreference } from "./lobby-config";
+import { connectionWarnings } from "./connection-warnings";
+import type { BrowserLobbyActions, BrowserLobbySnapshot } from "./lobby-types";
 
 export function App({ controller, demo = false }: { readonly controller: BrowserLobbyActions; readonly demo?: boolean }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [invitation, setInvitation] = useState(state.pendingInvitation);
-  const [relays, setRelays] = useState("");
+  const [relays, setRelays] = useState(() => demo ? "" : readRelayPreference());
+  const [relayFeedback, setRelayFeedback] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
   const [copySource, setCopySource] = useState("");
   const inviteField = useRef<HTMLInputElement>(null);
@@ -19,9 +22,25 @@ export function App({ controller, demo = false }: { readonly controller: Browser
   const joining = room !== null && !room.isHost && !room.seats.some(seat => seat.isSelf);
   const readyCount = room?.seats.filter((seat) => seat.ready).length ?? 0;
   const act = (operation: Promise<void>): void => { void operation.catch(() => undefined); };
+  const saveRelays = (confirm: boolean): boolean => {
+    try {
+      const urls = parseRelayText(relays);
+      setRelays(urls?.join("\n") ?? "");
+      const saved = saveRelayPreference(urls);
+      setRelayFeedback(saved ? (confirm ? "Relay settings saved on this browser." : "") :
+        "This browser could not save the relay settings. They can still be used for this table.");
+      return true;
+    } catch (cause) {
+      setRelayFeedback(cause instanceof Error ? cause.message : "Check the relay URLs.");
+      return false;
+    }
+  };
+  const open = (operation: () => Promise<void>): void => {
+    if (demo || saveRelays(false)) act(operation());
+  };
   const join = (event: FormEvent): void => {
     event.preventDefault();
-    act(controller.join(invitation, relays));
+    open(() => controller.join(invitation, relays));
   };
   const copyInvite = async (): Promise<void> => {
     if (room === null) { return; }
@@ -36,11 +55,23 @@ export function App({ controller, demo = false }: { readonly controller: Browser
     }
   };
 
+  const { disconnected, relayed, relayOutage } = connectionWarnings(state);
+
   return (
     <main className={`shell${playing ? " shell--playing" : room === null ? " shell--welcome" : ""}`}>
       {state.error !== null && <div className="notice notice--error" role="alert">{state.error}</div>}
 
-      {state.game && controller.playAction && <div ref={roundHeading} tabIndex={-1} className="live-focus"><LiveSaskuRound view={state.game} act={intent => controller.playAction!(intent)} table={state.tableStatus ?? null} vote={() => controller.voteToEndTable?.()} /></div>}
+      {!demo && room && <>
+        {disconnected.length > 0 && <div className="notice" role="status">
+          <p>A peer disconnected. Ask them to return to the table and check their internet connection, then retry the link.</p>
+          {disconnected.map(peer => <button key={peer.publicKey} className="button button--quiet"
+            disabled={busy} onClick={() => act(controller.retryPeer(peer.publicKey))}>Retry peer {peer.fingerprint}</button>)}
+        </div>}
+        {relayed && <p className="notice notice--network" role="status">This table is using a TURN relay to reach a peer. You can keep playing. If the link drops repeatedly, try a more stable network and retry the peer.</p>}
+        {relayOutage && <p className="notice" role="status">No Nostr relay is available. The browser is retrying. If the problem continues, check your network and use the same reachable relays as the other players.</p>}
+        {state.iceCredentialWarning && <p className="notice" role="status">The TURN credential service is unavailable. The table is using its fallback ICE settings. If a peer cannot connect, retry the link or contact the table operator.</p>}
+      </>}
+      {state.game && controller.playAction && <div ref={roundHeading} tabIndex={-1} className="live-focus"><LiveSaskuRound view={state.game} warnOnBackground={!demo} act={intent => controller.playAction!(intent)} table={state.tableStatus ?? null} vote={() => controller.voteToEndTable?.()} /></div>}
       {room === null ? (
         <section className={`welcome${invited ? " welcome--invited" : ""}`} aria-labelledby="welcome-title">
           <div className="welcome__copy">
@@ -61,12 +92,12 @@ export function App({ controller, demo = false }: { readonly controller: Browser
           </div>
           <div className="entry-panel">
             {invited ? <>
-              <button className="button button--primary" disabled={busy || state.identity === null} onClick={() => act(controller.join(invitation, relays))}>
+              <button className="button button--primary" disabled={busy || state.identity === null} onClick={() => open(() => controller.join(invitation, relays))}>
                 {state.busy === "joining" ? "Joining table…" : "Join this table"}
               </button>
-              <button className="entry-alternative" disabled={busy || state.identity === null} onClick={() => act(controller.create(relays))}>Start a new game</button>
+              <button className="entry-alternative" disabled={busy || state.identity === null} onClick={() => open(() => controller.create(relays))}>Start a new game</button>
             </> : <>
-              <button className="button button--primary" disabled={busy || state.identity === null} onClick={() => act(controller.create(relays))}>
+              <button className="button button--primary" disabled={busy || state.identity === null} onClick={() => open(() => controller.create(relays))}>
                 {state.busy === "hosting" ? "Opening table…" : "Start a game"}
               </button>
               <div className="entry-divider"><span>or join with a link</span></div>
@@ -82,11 +113,17 @@ export function App({ controller, demo = false }: { readonly controller: Browser
             <details className="settings">
               <summary>Connection settings</summary>
               <label htmlFor="relay-urls">Custom Nostr relays <span className="optional">(optional)</span></label>
-              <textarea id="relay-urls" value={relays} onChange={(event) => setRelays(event.target.value)} rows={3} disabled={busy}
+              <textarea id="relay-urls" value={relays} onChange={(event) => { setRelays(event.target.value); setRelayFeedback(""); }} rows={3} disabled={busy}
                 maxLength={10_240} placeholder="Leave blank for default public relays" autoCapitalize="none" spellCheck={false} />
               <p>Up to five <code>wss://</code> URLs, one per line. All four players must use the same relays.</p>
-              <p>Browsers connect directly over WebRTC (STUN only, no TURN). All four players must remain online during the match.</p>
+              <button type="button" className="button button--quiet" disabled={busy} onClick={() => saveRelays(true)}>Save relay settings</button>
+              <p>All four players must stay online during the match. A deployment can provide TURN for networks that block direct connections.</p>
             </details>
+            {relayFeedback && <p role="status">{relayFeedback}</p>}
+            {state.relays.length > 0 && <details open>
+              <summary>Signaling relay diagnostics</summary>
+              <RelayList relays={state.relays} />
+            </details>}
           </div>
         </section>
       ) : (
@@ -147,7 +184,7 @@ export function App({ controller, demo = false }: { readonly controller: Browser
                 <div><strong>{peer.fingerprint}</strong><span>{peer.state === "authenticated" ? "Verified" : peer.state} · {peer.path}</span></div>
                 <button className="button button--quiet" onClick={() => act(controller.retryPeer(peer.publicKey))} disabled={busy}>Retry</button>
               </li>)}</ul>}</div>
-              <div><h3>Signaling relays</h3>{state.relays.length === 0 ? <p>No active relay connections.</p> : <ul className="relay-list">{state.relays.map((relay) => <li key={relay.url}><span>{relay.url}</span><strong>{relay.state}</strong>{relay.error !== null && <small>{relay.error}</small>}</li>)}</ul>}<p className="privacy-note">Relays handle encrypted WebRTC signaling only.</p></div>
+              <div><h3>Signaling relays</h3><RelayList relays={state.relays} /><p className="privacy-note">Relays handle encrypted WebRTC signaling only.</p></div>
             </div>
             {state.events.length > 0 && <ol className="event-log" aria-label="Recent connection events">{state.events.map((event, index) => <li key={`${index}:${event}`}>{event}</li>)}</ol>}
           </details>}
@@ -157,4 +194,12 @@ export function App({ controller, demo = false }: { readonly controller: Browser
 
     </main>
   );
+}
+
+function RelayList({ relays }: { relays: BrowserLobbySnapshot["relays"] }) {
+  return relays.length === 0 ? <p>No active relay connections.</p> : <ul className="relay-list">
+    {relays.map(relay => <li key={relay.url}>
+      <span>{relay.url}</span><strong>{relay.state}</strong>{relay.error !== null && <small>{relay.error}</small>}
+    </li>)}
+  </ul>;
 }

@@ -5,8 +5,6 @@ import {
   type MeshPeerConnectionFactory, type SignalingAdapter,
 } from "@p2pcards/transport";
 
-import { lobbyRtcConfiguration } from "./lobby-config";
-
 interface Peer {
   readonly identity: IdentityPublicKey;
   readonly generation: number;
@@ -23,6 +21,7 @@ export interface LobbyTransportOptions {
   readonly identity: Ed25519KeyPair;
   readonly roster: readonly IdentityPublicKey[];
   readonly signaling: SignalingAdapter;
+  readonly rtcConfiguration?: RTCConfiguration;
   readonly createPeerConnection?: MeshPeerConnectionFactory;
   readonly onUnknownPeer: (remote: IdentityPublicKey) => boolean;
   readonly onAuthenticated: (remote: IdentityPublicKey, generation: number) => void;
@@ -39,7 +38,7 @@ export interface LobbyTransportLike {
   start(): Promise<void>;
   admit(remote: IdentityPublicKey): Promise<void>;
   remove(remote: IdentityPublicKey): void;
-  retry(remote: IdentityPublicKey): Promise<void>;
+  retry(remote: IdentityPublicKey, configuration?: RTCConfiguration): Promise<void>;
   path(remote: IdentityPublicKey): Promise<{ readonly path: "direct" | "relayed" | "unknown" }>;
   send(remote: IdentityPublicKey, generation: number, payload: Uint8Array): Promise<void>;
   close(): Promise<void>;
@@ -56,7 +55,8 @@ export class LobbyTransport implements LobbyTransportLike {
     this.#options = options;
     this.#mesh = new FullMeshTransport({
       roomId: options.roomId, self: options.identity.publicKey, roster: options.roster,
-      membership: "lobby", signaling: options.signaling, rtcConfiguration: lobbyRtcConfiguration(),
+      membership: "lobby", signaling: options.signaling,
+      ...(options.rtcConfiguration === undefined ? {} : { rtcConfiguration: options.rtcConfiguration }),
       ...(options.createPeerConnection === undefined ? {} : { createPeerConnection: options.createPeerConnection }),
       onUnknownPeer: options.onUnknownPeer,
       onUnauthenticatedDataChannel: (identity, wire, generation) => {
@@ -127,7 +127,10 @@ export class LobbyTransport implements LobbyTransportLike {
   }
   admit(remote: IdentityPublicKey): Promise<void> { return this.#mesh.admitPeer(remote); }
   remove(remote: IdentityPublicKey): void { this.#mesh.removePeer(remote); }
-  retry(remote: IdentityPublicKey): Promise<void> { return this.#mesh.reconnectPeer(remote); }
+  retry(remote: IdentityPublicKey, configuration?: RTCConfiguration): Promise<void> {
+    if (configuration !== undefined) this.#mesh.configureNewPeers(configuration);
+    return this.#mesh.reconnectPeer(remote);
+  }
   path(remote: IdentityPublicKey) { return this.#mesh.connectionPath(remote); }
 
   async send(remote: IdentityPublicKey, generation: number, payload: Uint8Array): Promise<void> {

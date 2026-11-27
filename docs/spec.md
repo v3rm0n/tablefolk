@@ -29,7 +29,7 @@ Key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be interpreted as in
 - **G4 — Rule enforcement.** Every action is checked by every peer against the same deterministic rules; illegal actions are rejected and attributed to their author.
 - **G5 — Verifiability.** A complete signed transcript allows any party to re-verify the game after the fact.
 - **G6 — Connectivity.** Peers behind NAT connect using STUN, falling back to TURN when direct paths fail.
-- **G7 — No backend.** The application is served as static files. The only third-party dependencies are signaling channels (which carry no game data) and optional TURN relays (which carry only DTLS-encrypted traffic).
+- **G7 — No game backend.** The application is served as static files. Signaling carries no game data. An optional TURN service can issue short-lived connectivity credentials and relay DTLS-encrypted traffic.
 
 ### 1.2 Non-goals
 
@@ -160,9 +160,9 @@ One `RTCPeerConnection` per pair of players. For each pair, the peer with the le
 ```
 
 - STUN servers MUST be configured. TURN servers SHOULD be configured; without TURN, peers behind symmetric NATs may fail to connect.
-- TURN configuration ships in the static bundle. Because TURN relays only ever see DTLS-encrypted SCTP, a compromised or malicious relay cannot read or alter game traffic; the credential protects the operator's bandwidth, not the game. Operators MAY use a TURN provider with ephemeral credentials (RFC 8489/8656 with time-limited HMAC credentials) minted by a serverless function; this function is outside the trust boundary.
+- Deployments MAY configure ICE servers at build or runtime and MAY use a credential endpoint that issues time-limited TURN credentials. Operators keep the TURN shared secret on the credential issuer. A TURN relay carries DTLS-encrypted SCTP. See the [deployment guide](transport-deployment.md).
 - The UI SHOULD show when a connection is relayed (`RTCIceCandidatePairStats.localCandidateId` → `candidateType == "relay"`).
-- `ice_config_hash` in the roster lets peers detect mismatched configurations; it does not affect security.
+- The protocol can use `ice_config_hash` to diagnose a profile mismatch. The current browser profile uses a fixed hash for compatibility with saved signed rosters. Local deployment servers and credentials are excluded.
 
 ### 5.3 Signaling adapters
 

@@ -31,7 +31,7 @@ import { MAX_SIGNALING_MESSAGE_BYTES } from "./signaling-message";
 
 export const DEFAULT_NOSTR_APP_ID = "p2pcards/v1";
 export const DEFAULT_NOSTR_RELAY_REDUNDANCY = 5;
-export const DEFAULT_NOSTR_CONNECT_TIMEOUT_MS = 10_000;
+export const DEFAULT_NOSTR_CONNECT_TIMEOUT_MS = 6_000;
 export const DEFAULT_MAX_PENDING_NOSTR_EVENTS = 256;
 export const DEFAULT_MAX_CONCURRENT_NOSTR_SENDS = 16;
 export const DEFAULT_MAX_SEEN_NOSTR_EVENTS = 4_096;
@@ -39,7 +39,7 @@ export const DEFAULT_MAX_RETAINED_NOSTR_FAILURES = 128;
 export const DEFAULT_MAX_NOSTR_REASSEMBLY_SENDERS = 16;
 export const DEFAULT_MAX_PENDING_NOSTR_FRAME_BYTES = MAX_SIGNALING_MESSAGE_BYTES * 2;
 export const DEFAULT_NOSTR_PUBLICATION_ACK_TIMEOUT_MS = 5_333;
-export const DEFAULT_NOSTR_RECONNECT_BASE_DELAY_MS = 1_000;
+export const DEFAULT_NOSTR_RECONNECT_BASE_DELAY_MS = 750;
 export const DEFAULT_NOSTR_RECONNECT_MAX_DELAY_MS = 30_000;
 export const DEFAULT_NOSTR_SIGNAL_RETENTION_MS = 30_000;
 export const DEFAULT_MAX_RETAINED_NOSTR_PUBLICATIONS = 128;
@@ -195,6 +195,7 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
   readonly #onRelayStateChange: ((relay: NostrRelaySnapshot) => void) | undefined;
   readonly #onError: ((error: Error, relayUrl: string | null) => void) | undefined;
   readonly #relays: RelayState[] = [];
+  readonly #relaySnapshots = new Map<string, NostrRelaySnapshot>();
   readonly #seenEventDigests = new Set<string>();
   readonly #reassemblers = new Map<string, FrameReassembler>();
   readonly #failures: NostrSignalingFailure[] = [];
@@ -303,7 +304,7 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
 
   get relayDiagnostics(): readonly NostrRelaySnapshot[] {
     return Object.freeze(
-      this.#relays.map((relay) => snapshotRelay(relay)),
+      [...this.#relaySnapshots.values()],
     );
   }
 
@@ -364,41 +365,23 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
         this.#relayRedundancy,
         context.topic,
       );
+      this.#relaySnapshots.clear();
       const attempts = selectedRelays.map((url) =>
         this.#connectRelay(url, subscription, generation),
       );
-      const allSettled = Promise.allSettled(attempts);
-      if (!(await settlesBeforeTimeout(allSettled, this.#connectTimeoutMs))) {
-        this.#requireGeneration(generation, "Nostr signaling startup was cancelled");
-        for (const relay of this.#relays) {
-          if (!relay.ready) {
-            const error = new Error(`Timed out subscribing to Nostr relay ${relay.url}`);
-            relay.state = "failed";
-            relay.lastError = error;
-            this.#notifyRelayState(relay);
-            this.#report(error, relay.url);
-            relay.rejectReady(error);
-            relay.socket.close();
-          }
-        }
-      }
-      await allSettled;
+      await Promise.any(attempts);
       this.#requireGeneration(generation, "Nostr signaling startup was cancelled");
-      if (!this.#relays.some((relay) => relay.ready)) {
-        throw new AggregateError([], "No Nostr relay subscription became ready");
-      }
       this.#lifecycle = "joined";
-      for (const relay of this.#relays) {
-        if (!relay.ready) {
+      for (const relay of this.#relaySnapshots.values()) {
+        if (relay.state === "failed" || relay.state === "disconnected") {
           this.#scheduleRelayReconnect(relay.url, generation);
         }
       }
     } catch (cause) {
-      if (this.#generation === generation) {
-        this.#resetMembership();
-      }
+      this.#requireGeneration(generation, "Nostr signaling startup was cancelled");
+      this.#resetMembership();
       if (cause instanceof AggregateError) {
-        throw new Error("Failed to connect to any Nostr relay", { cause });
+        throw new Error("Failed to connect to any Nostr relay. Check your network and the relay URLs in Connection settings.");
       }
       throw asError(cause, "Failed to join Nostr signaling room");
     }
@@ -480,6 +463,7 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
       return;
     }
     this.#resetMembership();
+    this.#relaySnapshots.clear();
   }
 
   async whenIdle(): Promise<void> {
@@ -505,81 +489,74 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
       let socket: NostrRelaySocket;
       try {
         socket = this.#createSocket(url);
-      } catch (cause) {
-        const error = asError(cause, `Failed to create Nostr relay socket for ${url}`);
+      } catch {
+        const error = new Error(`Could not open a WebSocket to Nostr relay ${url}`);
+        this.#notifyRelayState({ url, state: "failed", lastError: error });
         this.#report(error, url);
         reject(error);
         return;
       }
+      const previous = this.#relaySnapshots.get(url);
+      const timer = globalThis.setTimeout(() => {
+        if (this.#isRelayActive(relay, generation) && !relay.ready) {
+          this.#loseRelay(relay, generation, new Error(`Timed out subscribing to Nostr relay ${url}`));
+        }
+      }, this.#connectTimeoutMs);
       const relay: RelayState = {
         url,
         socket,
         state: "connecting",
-        lastError: null,
+        lastError: previous?.lastError ?? null,
         ready: false,
-        rejectReady: reject,
+        rejectReady: (error) => { globalThis.clearTimeout(timer); reject(error); },
       };
       this.#relays.push(relay);
       this.#notifyRelayState(relay);
 
       socket.addEventListener("open", () => {
-        if (!this.#isRelayActive(relay, generation)) {
-          socket.close();
-          reject(new Error("Nostr signaling startup was cancelled"));
-          return;
-        }
+        if (!this.#isRelayActive(relay, generation)) return;
+        relay.state = "subscribing";
+        this.#notifyRelayState(relay);
         try {
-          relay.state = "subscribing";
-          relay.lastError = null;
-          this.#notifyRelayState(relay);
           socket.send(subscription);
-        } catch (cause) {
-          const error = asError(cause, `Failed to subscribe to Nostr relay ${url}`);
-          relay.state = "failed";
-          relay.lastError = error;
-          this.#notifyRelayState(relay);
-          this.#report(error, url);
-          reject(error);
-          socket.close();
+        } catch {
+          this.#loseRelay(relay, generation, new Error(`Could not subscribe to Nostr relay ${url}`));
         }
       });
       socket.addEventListener("message", (event) => {
         if (this.#isRelayActive(relay, generation)) {
-          this.#acceptRelayMessage(event.data, relay, generation, resolve, reject);
+          this.#acceptRelayMessage(event.data, relay, generation, () => {
+            globalThis.clearTimeout(timer);
+            resolve();
+          });
         }
       });
       socket.addEventListener("error", () => {
-        if (!this.#isRelayActive(relay, generation)) {
-          return;
-        }
-        const error = new Error(`Nostr relay ${url} reported a WebSocket error`);
-        relay.state = "failed";
-        relay.lastError = error;
-        this.#notifyRelayState(relay);
-        this.#report(error, url);
-        if (!relay.ready) {
-          reject(error);
-        }
-        socket.close();
+        this.#loseRelay(relay, generation, new Error(`Nostr relay ${url} reported a WebSocket error`));
       });
       socket.addEventListener("close", () => {
-        if (!this.#isRelayActive(relay, generation)) {
-          if (!relay.ready) {
-            reject(new Error("Nostr signaling startup was cancelled"));
-          }
-          return;
-        }
-        const disconnectError = new Error(`Nostr relay ${url} disconnected`);
-        this.#rejectRelayPublications(url, disconnectError);
-        relay.ready = false;
-        relay.state = relay.lastError === null ? "disconnected" : "failed";
-        this.#notifyRelayState(relay);
-        if (!relay.ready) {
-          reject(new Error(`Nostr relay ${url} closed before connecting`));
-        }
-        this.#scheduleRelayReconnect(url, generation);
+        this.#loseRelay(relay, generation, new Error(`Nostr relay ${url} disconnected`), "disconnected");
       });
     });
+  }
+
+  #loseRelay(
+    relay: RelayState,
+    generation: number,
+    error: Error,
+    state: "failed" | "disconnected" = "failed",
+  ): void {
+    if (!this.#isRelayActive(relay, generation)) return;
+    this.#relays.splice(this.#relays.indexOf(relay), 1);
+    relay.state = state;
+    relay.lastError = error;
+    relay.ready = false;
+    this.#notifyRelayState(relay);
+    relay.rejectReady(error);
+    this.#rejectRelayPublications(relay.url, error);
+    this.#report(error, relay.url);
+    this.#scheduleRelayReconnect(relay.url, generation);
+    relay.socket.close();
   }
 
   #acceptRelayMessage(
@@ -587,7 +564,6 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
     relay: RelayState,
     generation: number,
     markReady: () => void,
-    rejectReady: (error: Error) => void,
   ): void {
     try {
       if (typeof data !== "string") {
@@ -596,12 +572,14 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
       if (data.length > MAX_NOSTR_RELAY_MESSAGE_CHARS) {
         throw new RangeError("Nostr relay message exceeds the profiled limit");
       }
-      const message: unknown = JSON.parse(data);
+      let message: unknown;
+      try { message = JSON.parse(data); } catch { throw new TypeError("Nostr relay message is invalid JSON"); }
       if (!Array.isArray(message) || message.length === 0) {
         throw new TypeError("Nostr relay message must be a non-empty JSON array");
       }
       if (message[0] === "NOTICE") {
-        throw new Error(`Nostr relay notice: ${String(message[1] ?? "unknown")}`);
+        this.#relayDiagnostic(relay, new Error("Nostr relay sent a server notice"));
+        return;
       }
       if (message[0] === "EOSE") {
         if (message.length !== 2 || message[1] !== this.#subscriptionId) {
@@ -619,13 +597,8 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
         return;
       }
       if (message[0] === "CLOSED" && message[1] === this.#subscriptionId) {
-        const error = new Error(`Nostr relay closed subscription: ${String(message[2] ?? "unknown")}`);
-        relay.state = "failed";
-        relay.lastError = error;
-        this.#notifyRelayState(relay);
-        this.#report(error, relay.url);
-        rejectReady(error);
-        relay.socket.close();
+        const reason = relayRejectionCategory(message[2]);
+        this.#loseRelay(relay, generation, new Error(`Nostr relay closed subscription${reason}`));
         return;
       }
       if (message[0] === "OK") {
@@ -766,9 +739,6 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
         relay.state === "connected" &&
         relay.socket.readyState === WEB_SOCKET_OPEN,
     );
-    if (eligibleRelays.length === 0) {
-      throw new Error("No connected Nostr relay accepted the signaling event");
-    }
     if (this.#pendingPublications.has(eventId)) {
       throw new Error("Nostr event factory reused a pending event ID");
     }
@@ -788,8 +758,12 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
         return;
       }
       this.#pendingPublications.delete(eventId);
-      pending.reject(new Error("Timed out waiting for a Nostr publication acknowledgement"));
-      this.#report(new Error("Timed out waiting for a Nostr publication acknowledgement"), null);
+      const error = new Error("Timed out waiting for a Nostr publication acknowledgement");
+      pending.reject(error);
+      for (const relay of this.#relays) {
+        if (pending.relayUrls.has(relay.url)) this.#relayDiagnostic(relay, error);
+      }
+      this.#report(error, null);
     }, this.#publicationAckTimeoutMs);
     const pending: PendingPublication = {
       relayUrls: new Set(eligibleRelays.map(({ url }) => url)),
@@ -798,29 +772,11 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
       timer,
     };
     this.#pendingPublications.set(eventId, pending);
-    let sent = 0;
     for (const relay of eligibleRelays) {
       try {
         relay.socket.send(event);
-        sent += 1;
-      } catch (cause) {
-        const error = asError(cause, `Failed to send through Nostr relay ${relay.url}`);
-        relay.ready = false;
-        relay.state = "failed";
-        relay.lastError = error;
-        this.#notifyRelayState(relay);
-        this.#report(error, relay.url);
-        this.#rejectPublicationRelay(eventId, relay.url, error);
-        relay.socket.close();
-        this.#scheduleRelayReconnect(relay.url, this.#generation);
-      }
-    }
-    if (sent === 0) {
-      const current = this.#pendingPublications.get(eventId);
-      if (current !== undefined) {
-        globalThis.clearTimeout(current.timer);
-        this.#pendingPublications.delete(eventId);
-        current.reject(new Error("No connected Nostr relay accepted the signaling event"));
+      } catch {
+        this.#loseRelay(relay, this.#generation, new Error(`Failed to send through Nostr relay ${relay.url}`));
       }
     }
     await acknowledgement;
@@ -838,33 +794,39 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
     ) {
       throw new TypeError("Malformed Nostr relay OK message");
     }
+    if (!this.#retainedPublications.some(publication => publication.eventId === message[1]) &&
+      !this.#pendingPublications.has(message[1])) return;
     const reason = typeof message[3] === "string" ? message[3] : "unknown";
     const accepted = message[2] || reason.startsWith("duplicate:");
     if (accepted) {
       this.#acknowledgeRetainedPublication(message[1], relay.url);
+      if (relay.lastError !== null) {
+        relay.lastError = null;
+        this.#notifyRelayState(relay);
+      }
+    }
+    if (!accepted) {
+      const error = new Error(`Nostr relay rejected publication${relayRejectionCategory(reason)}`);
+      this.#relayDiagnostic(relay, error);
+      this.#rejectPublicationRelay(message[1], relay.url, error);
+      return;
     }
     const pending = this.#pendingPublications.get(message[1]);
     if (pending === undefined || !pending.relayUrls.has(relay.url)) {
       return;
     }
-    if (accepted) {
-      globalThis.clearTimeout(pending.timer);
-      this.#pendingPublications.delete(message[1]);
-      pending.resolve();
-      return;
-    }
-    const error = new Error(`Nostr relay rejected publication: ${reason}`);
-    this.#report(error, relay.url);
-    this.#rejectPublicationRelay(message[1], relay.url, error);
+    globalThis.clearTimeout(pending.timer);
+    this.#pendingPublications.delete(message[1]);
+    pending.resolve();
   }
 
   #rejectPublicationRelay(eventId: string, relayUrl: string, error: Error): void {
     const pending = this.#pendingPublications.get(eventId);
-    if (pending === undefined) {
+    if (pending === undefined || !pending.relayUrls.delete(relayUrl)) {
       return;
     }
-    pending.relayUrls.delete(relayUrl);
-    if (pending.relayUrls.size > 0) {
+    if (pending.relayUrls.size > 0 ||
+      this.relayDiagnostics.some(relay => relay.state !== "connected")) {
       return;
     }
     globalThis.clearTimeout(pending.timer);
@@ -918,19 +880,8 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
       try {
         this.#pendingPublications.get(publication.eventId)?.relayUrls.add(relay.url);
         relay.socket.send(publication.event);
-      } catch (cause) {
-        const error = asError(
-          cause,
-          `Failed to replay signaling through Nostr relay ${relay.url}`,
-        );
-        relay.ready = false;
-        relay.state = "failed";
-        relay.lastError = error;
-        this.#notifyRelayState(relay);
-        this.#report(error, relay.url);
-        this.#rejectPublicationRelay(publication.eventId, relay.url, error);
-        relay.socket.close();
-        this.#scheduleRelayReconnect(relay.url, generation);
+      } catch {
+        this.#loseRelay(relay, generation, new Error(`Failed to replay signaling through Nostr relay ${relay.url}`));
         return;
       }
     }
@@ -969,41 +920,10 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
         this.#reconnectTimers.delete(url);
         return;
       }
-      for (let index = this.#relays.length - 1; index >= 0; index -= 1) {
-        const previous = this.#relays[index];
-        if (previous?.url === url) {
-          this.#relays.splice(index, 1);
-          previous.socket.close();
-        }
-      }
-      const reconnecting = this.#connectRelay(url, this.#subscriptionRequest, generation);
-      const relay = this.#relays.find((candidate) => candidate.url === url);
-      const timeout = globalThis.setTimeout(() => {
-        if (relay !== undefined && this.#isRelayActive(relay, generation) && !relay.ready) {
-          relay.rejectReady(new Error(`Timed out subscribing to Nostr relay ${url}`));
-          relay.socket.close();
-        }
-      }, this.#connectTimeoutMs);
-      void reconnecting.then(
-        () => {
-          globalThis.clearTimeout(timeout);
-          if (this.#reconnectTimers.get(url) === timer) {
-            this.#reconnectTimers.delete(url);
-            if (relay !== undefined && !relay.ready) {
-              this.#scheduleRelayReconnect(url, generation);
-            }
-          }
-        },
-        (cause: unknown) => {
-          globalThis.clearTimeout(timeout);
-          if (this.#reconnectTimers.get(url) !== timer) {
-            return;
-          }
-          this.#reconnectTimers.delete(url);
-          this.#report(cause, url);
-          this.#scheduleRelayReconnect(url, generation);
-        },
-      );
+      this.#reconnectTimers.delete(url);
+      void this.#connectRelay(url, this.#subscriptionRequest, generation).catch(() => {
+        this.#scheduleRelayReconnect(url, generation);
+      });
     }, delay);
     this.#reconnectTimers.set(url, timer);
   }
@@ -1089,9 +1009,17 @@ export class TrysteroNostrSignalingAdapter implements SignalingAdapter {
     }
   }
 
-  #notifyRelayState(relay: RelayState): void {
+  #relayDiagnostic(relay: RelayState, error: Error): void {
+    relay.lastError = error;
+    this.#notifyRelayState(relay);
+    this.#report(error, relay.url);
+  }
+
+  #notifyRelayState(relay: NostrRelaySnapshot): void {
+    const snapshot = snapshotRelay(relay);
+    this.#relaySnapshots.set(snapshot.url, snapshot);
     try {
-      this.#onRelayStateChange?.(snapshotRelay(relay));
+      this.#onRelayStateChange?.(snapshot);
     } catch (cause) {
       this.#retainFailure(
         asError(cause, "Nostr relay state observer failed"),
@@ -1284,16 +1212,16 @@ function normalizeRelayUrls(values: readonly string[]): readonly string[] {
     let url: URL;
     try {
       url = new URL(candidate);
-    } catch (cause) {
-      throw new TypeError("Nostr relay URL is invalid", { cause });
+    } catch {
+      throw new TypeError("Nostr relay URL is invalid");
     }
     const isLocalInsecure = url.protocol === "ws:" &&
       (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
     if (url.protocol !== "wss:" && !isLocalInsecure) {
       throw new TypeError("Nostr relay URL must use wss, except for localhost development");
     }
-    if (url.username !== "" || url.password !== "" || url.hash !== "") {
-      throw new TypeError("Nostr relay URL must not contain credentials or a fragment");
+    if (url.username !== "" || url.password !== "" || url.href.includes("#") || url.href.includes("?")) {
+      throw new TypeError("Nostr relay URL must not contain credentials, a query, or a fragment");
     }
     normalized.add(url.toString());
   }
@@ -1368,7 +1296,7 @@ function publishedEventId(encoded: string): string {
   return message[1]["id"];
 }
 
-function snapshotRelay(relay: RelayState): NostrRelaySnapshot {
+function snapshotRelay(relay: NostrRelaySnapshot): NostrRelaySnapshot {
   return Object.freeze({
     url: relay.url,
     state: relay.state,
@@ -1480,21 +1408,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function settlesBeforeTimeout(
-  promise: Promise<unknown>,
-  timeoutMs: number,
-): Promise<boolean> {
-  let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
-  const timeout = new Promise<false>((resolve) => {
-    timer = globalThis.setTimeout(() => resolve(false), timeoutMs);
-  });
-  try {
-    return await Promise.race([promise.then(() => true), timeout]);
-  } finally {
-    if (timer !== undefined) {
-      globalThis.clearTimeout(timer);
-    }
-  }
+function relayRejectionCategory(reason: unknown): string {
+  if (typeof reason !== "string") return "";
+  const category = /^(auth-required|blocked|rate-limited|invalid|restricted|pow|error):/.exec(reason)?.[1];
+  return category === undefined ? "" : ` (${category})`;
 }
 
 function compareText(left: string, right: string): number {

@@ -277,9 +277,13 @@ aad     = SHA-256("p2pcards/v1/nostr-signal/aad" || cbor({app_id, room_id, topic
 - Relay URLs require `wss://` (except loopback `ws://`), no credentials/query/fragment,
   `<= 2,048` bytes each. Up to 5 relays are selected deterministically by
   sorting ascending on `lowerhex(SHA-256("p2pcards/v1/nostr-signal/relay" || cbor({topic, url})))`.
-- Operational defaults: 10 s EOSE startup deadline, 5,333 ms publish ACK
-  timeout, 30 s recent-event replay window (128-event cap), 32 KiB max WS frame,
-  24 KiB max content, 16 concurrent sends, 30 s reassembly expiry.
+- The first subscription to reach EOSE opens the table. Each relay has a 6 s
+  subscription deadline and retries independently with exponential backoff from
+  750 ms to 30 s. Recent unacknowledged signaling is replayed on recovered
+  relays, including sends queued during an outage. The publication ACK deadline
+  is 5,333 ms. The replay window is 30 s (128 events maximum), with a 32 KiB
+  WebSocket frame limit, a 24 KiB content limit, 16 concurrent sends, and a
+  30 s reassembly expiry.
 - Room-key encryption is signaling hygiene only; relay `OK`s are not peer
   receipts and do not authenticate identities.
 
@@ -288,6 +292,11 @@ aad     = SHA-256("p2pcards/v1/nostr-signal/aad" || cbor({app_id, room_id, topic
 - One `RTCPeerConnection` per peer pair (`iceTransportPolicy: "all"`,
   `bundlePolicy: "max-bundle"`, STUN required, TURN optional). Lexicographically
   smaller `pk_id` is impolite; larger is polite (perfect negotiation).
+  Deployments can provide static ICE servers and a short-lived TURN credential
+  endpoint. The live browser profile keeps its existing public
+  `ice_config_hash` across deployments and credential rotation to preserve
+  signed roster and saved-history compatibility. See the
+  [transport deployment guide](transport-deployment.md).
 - One externally negotiated `RTCDataChannel`: label `p2pcards`, `id: 0`,
   `ordered: true`, fully reliable.
 - **Frames:** deterministic CBOR `{id: uint32, index: uint16, count: uint16, bytes: bstr(<= 16 KiB)}`

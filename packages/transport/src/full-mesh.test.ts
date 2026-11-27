@@ -795,8 +795,17 @@ describe("full-mesh WebRTC transport", () => {
     const unaffected = peerHarness.connection(CAROL);
     const oldChannel = old.createdChannels[0]!;
 
+    const turn = { urls: ["turn:relay.example:3478"], username: "rotated-user", credential: "rotated-password" };
+    alice.configureNewPeers({ iceServers: [{ urls: "stun:stun.example" }, turn] });
+    turn.urls.push("turn:mutated.example");
+    expect(unaffected.configuration.iceServers).toHaveLength(1);
+
     await alice.reconnectPeer(BOB);
     const replacement = peerHarness.connection(BOB);
+    expect(replacement.configuration.iceServers).toEqual([
+      { urls: "stun:stun.example" },
+      { urls: ["turn:relay.example:3478"], username: "rotated-user", credential: "rotated-password" },
+    ]);
     expect(replacement).not.toBe(old);
     expect(old.closed).toBe(true);
     expect(oldChannel.closed).toBe(true);

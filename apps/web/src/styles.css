@@ -267,6 +267,13 @@ summary {
   overflow-wrap: anywhere;
 }
 
+.notice--network {
+  border-color: var(--line);
+  background: #fff8e7;
+  color: var(--ink);
+}
+.notice > p { margin-block: 0 0.4rem; }
+
 /* Demo page toolbar */
 .demo-page { min-height: 100vh; }
 .demo-toolbar {

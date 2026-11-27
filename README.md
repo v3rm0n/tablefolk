@@ -11,7 +11,7 @@ multiplayer card games with no game server, starting with four-player
 > Bayer–Groth shuffle proofs, private dealing, audited scoring, dealer
 > rotation, and reload recovery. **Disclaimer: the cryptography is self-audited
 > and has not undergone an independent external audit.** WASM crypto
-> consolidation, ephemeral reconnect, TURN support, in-browser transcript
+> consolidation, ephemeral reconnect, in-browser transcript
 > export, and strict CSP remain follow-up work (see
 > [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)).
 
@@ -60,10 +60,12 @@ npm run check  # workspace typechecks, unit/integration tests, and production bu
 
 ### Networking & identity notes
 
-- Blank relay settings use pinned Trystero Nostr defaults; custom relay lists
-  must match on all four browsers.
-- STUN is configured without TURN, so strict NATs or firewalls may fail to
-  connect, and all four players must stay online to advance a hand.
+- Blank relay settings use the pinned Trystero Nostr defaults. Use **Connection
+  settings** to save a custom list on this browser. All four players should use
+  the same list so they have a shared relay.
+- Deployments can add TURN for strict NATs or firewalls. All four players must
+  stay online, and mobile players should keep the table tab in the foreground.
+  See the [transport deployment and verification guide](docs/transport-deployment.md).
 - Browser identities store a raw 32-byte Ed25519 seed in IndexedDB (protected
   by strict CSP; see [docs/decisions.md](docs/decisions.md)). Clearing site data
   loses that identity; Web Locks prevent two tabs with the same identity from
@@ -79,8 +81,10 @@ npm run test:browser
 Set `PLAYWRIGHT_EXECUTABLE_PATH` to use an installed Chromium-family browser,
 `PLAYWRIGHT_PRODUCTION=1` to test the built bundle after `npm run build`, and
 `PLAYWRIGHT_OUTPUT_DIR` to move screenshots/diagnostics from
-`test-results/browser`. Browser tests run four isolated browser contexts over
-real WebRTC and a local Nostr-compatible relay (not public relays).
+`test-results/browser`. Use `PLAYWRIGHT_BROWSER=firefox` or
+`PLAYWRIGHT_BROWSER=webkit` to select another installed Playwright engine,
+and `PLAYWRIGHT_PORT` to override the local test server port. Browser tests
+use real WebRTC and local Nostr-compatible relay fixtures.
 
 ## Documentation
 

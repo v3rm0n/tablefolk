@@ -153,7 +153,7 @@ export class FullMeshTransport {
   readonly #onUnknownPeer: ((remote: IdentityPublicKey) => boolean) | undefined;
   #lobbyGeneration = 0;
   readonly #signaling: SignalingAdapter;
-  readonly #rtcConfiguration: RTCConfiguration;
+  #rtcConfiguration: RTCConfiguration;
   readonly #createPeerConnection: MeshPeerConnectionFactory;
   readonly #maxPendingIceCandidates: number;
   readonly #maxAcceptedIceCandidates: number;
@@ -267,6 +267,11 @@ export class FullMeshTransport {
       throw new Error("Peer connection statistics were superseded");
     }
     return inspectIceConnectionPath(report);
+  }
+
+  /** Change the ICE configuration used by subsequent peer generations. */
+  configureNewPeers(configuration: RTCConfiguration): void {
+    this.#rtcConfiguration = normalizeRtcConfiguration(configuration);
   }
 
   async start(): Promise<void> {
@@ -1224,7 +1229,11 @@ const defaultPeerConnectionFactory: MeshPeerConnectionFactory = (_remote, config
   if (typeof RTCPeerConnection === "undefined") {
     throw new Error("RTCPeerConnection is unavailable in this environment");
   }
-  return new RTCPeerConnection(configuration);
+  try {
+    return new RTCPeerConnection(configuration);
+  } catch {
+    throw new Error("Unable to create a WebRTC connection. Check the deployment ICE settings and browser support.");
+  }
 };
 
 function normalizeRoster(
