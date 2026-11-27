@@ -2,6 +2,7 @@ export {
   MAX_ROUND_REVEAL_ENVELOPE_BYTES,
   RoundRevealError,
   RoundRevealLedger,
+  type RoundRevealCheckpoint,
   type PrivateDealStep,
   type RoundPrivateHand,
   type RoundRevealErrorCode,
@@ -65,6 +66,6 @@ export {
   SetupRecoveryError,
   type SetupRecoveryResult,
 } from "./setup-recovery";
-export { CandidateShuffleLedger, type CandidateShuffleLedgerOptions, type CandidateShuffleBody, type CandidateShuffleVerifier } from "./candidate-shuffle-ledger";
+export { CandidateShuffleLedger, type CandidateShuffleBody, type CandidateShuffleCheckpoint, type CandidateShuffleLedgerOptions, type CandidateShuffleVerifier } from "./candidate-shuffle-ledger";
 export { PersistentCandidateShuffleReceiver, type PersistentCandidateShuffleOptions,
   type PersistentCandidateShuffleResult, type CandidateShuffleSnapshot } from "./persistent-candidate-shuffle";

@@ -6,7 +6,7 @@ import {
 } from "@p2pcards/crypto";
 import { decodeGameKeyShareBody } from "@p2pcards/deck";
 import {
-  decodeAndVerifyEnvelope,
+  verifyEnvelopeArtifact,
   decodeRandCommitBody,
   decodeRandRevealBody,
   parseGameId,
@@ -147,7 +147,7 @@ export class SetupEnvelopeCoordinator {
   }
 
   #process(candidate: EnvelopeArtifact, commit: boolean): SetupEnvelopeResult {
-    const received = decodeAndVerifyEnvelope(candidate.canonicalBytes);
+    const received = verifyEnvelopeArtifact(candidate);
     const envelope = received.envelope;
     if (!bytesEqual(envelope.game, this.#gameId)) {
       return reject("wrong_game", this.#setup.state, received);

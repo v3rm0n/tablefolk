@@ -257,7 +257,8 @@ describe("setup envelope coordinator", () => {
     expect(KEY_SHARES[0]!.H.equals(KEY_SHARES[1]!.H)).toBe(false);
     for (const mutation of ["sender", "body", "hash", "all"]) {
       const coordinator = new SetupEnvelopeCoordinator(GAME_ID, ROUND, ROSTER);
-      const candidate = decodeAndVerifyEnvelope(original.canonicalBytes);
+      const signed = decodeAndVerifyEnvelope(original.canonicalBytes);
+    const candidate = { ...signed, canonicalBytes: signed.canonicalBytes };
       if (mutation === "sender" || mutation === "all") candidate.envelope.from.set(BOB.publicKey);
       if (mutation === "body" || mutation === "all") {
         Object.assign(candidate.envelope.body as CborMap, encodeGameKeyShareBody(KEY_SHARES[1]!));
@@ -287,7 +288,8 @@ describe("setup envelope coordinator", () => {
     const coordinator = new SetupEnvelopeCoordinator(GAME_ID, ROUND, ROSTER);
     coordinator.ingest(keyEnvelope(0));
     const original = keyEnvelope(1);
-    const candidate = decodeAndVerifyEnvelope(original.canonicalBytes);
+    const signed = decodeAndVerifyEnvelope(original.canonicalBytes);
+    const candidate = { ...signed, canonicalBytes: signed.canonicalBytes };
     const last = candidate.canonicalBytes.length - 1;
     candidate.canonicalBytes[last] = candidate.canonicalBytes[last]! ^ 1;
     expect(candidate.envelope).toEqual(original.envelope);

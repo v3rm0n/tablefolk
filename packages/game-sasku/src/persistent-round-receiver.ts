@@ -2,7 +2,7 @@ import { bytesEqual, bytesToHex, type RandomSource, type RistrettoScalar } from 
 import { decodeAuditDiscloseBody, encodeActionBody, encodeAuditDiscloseBody, encodeSharesBody, type ActionBody, type DecryptionShareBatchBackend, type MaskedCard } from "@p2pcards/deck";
 import {
   MAX_ROUND_REVEAL_ENVELOPE_BYTES, RoundRevealError, RoundRevealLedger, SetupEnvelopeCoordinator,
-  type PrivateDealStep, type RoundRevealSnapshot, type RoundRevealTransition,
+  type PrivateDealStep, type RoundRevealCheckpoint, type RoundRevealSnapshot, type RoundRevealTransition,
 } from "@p2pcards/engine";
 import { encodeUnsignedEnvelope, parseHash256, parseIdentityPublicKey, type EnvelopeArtifact, type IdentityPublicKey } from "@p2pcards/protocol";
 import {
@@ -13,6 +13,8 @@ import {
 import { AuthoredEnvelopeStoreError, PersistentEnvelopeAuthor, PersistentSessionReceiver, PersistentSessionReceiverError, SessionChainRegistry, type EnvelopeContent } from "@p2pcards/session";
 
 import { captureSaskuRoundHistory, SaskuRoundRecoveryError, type SaskuRoundRecoveryLimits } from "./round-recovery";
+
+const AUDIT_SEATS = Object.freeze([0, 1, 2, 3] as const);
 
 export const DEFAULT_MAX_PENDING_SASKU_ENVELOPES = 32;
 export const DEFAULT_MAX_PENDING_SASKU_BYTES = 1024 * 1024;
@@ -38,6 +40,12 @@ export interface SaskuRoundSnapshot {
   readonly hand: SaskuPublicHandSnapshot;
   readonly history: readonly SaskuHandAction[];
   readonly audit: SaskuRoundAuditSnapshot | null;
+}
+
+export interface SaskuRoundCheckpoint {
+  readonly reveal: RoundRevealCheckpoint;
+  readonly history: readonly SaskuHandAction[];
+  readonly auditHashes: readonly (readonly [SaskuSeat, string])[];
 }
 
 export interface SaskuPrivateHand {
@@ -94,7 +102,7 @@ interface PendingOperation {
 
 interface RoundTransition {
   readonly received: EnvelopeArtifact;
-  readonly expectedSeat: SaskuSeat | undefined;
+  readonly reveal: RoundRevealTransition | null;
   readonly type: "SHARES" | "ACTION" | "AUDIT_DISCLOSE";
   readonly seat: SaskuSeat;
   readonly status: "accepted" | "duplicate";
@@ -217,6 +225,33 @@ export class PersistentSaskuRoundReceiver {
     this.close();
     if (cause instanceof SaskuRoundRecoveryError || cause instanceof RangeError || cause instanceof TypeError) return cause;
     return new SaskuRoundRecoveryError("Could not reconstruct Sasku round semantics", { cause });
+  }
+
+  /** Restore only local derived state whose four sender heads have been matched. */
+  static restoreTrustedCheckpoint(options: PersistentSaskuRoundOptions, state: SaskuRoundCheckpoint): PersistentSaskuRoundReceiver {
+    const receiver = new PersistentSaskuRoundReceiver(options);
+    if (state.history.length !== state.reveal.actionIndex ||
+        (state.history.length > 0 && state.reveal.dealIndex !== options.schedule.length)) {
+      throw new Error("Invalid Sasku round checkpoint");
+    }
+    receiver.#ledger.restoreTrustedCheckpoint(state.reveal);
+    for (const action of state.history) receiver.#hand.apply(action);
+    const hand = receiver.#hand.snapshot;
+    if (hand.phase !== "complete" && state.auditHashes.length > 0) throw new Error("Invalid checkpoint audit phase");
+    for (const [seat, hash] of state.auditHashes) receiver.#auditHashes.set(seat, hash);
+    const ledger = receiver.#ledger.snapshot;
+    const history = receiver.#hand.history;
+    const pendingSenders = AUDIT_SEATS.filter(seat => !receiver.#auditHashes.has(seat));
+    const audit = hand.phase === "complete" ? receiver.#auditSnapshot(pendingSenders, ledger, hand, history) : null;
+    receiver.#snapshot = Object.freeze({ ledger, hand, history, audit });
+    return receiver;
+  }
+
+  exportCheckpoint(): SaskuRoundCheckpoint {
+    return {
+      reveal: this.#ledger.exportCheckpoint(), history: this.#snapshot.history,
+      auditHashes: [...this.#auditHashes],
+    };
   }
 
   get snapshot(): SaskuRoundSnapshot { return this.#snapshot; }
@@ -354,6 +389,7 @@ export class PersistentSaskuRoundReceiver {
 
   /** Cancels queued work. An already submitted durable receipt is allowed to finish consistently. */
   close(): void {
+    this.#ledger.clearPrivateHands();
     this.#closed = true;
     this.#rejectQueued(this.#failure ?? new SaskuRoundReceiverError("closed"));
   }
@@ -498,7 +534,7 @@ export class PersistentSaskuRoundReceiver {
       }, revealed);
       this.#hand.preview(action);
     }
-    return { received, expectedSeat, type: classification.type, seat: classification.seat as SaskuSeat, status: classification.status, action };
+    return { received, reveal: "received" in classification ? classification : null, type: classification.type, seat: classification.seat as SaskuSeat, status: classification.status, action };
   }
 
   async #receiveOne(received: EnvelopeArtifact, finishAuthored = false): Promise<SaskuRoundReceiveResult> {
@@ -557,33 +593,20 @@ export class PersistentSaskuRoundReceiver {
   }
 
   #commit(
-    { received, expectedSeat, type, seat, status, action }: RoundTransition,
+    { received, reveal, type, seat, status, action }: RoundTransition,
     commitPreparedDeal?: () => RoundRevealTransition,
   ): void {
     try {
       if (type === "AUDIT_DISCLOSE") {
         if (status === "accepted") {
-          const audit = this.#snapshot.audit!;
-          const pendingSenders = Object.freeze(audit.pendingSenders.filter((pending) => pending !== seat));
-          let result: SaskuRoundAuditSnapshot["result"] = null;
-          if (pendingSenders.length === 0) {
-            const hands: [SaskuCardId[], SaskuCardId[], SaskuCardId[], SaskuCardId[]] = [[], [], [], []];
-            for (let pos = 0; pos < 36; pos += 1) {
-              hands[this.ownerAt(pos)].push(parseSaskuCard(this.#snapshot.ledger.revealed[pos]).id);
-            }
-            const checked = auditSaskuHand({ dealer: this.#snapshot.hand.dealer, hands }, this.#snapshot.history);
-            if (checked.status === "violation") { result = checked; }
-            else {
-              if (checked.status !== "valid" || checked.snapshot.score === null) { throw new Error("Completed Sasku audit returned an incomplete result"); }
-              result = Object.freeze({ status: "valid", score: checked.snapshot.score });
-            }
-          }
+          const { audit, ledger, hand, history } = this.#snapshot;
+          const pendingSenders = audit!.pendingSenders.filter(pending => pending !== seat);
+          const nextAudit = this.#auditSnapshot(pendingSenders, ledger, hand, history);
           this.#auditHashes.set(seat, bytesToHex(received.hash));
-          this.#snapshot = Object.freeze({ ...this.#snapshot, audit: Object.freeze({ phase: audit.phase, pendingSenders, result }) });
+          this.#snapshot = Object.freeze({ ...this.#snapshot, audit: nextAudit });
         }
       } else {
-        const committed = commitPreparedDeal ? commitPreparedDeal()
-          : this.#ledger.commit(received, expectedSeat);
+        const committed = commitPreparedDeal ? commitPreparedDeal() : this.#ledger.commit(reveal!);
         if (committed.status !== status || committed.type !== type || committed.seat !== seat ||
             !bytesEqual(committed.received.canonicalBytes, received.canonicalBytes)) {
           throw new Error("Reveal commit does not match the original transition");
@@ -597,12 +620,32 @@ export class PersistentSaskuRoundReceiver {
           let audit = this.#snapshot.audit;
           if (hand.phase === "complete" && audit === null) {
             if (Object.keys(ledger.revealed).length !== 36) { throw new Error("Completed Sasku hand has unopened positions"); }
-            audit = Object.freeze({ phase: `round.${this.#round}.audit`, pendingSenders: Object.freeze([0, 1, 2, 3] as const), result: null });
+            audit = this.#auditSnapshot(AUDIT_SEATS, ledger, hand, this.#hand.history);
           }
           this.#snapshot = Object.freeze({ ledger, hand, history: this.#hand.history, audit });
         }
       }
     } catch (cause) { throw this.#fail("commit_failed", cause); }
+  }
+
+  #auditSnapshot(
+    pendingSenders: readonly SaskuSeat[],
+    ledger: RoundRevealSnapshot,
+    hand: SaskuPublicHandSnapshot,
+    history: readonly SaskuHandAction[],
+  ): SaskuRoundAuditSnapshot {
+    let result: SaskuRoundAuditSnapshot["result"] = null;
+    if (pendingSenders.length === 0) {
+      const hands: [SaskuCardId[], SaskuCardId[], SaskuCardId[], SaskuCardId[]] = [[], [], [], []];
+      for (let pos = 0; pos < 36; pos++) hands[this.ownerAt(pos)].push(parseSaskuCard(ledger.revealed[pos]).id);
+      const checked = auditSaskuHand({ dealer: hand.dealer, hands }, history);
+      if (checked.status === "violation") result = checked;
+      else {
+        if (checked.status !== "valid" || checked.snapshot.score === null) throw new Error("Completed Sasku audit returned an incomplete result");
+        result = Object.freeze({ status: "valid", score: checked.snapshot.score });
+      }
+    }
+    return Object.freeze({ phase: `round.${this.#round}.audit`, pendingSenders: Object.freeze(pendingSenders), result });
   }
 
   #reserve(bytes: number): void {
@@ -635,6 +678,7 @@ export class PersistentSaskuRoundReceiver {
 
   #fail(code: SaskuRoundReceiverErrorCode, cause: unknown): SaskuRoundReceiverError {
     this.#failure ??= new SaskuRoundReceiverError(code, { cause });
+    this.#ledger.clearPrivateHands();
     this.#rejectQueued(this.#failure);
     return this.#failure;
   }

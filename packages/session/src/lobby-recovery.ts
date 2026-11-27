@@ -1,6 +1,6 @@
 import { bytesEqual, bytesToHex } from "@p2pcards/crypto";
 import {
-  decodeAndVerifyEnvelope,
+  verifyEnvelopeArtifact,
   decodeReadyBody,
   parseGameId,
   type EnvelopeArtifact,
@@ -47,7 +47,7 @@ export function recoverLobby(
   for (const [index, candidate] of transcript.entries()) {
     let artifact: EnvelopeArtifact;
     try {
-      artifact = decodeAndVerifyEnvelope(candidate.canonicalBytes);
+      artifact = verifyEnvelopeArtifact(candidate);
     } catch (cause) {
       throw new LobbyRecoveryError(`Transcript envelope ${index} is invalid`, { cause });
     }
@@ -209,7 +209,7 @@ function verifyRosterSnapshot(
 
   let snapshot: EnvelopeArtifact;
   try {
-    snapshot = decodeAndVerifyEnvelope(expected.canonicalBytes);
+    snapshot = verifyEnvelopeArtifact(expected);
   } catch (cause) {
     throw new LobbyRecoveryError("Durable roster snapshot is invalid", { cause });
   }

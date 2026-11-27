@@ -1,7 +1,7 @@
 import { bytesEqual, bytesToHex, type RandomSource } from "@p2pcards/crypto";
 import { encodeGameKeyShareBody } from "@p2pcards/deck";
 import {
-  decodeAndVerifyEnvelope, encodeRandCommitBody, encodeRandRevealBody, encodeUnsignedEnvelope,
+  verifyEnvelopeArtifact, encodeRandCommitBody, encodeRandRevealBody, encodeUnsignedEnvelope,
   parseGameId, parseHash256, parseIdentityPublicKey,
   type EnvelopeArtifact, type GameId, type IdentityPublicKey,
 } from "@p2pcards/protocol";
@@ -164,12 +164,11 @@ export class PersistentSetupReceiver {
       const size = byteSize(input);
       this.#reserve(size);
       reserved = size;
-      const bytes = new Uint8Array(size);
-      bytes.set(input);
-      try { decodeAndVerifyEnvelope(bytes); }
+      let received: EnvelopeArtifact;
+      try { received = verifyEnvelopeArtifact(candidate, input); }
       catch (cause) { throw new PersistentSetupReceiverError("invalid_envelope", { cause }); }
       this.#requireOpen();
-      const promise = this.#enqueue(size, () => this.#receiveOne(bytes));
+      const promise = this.#enqueue(size, () => this.#receiveOne(received));
       reserved = null;
       return promise;
     } catch (cause) {
@@ -277,7 +276,7 @@ export class PersistentSetupReceiver {
       }
     } catch (cause) { throw this.#fail("invalid_receipt", cause); }
     try {
-      const result = await this.#receiveOne(received.canonicalBytes, true);
+      const result = await this.#receiveOne(received, true);
       if (result.status === "rejected") throw new Error("Authored setup envelope was not locally accepted");
       return result;
     } catch (cause) { throw this.#fail("recovery_required", cause); }
@@ -290,7 +289,7 @@ export class PersistentSetupReceiver {
       if (head === null ? accepted !== undefined
         : accepted === undefined || !bytesEqual(head.envelope.game, this.#gameId) || !bytesEqual(head.envelope.from, this.#self) ||
           head.envelope.seq !== accepted.seq || !bytesEqual(head.hash, accepted.hash) ||
-          this.#session.classify(decodeAndVerifyEnvelope(head.canonicalBytes)).status !== "duplicate") {
+          this.#session.classify(verifyEnvelopeArtifact(head)).status !== "duplicate") {
         throw new Error("Authored and accepted setup heads must agree before private preparation or signing");
       }
       if (head !== null) {
@@ -303,16 +302,16 @@ export class PersistentSetupReceiver {
     } catch (cause) { throw this.#fail("recovery_required", cause); }
   }
 
-  async #receiveOne(bytes: Uint8Array, finishAuthored = false): Promise<PersistentSetupReceiveResult> {
+  async #receiveOne(received: EnvelopeArtifact, finishAuthored = false): Promise<PersistentSetupReceiveResult> {
     if (this.#failure !== null) throw this.#failure;
     if (this.#closed && !finishAuthored) throw new PersistentSetupReceiverError("closed");
-    const received = decodeAndVerifyEnvelope(bytes);
+    const bytes = received.canonicalBytes;
     let classification: SetupEnvelopeResult;
-    try { classification = this.#normalize(this.#coordinator.classify(decodeAndVerifyEnvelope(bytes)), bytes); }
+    try { classification = this.#normalize(this.#coordinator.classify(received), bytes); }
     catch (cause) { throw this.#fail("recovery_required", cause); }
     if (classification.status === "rejected") return classification;
     let receipt: Awaited<ReturnType<PersistentSessionReceiver["receive"]>>;
-    try { receipt = await this.#durable.receive(decodeAndVerifyEnvelope(bytes)); }
+    try { receipt = await this.#durable.receive(received); }
     catch (cause) {
       if (cause instanceof PersistentSessionReceiverError) throw this.#fail("recovery_required", cause);
       throw this.#failure ?? cause;
@@ -326,21 +325,21 @@ export class PersistentSetupReceiver {
         if (!["gap", "broken_prev", "equivocation", "durable_conflict"].includes(reason)) throw new Error("Setup receipt contradicts its bound scope");
         if (this.#failure !== null) throw this.#failure;
         return Object.freeze({ status, reason: "chain_rejected", classification,
-          chainResult: Object.freeze({ status, reason, received: decodeAndVerifyEnvelope(bytes) }), received });
+          chainResult: Object.freeze({ status, reason, received }), received });
       }
       if (status !== "accepted" && status !== "duplicate") throw new Error("Invalid setup receipt status");
       const persistenceStatus = receipt.persistenceStatus;
       if (persistenceStatus !== "stored" && persistenceStatus !== "duplicate") throw new Error("Invalid setup persistence status");
       const recorded = this.#session.readRange(parseIdentityPublicKey(received.envelope.from), received.envelope.seq, received.envelope.seq);
-      if (this.#session.classify(decodeAndVerifyEnvelope(bytes)).status !== "duplicate" || recorded.status !== "complete" ||
+      if (this.#session.classify(received).status !== "duplicate" || recorded.status !== "complete" ||
           recorded.envelopes.length !== 1 || !bytesEqual(snapshotArtifact(recorded.envelopes[0]!).canonicalBytes, bytes)) {
         throw new Error("Setup receipt is not reflected in its bound registry");
       }
-      chainResult = Object.freeze({ status, persistenceStatus, received: decodeAndVerifyEnvelope(bytes) });
+      chainResult = Object.freeze({ status, persistenceStatus, received });
     } catch (cause) { throw this.#fail("invalid_receipt", cause); }
     if (this.#failure !== null) throw this.#failure;
     try {
-      const transition = this.#normalize(this.#coordinator.ingest(decodeAndVerifyEnvelope(bytes)), bytes);
+      const transition = this.#normalize(this.#coordinator.ingest(received), bytes);
       if (transition.status === "rejected" || transition.status !== classification.status || transition.state !== classification.state ||
           transition.seat !== classification.seat || this.#coordinator.state !== transition.state) {
         throw new Error("Setup transition changed during durable receipt");
@@ -457,7 +456,6 @@ function byteSize(value: Uint8Array, limit = MAX_SETUP_ENVELOPE_BYTES): number {
 
 function snapshotArtifact(candidate: EnvelopeArtifact, limit = MAX_SETUP_ENVELOPE_BYTES): EnvelopeArtifact {
   const value = candidate?.canonicalBytes;
-  const bytes = new Uint8Array(byteSize(value, limit));
-  bytes.set(value);
-  return decodeAndVerifyEnvelope(bytes);
+  byteSize(value, limit);
+  return verifyEnvelopeArtifact(candidate, value);
 }

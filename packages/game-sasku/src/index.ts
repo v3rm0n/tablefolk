@@ -26,4 +26,4 @@ export {
   type SaskuRoundInboxOptions,
 } from "./round-inbox";
 export { recoverCandidateShuffledSaskuRound, type CandidateShuffledSaskuRoundOptions } from "./candidate-shuffled-round";
-export { CandidateSaskuRoundOwner, type CandidateRoundOwnerOptions, type CandidateRoundOwnerSnapshot, type CandidateRoundReceipt } from "./candidate-round-owner";
+export { CandidateSaskuRoundOwner, type CandidateRoundCheckpoint, type CandidateRoundOwnerOptions, type CandidateRoundOwnerSnapshot, type CandidateRoundReceipt } from "./candidate-round-owner";

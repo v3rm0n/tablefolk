@@ -1,6 +1,6 @@
 import { bytesEqual, bytesToHex, importEd25519PublicKey } from "@p2pcards/crypto";
 import { decodeActionBody, type ActionBody } from "@p2pcards/deck";
-import { decodeAndVerifyEnvelope, parseGameId, parseIdentityPublicKey, type EnvelopeArtifact, type GameId, type IdentityPublicKey } from "@p2pcards/protocol";
+import { decodeAndVerifyEnvelope, verifyEnvelopeArtifact, parseGameId, parseIdentityPublicKey, type EnvelopeArtifact, type GameId, type IdentityPublicKey } from "@p2pcards/protocol";
 
 export const MAX_ACTION_ENVELOPE_BYTES = 64 * 1024;
 
@@ -32,7 +32,8 @@ export class ActionEnvelopeError extends Error {
 }
 
 /** Verifies signature, scope, and body encoding only. Chains, reveal proofs, ownership, and rules still require validation. */
-export function decodeActionEnvelope(bytes: Uint8Array, scope: ActionEnvelopeScope): DecodedActionEnvelope {
+export function decodeActionEnvelope(candidate: Uint8Array | EnvelopeArtifact, scope: ActionEnvelopeScope): DecodedActionEnvelope {
+  const bytes = candidate instanceof Uint8Array ? candidate : candidate?.canonicalBytes;
   if (!(bytes instanceof Uint8Array) || bytes.constructor !== Uint8Array ||
       bytes.length === 0 || bytes.length > MAX_ACTION_ENVELOPE_BYTES) {
     throw new ActionEnvelopeError("invalid_envelope");
@@ -69,7 +70,7 @@ export function decodeActionEnvelope(bytes: Uint8Array, scope: ActionEnvelopeSco
     expected.add(seat);
   }
   let received: EnvelopeArtifact;
-  try { received = decodeAndVerifyEnvelope(bytes); }
+  try { received = candidate instanceof Uint8Array ? decodeAndVerifyEnvelope(bytes) : verifyEnvelopeArtifact(candidate, bytes); }
   catch (cause) { throw new ActionEnvelopeError("invalid_envelope", { cause }); }
   const envelope = received.envelope;
   if (!bytesEqual(envelope.game, gameId)) { throw new ActionEnvelopeError("wrong_game"); }

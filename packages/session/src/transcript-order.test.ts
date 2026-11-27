@@ -83,7 +83,8 @@ describe("canonical envelope transcript order", () => {
     const wrongGame = artifact(ALICE, 0, ZERO_HASH, "wrong game", OTHER_GAME_ID);
     expect(() => orderEnvelopeTranscript(GAME_ID, [wrongGame])).toThrow(/another game/);
 
-    const corrupt = artifact(ALICE, 0, ZERO_HASH, "corrupt");
+    const signed = artifact(ALICE, 0, ZERO_HASH, "corrupt");
+    const corrupt = { ...signed, canonicalBytes: signed.canonicalBytes };
     const lastIndex = corrupt.canonicalBytes.length - 1;
     corrupt.canonicalBytes[lastIndex] = corrupt.canonicalBytes[lastIndex]! ^ 1;
     expect(() => orderEnvelopeTranscript(GAME_ID, [corrupt])).toThrow(

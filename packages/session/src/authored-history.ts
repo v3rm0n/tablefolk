@@ -1,6 +1,6 @@
 import { bytesEqual, importEd25519PublicKey } from "@p2pcards/crypto";
 import {
-  decodeAndVerifyEnvelope,
+  verifyEnvelopeArtifact,
   parseGameId,
   parseHash256,
   parseIdentityPublicKey,
@@ -57,7 +57,7 @@ export async function replayAuthoredHistory(
   store: AuthoredHistoryStore,
   gameId: GameId,
   sender: IdentityPublicKey,
-  send: (payload: Uint8Array) => Promise<void>,
+  send: (payload: Uint8Array, artifact: EnvelopeArtifact) => Promise<void>,
   options: AuthoredHistoryReplayOptions = {},
 ): Promise<AuthoredHistoryReplayResult> {
   if (typeof store !== "object" || store === null || typeof store.readAuthoredHead !== "function" ||
@@ -103,7 +103,7 @@ export async function replayAuthoredHistory(
     }
     const headBytes = candidate.canonicalBytes;
     requireBytes(headBytes, Math.min(MAX_AUTHORED_HISTORY_PAGE_BYTES, maxBytes));
-    const head = decodeAndVerifyEnvelope(headBytes);
+    const head = verifyEnvelopeArtifact(candidate, headBytes);
     requireScope(head, game, author);
     if (head.envelope.seq >= maxEnvelopes) {
       throw new RangeError("Authored replay exceeds the envelope limit");
@@ -121,7 +121,7 @@ export async function replayAuthoredHistory(
       const candidates = await store.readAuthoredPage(parseGameId(game), parseIdentityPublicKey(author), after.seq, after.seq);
       if (signal?.aborted) return cancelled();
       if (candidates.length !== 1) throw new Error("Previously verified authored checkpoint is missing");
-      const anchored = decodeAndVerifyEnvelope(candidates[0]!.canonicalBytes);
+      const anchored = verifyEnvelopeArtifact(candidates[0]!);
       requireScope(anchored, game, author);
       if (anchored.envelope.seq !== after.seq || !bytesEqual(anchored.hash, after.hash)) {
         throw new Error("Previously verified authored checkpoint changed");
@@ -178,7 +178,7 @@ export async function replayAuthoredHistory(
         if (signal?.aborted) {
           return cancelled();
         }
-        const sending = send(artifact.canonicalBytes.slice());
+        const sending = send(artifact.canonicalBytes, artifact);
         if (sending === undefined || sending === null || typeof sending.then !== "function") {
           throw new TypeError("Authored replay send callback must return a promise");
         }
@@ -209,15 +209,15 @@ function verifyPage(
     throw new Error("Authored history page has an invalid envelope count");
   }
   let bytes = 0;
-  const encoded: Uint8Array[] = [];
+  const bounded: { candidate: EnvelopeArtifact; bytes: Uint8Array }[] = [];
   for (const candidate of candidates) {
     const value = candidate.canonicalBytes;
     requireBytes(value, Math.min(MAX_AUTHORED_HISTORY_PAGE_BYTES, remainingBytes) - bytes);
     bytes += value.length;
-    encoded.push(value);
+    bounded.push({ candidate, bytes: value });
   }
-  return Object.freeze(encoded.map((value, index) => {
-    const artifact = decodeAndVerifyEnvelope(value);
+  return Object.freeze(bounded.map(({ candidate, bytes }, index) => {
+    const artifact = verifyEnvelopeArtifact(candidate, bytes);
     requireScope(artifact, game, author);
     if (artifact.envelope.seq !== fromSeq + index || !bytesEqual(artifact.envelope.prev, prev)) {
       throw new Error("Authored history page has a gap or broken predecessor");

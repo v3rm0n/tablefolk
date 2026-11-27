@@ -1,6 +1,6 @@
 import { bytesEqual, bytesToHex } from "@p2pcards/crypto";
 import {
-  decodeAndVerifyEnvelope,
+  verifyEnvelopeArtifact,
   parseGameId,
   parseIdentityPublicKey,
   type EnvelopeArtifact,
@@ -39,7 +39,7 @@ export function recoverSessionChains(
   for (const [index, candidate] of transcript.entries()) {
     let artifact: EnvelopeArtifact;
     try {
-      artifact = decodeAndVerifyEnvelope(candidate.canonicalBytes);
+      artifact = verifyEnvelopeArtifact(candidate);
     } catch (cause) {
       throw new SessionChainRecoveryError(`Transcript envelope ${index} is invalid`, { cause });
     }

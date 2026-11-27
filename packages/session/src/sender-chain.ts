@@ -1,6 +1,7 @@
 import { bytesEqual } from "@p2pcards/crypto";
 import {
   parseHash256,
+  verifyEnvelopeArtifact,
   parseIdentityPublicKey,
   type EnvelopeArtifact,
   type Hash256,
@@ -88,7 +89,8 @@ export class SenderChain {
     return this.#accepted.get(seq)?.artifact;
   }
 
-  classify(received: EnvelopeArtifact): ChainIngestResult {
+  classify(candidate: EnvelopeArtifact): ChainIngestResult {
+    const received = verifyEnvelopeArtifact(candidate);
     const envelope = received.envelope;
 
     if (!bytesEqual(envelope.from, this.#sender)) {
@@ -144,8 +146,9 @@ export class SenderChain {
     return { status: "accepted", head: copyHead(head), received };
   }
 
-  ingest(received: EnvelopeArtifact): ChainIngestResult {
-    const result = this.classify(received);
+  ingest(candidate: EnvelopeArtifact): ChainIngestResult {
+    const result = this.classify(candidate);
+    const received = result.received;
     if (result.status !== "accepted") {
       return result;
     }

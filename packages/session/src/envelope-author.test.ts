@@ -171,7 +171,7 @@ describe("persistent envelope author", () => {
     expect(sign).toHaveBeenCalledOnce();
   });
 
-  it("detaches the guard head from the validated signing head and stored head", async () => {
+  it("gives the guard detached views of the verified signing head", async () => {
     const store = new MemoryAuthoredEnvelopeStore();
     const author = new PersistentEnvelopeAuthor(GAME_ID, SECRET_KEY, store);
     const first = await author.author({ ...content("head"), body: { bytes: new Uint8Array([1, 2, 3]) } });
@@ -179,18 +179,16 @@ describe("persistent envelope author", () => {
     const sign = vi.spyOn(protocol, "signEnvelope");
 
     const second = await author.author(content("next"), (head) => {
-      expect(decode).toHaveBeenCalledTimes(2);
-      const validated = decode.mock.results[0]!.value as EnvelopeArtifact;
+      expect(decode).not.toHaveBeenCalled();
       expect(head).toEqual(first);
-      expect(head).not.toBe(validated);
-      expect(head).not.toBe(store.records[0]);
+      expect(head).toBe(store.records[0]);
       for (const bytes of [
         head!.canonicalBytes, head!.hash, head!.envelope.game, head!.envelope.from,
         head!.envelope.prev, head!.envelope.sig, (head!.envelope.body as CborMap)["bytes"] as Uint8Array,
       ]) {
         bytes.fill(0xff);
       }
-      expect(validated).toEqual(first);
+      expect(head).toEqual(first);
       expect(store.records[0]).toEqual(first);
       return undefined;
     });
@@ -437,10 +435,8 @@ describe("persistent envelope author", () => {
     ["game", "Envelope store returned a head for another game"],
     ["sender", "Envelope store returned a head for another sender"],
   ])("preserves a %s head callback error masked by a generic store rejection", async (kind, message) => {
-    const head = signedHead(kind === "game" ? parseGameId(new Uint8Array(16).fill(4)) : GAME_ID, 0);
-    if (kind === "malformed") {
-      head.canonicalBytes.fill(0xff);
-    }
+    const signed = signedHead(kind === "game" ? parseGameId(new Uint8Array(16).fill(4)) : GAME_ID, 0);
+    const head = kind === "malformed" ? { ...signed, canonicalBytes: signed.canonicalBytes.fill(0xff) } : signed;
     const secretKey = kind === "sender" ? importEd25519SecretKey(new Uint8Array(32).fill(7)) : SECRET_KEY;
     const sign = vi.spyOn(protocol, "signEnvelope");
     const guard = vi.fn(() => undefined);
@@ -485,7 +481,7 @@ describe("persistent envelope author head preflight", () => {
     const first = await author.author(content("first"));
     const head = await author.readHead();
     expect(head).toEqual(first);
-    expect(head).not.toBe(store.records[0]);
+    expect(head).toBe(store.records[0]);
     expect(append).toHaveBeenCalledOnce();
     expect(sign).toHaveBeenCalledOnce();
     const second = await author.author(content("second"));

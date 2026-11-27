@@ -297,7 +297,8 @@ describe("persistent lobby receiver", () => {
     const lobby = new LobbyChainRegistry(CONTEXT);
     const store = new MemoryLobbyStore();
     const receiver = new PersistentLobbyReceiver(lobby, store);
-    const corrupt = joinEnvelope(ALICE);
+    const signed = joinEnvelope(ALICE);
+    const corrupt = { ...signed, canonicalBytes: signed.canonicalBytes };
     const lastIndex = corrupt.canonicalBytes.length - 1;
     corrupt.canonicalBytes[lastIndex] = corrupt.canonicalBytes[lastIndex]! ^ 1;
 

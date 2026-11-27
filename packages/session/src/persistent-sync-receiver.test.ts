@@ -95,8 +95,8 @@ describe("durable requested-range receipt", () => {
     await expect(test.receiver.receiveResponse(wrongGame, request())).resolves.toMatchObject({
       status: "stopped", stage: "outer", reason: "wrong_game",
     });
-    valid.canonicalBytes.fill(0xff);
-    await expect(test.receiver.receiveResponse(valid, request())).resolves.toMatchObject({
+    const corrupt = { ...valid, canonicalBytes: valid.canonicalBytes.fill(0xff) };
+    await expect(test.receiver.receiveResponse(corrupt, request())).resolves.toMatchObject({
       status: "failed", stage: "outer", outerStatus: null, receipts: [],
     });
     expect(test.store.calls).toEqual([]);

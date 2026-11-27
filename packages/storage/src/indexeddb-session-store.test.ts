@@ -79,6 +79,30 @@ describe("IndexedDB accepted session storage", () => {
     await resumed.close();
   });
 
+  it("restores a local checkpoint only for the same four signed heads and preserves the transcript", async () => {
+    const options = { factory: new IDBFactory(), databaseName: "match-checkpoint" };
+    const seats = [HOST, ALICE, BOB, identity(4)];
+    const store = new IndexedDbSessionStore(options);
+    const session = new SessionChainRegistry(GAME_ID, seats.map(seat => seat.publicKey));
+    const durable = new PersistentSessionReceiver(session, store);
+    for (const seat of seats) await durable.receive(messageEnvelope(seat, 0, ZERO_HASH, "initial"));
+    const state = { version: 1, round: 3 };
+    await store.saveMatchCheckpoint(GAME_ID, HOST.publicKey, session.heads(), state);
+    await store.close();
+
+    const resumed = new IndexedDbSessionStore(options);
+    const records = await resumed.loadTranscript(GAME_ID);
+    const restored = recoverSessionChains(GAME_ID, seats.map(seat => seat.publicKey), records.map(record => record.artifact)).registry;
+    expect(await resumed.loadMatchCheckpoint(GAME_ID, HOST.publicKey, restored.heads())).toEqual(state);
+    expect(await resumed.loadMatchCheckpoint(GAME_ID, ALICE.publicKey, restored.heads())).toBeUndefined();
+    const head = restored.heads()[0]!;
+    const next = messageEnvelope(HOST, 1, head.hash, "next");
+    await new PersistentSessionReceiver(restored, resumed).receive(next);
+    expect(await resumed.loadMatchCheckpoint(GAME_ID, HOST.publicKey, restored.heads())).toBeUndefined();
+    expect(await resumed.loadTranscript(GAME_ID)).toHaveLength(5);
+    await resumed.close();
+  });
+
   it("loads complete sender chains in canonical identity and sequence order", async () => {
     const factory = new IDBFactory();
     const store = new IndexedDbSessionStore({ factory, databaseName: "canonical-transcript" });
@@ -184,7 +208,8 @@ describe("IndexedDB accepted session storage", () => {
   it("rejects invalid artifacts without creating transcript rows", async () => {
     const factory = new IDBFactory();
     const store = new IndexedDbSessionStore({ factory, databaseName: "incoming-invalid" });
-    const artifact = messageEnvelope(ALICE, 0, ZERO_HASH, "tamper");
+    const signed = messageEnvelope(ALICE, 0, ZERO_HASH, "tamper");
+    const artifact = { ...signed, canonicalBytes: signed.canonicalBytes };
     const lastIndex = artifact.canonicalBytes.length - 1;
     artifact.canonicalBytes[lastIndex] = artifact.canonicalBytes[lastIndex]! ^ 1;
 

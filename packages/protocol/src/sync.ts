@@ -1,7 +1,7 @@
 import type { CborMap, CborValue } from "@p2pcards/encoding";
 import { decodeCanonical, encodeCanonical } from "@p2pcards/encoding";
 
-import { decodeAndVerifyEnvelope, type EnvelopeArtifact } from "./envelope";
+import { decodeAndVerifyEnvelope, verifyEnvelopeArtifact, type EnvelopeArtifact } from "./envelope";
 import { parseIdentityPublicKey, type IdentityPublicKey } from "./fields";
 import {
   expectArray,
@@ -49,7 +49,7 @@ export function encodeSyncResponseBody(body: SyncResponseBody): CborMap {
   return {
     envelopes: body.envelopes.map((candidate, index) => {
       try {
-        const artifact = decodeAndVerifyEnvelope(candidate.canonicalBytes);
+        const artifact = verifyEnvelopeArtifact(candidate);
         return decodeCanonical(artifact.canonicalBytes);
       } catch (cause) {
         throw new ProtocolSchemaError(

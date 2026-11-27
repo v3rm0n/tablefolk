@@ -1,3 +1,4 @@
+import * as deck from "@p2pcards/deck";
 import { expect, it, vi } from "vitest";
 import { deferred } from "../../engine/src/persistent-setup.test-fixture";
 import { CandidateSaskuRoundOwner } from "./candidate-round-owner";
@@ -15,11 +16,27 @@ it("schedules reverse-order shuffle and deal traffic through an exclusive handof
   if (snapshot.phase !== "round") throw new Error("No round");
   expect(snapshot.state.ledger.deal).toBeNull();
   expect(Object.keys(c.owner.readPrivateHand(c.f.secrets[0]!)!.dealt)).toHaveLength(9);
-  expect((await c.owner.receiveHistory(c.shuffles[0]!)).status).toBe("duplicate"); c.owner.close();
+  expect((await c.owner.receiveHistory(c.shuffles[0]!)).status).toBe("duplicate");
+  const checkpoint = c.owner.exportCheckpoint();
+  const hand = c.owner.readPrivateHand(c.f.secrets[0]!);
+  c.owner.close();
   expect(c.verifier.verify).toHaveBeenCalledTimes(4);
+  const verifyReveal = vi.spyOn(deck, "verifyProvenDecryptionShare");
+  try {
+    const restored = await CandidateSaskuRoundOwner.open(c.options, checkpoint);
+    expect(restored.snapshot).toEqual(snapshot);
+    expect(restored.readPrivateHand(c.f.secrets[0]!)).toEqual(hand);
+    expect(c.verifier.verify).toHaveBeenCalledTimes(4);
+    expect(verifyReveal).not.toHaveBeenCalled();
+    expect((await restored.receiveHistory(c.deals[0]!)).status).toBe("duplicate");
+    restored.close();
+  } finally { verifyReveal.mockRestore(); }
   const reopened = await CandidateSaskuRoundOwner.open(c.options);
   expect(c.verifier.verify).toHaveBeenCalledTimes(8);
   expect(reopened.snapshot.phase).toBe("round"); reopened.close();
+  const changed = { ...checkpoint, heads: c.session.heads() };
+  changed.heads[0]!.hash.fill(0);
+  await expect(CandidateSaskuRoundOwner.open(c.options, changed)).rejects.toThrow(/session heads/);
 }, 30_000);
 it("serializes incoming traffic behind in-flight proof verification", async () => {
   const c = await fixture(), gate = deferred(), started = deferred();

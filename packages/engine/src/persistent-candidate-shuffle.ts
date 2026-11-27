@@ -3,7 +3,8 @@ import type { DeckSpec, MaskedCard } from "@p2pcards/deck";
 import type { EnvelopeArtifact, IdentityPublicKey, RosterBody } from "@p2pcards/protocol";
 import { captureSessionHistory, PersistentEnvelopeAuthor, PersistentSessionReceiver, SessionChainRegistry,
   PersistentSessionReceiverError, type CapturedSessionHistory, type SessionHistoryCaptureLimits } from "@p2pcards/session";
-import { CandidateShuffleLedger, type CandidateShuffleBody, type CandidateShuffleVerifier } from "./candidate-shuffle-ledger";
+import { CandidateShuffleLedger, type CandidateShuffleBody, type CandidateShuffleCheckpoint, type CandidateShuffleVerifier } from "./candidate-shuffle-ledger";
+import type { SetupEnvelopeCoordinator } from "./setup-envelope-coordinator";
 import { recoverSetup } from "./setup-recovery";
 
 export interface PersistentCandidateShuffleOptions {
@@ -30,19 +31,20 @@ class ChainRejection extends Error { constructor(readonly reason: string) { supe
 export class PersistentCandidateShuffleReceiver {
   readonly #options: PersistentCandidateShuffleOptions;
   readonly #ledger: CandidateShuffleLedger;
+  readonly #setup: SetupEnvelopeCoordinator;
   #checkpoint: CapturedSessionHistory;
   #snapshot: CandidateShuffleSnapshot;
   #busy = false;
   #closed = false;
   #failure: Error | null = null;
 
-  private constructor(options: PersistentCandidateShuffleOptions, ledger: CandidateShuffleLedger, history: CapturedSessionHistory) {
-    this.#options = options; this.#ledger = ledger; this.#checkpoint = history;
+  private constructor(options: PersistentCandidateShuffleOptions, ledger: CandidateShuffleLedger, setup: SetupEnvelopeCoordinator, history: CapturedSessionHistory) {
+    this.#options = options; this.#ledger = ledger; this.#setup = setup; this.#checkpoint = history;
     this.#snapshot = Object.freeze({ nextSeat: ledger.nextSeat, complete: ledger.complete });
   }
 
   /** Caller restores complete sender prefixes from durable storage before opening. No writes occur during replay. */
-  static async open(input: PersistentCandidateShuffleOptions): Promise<PersistentCandidateShuffleReceiver> {
+  static async open(input: PersistentCandidateShuffleOptions, trustedCheckpoint?: CandidateShuffleCheckpoint): Promise<PersistentCandidateShuffleReceiver> {
     if (!(input.session instanceof SessionChainRegistry) || !(input.sessionReceiver instanceof PersistentSessionReceiver) ||
       !input.sessionReceiver.isBoundTo(input.session)) throw new Error("Shuffle receiver requires its bound durable session receiver");
     if (!Number.isSafeInteger(input.setupRound) || input.setupRound < 0 || Object.is(input.setupRound, -0)) throw new Error("Invalid setup round");
@@ -63,9 +65,10 @@ export class PersistentCandidateShuffleReceiver {
         const ownSetup = history.envelopes.filter(a => bytesEqual(a.envelope.from, artifact.envelope.from) &&
           ["KEY_SHARE", "RAND_COMMIT", "RAND_REVEAL"].includes(a.envelope.type));
         if (ownSetup.some(a => a.envelope.seq >= artifact.envelope.seq)) throw new Error("Stored shuffle precedes sender setup");
-        await ledger.acceptVerified(artifact);
+        if (trustedCheckpoint === undefined) await ledger.acceptVerified(artifact);
         history.assertUnchanged();
       }
+      if (trustedCheckpoint !== undefined) ledger.restoreTrustedCheckpoint(trustedCheckpoint, contributions);
       const later = history.envelopes.filter(a => a.envelope.round === options.round && ["SHARES", "ACTION", "AUDIT_DISCLOSE"].includes(a.envelope.type));
       if (later.length && !ledger.complete) throw new Error("Stored round activity lacks a complete shuffle chain");
       for (const artifact of later) {
@@ -73,15 +76,17 @@ export class PersistentCandidateShuffleReceiver {
         if (!own || own.envelope.seq >= artifact.envelope.seq) throw new Error("Stored round activity precedes sender shuffle");
       }
       history.assertUnchanged();
-      return new PersistentCandidateShuffleReceiver(options, ledger, history);
+      return new PersistentCandidateShuffleReceiver(options, ledger, setup, history);
     } catch (error) { ledger.close(); throw error; }
   }
 
+  exportCheckpoint(): CandidateShuffleCheckpoint { return this.#ledger.exportCheckpoint(); }
   get snapshot(): CandidateShuffleSnapshot { return this.#snapshot; }
   get failure(): Error | null { return this.#failure; }
   get closed(): boolean { return this.#closed; }
   get busy(): boolean { return this.#busy; }
   nextStatement(): Uint8Array { this.#guard(); return this.#ledger.nextStatement(); }
+  get completedSetup(): SetupEnvelopeCoordinator { this.#guard(); return this.#setup; }
   get finalDeck(): readonly MaskedCard[] { this.#guard(); return this.#ledger.finalDeck; }
   close(): void { this.#closed = true; this.#ledger.close(); }
 

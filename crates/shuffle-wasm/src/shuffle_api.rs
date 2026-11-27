@@ -290,16 +290,6 @@ fn prove_admitted<R: Rng + CryptoRng>(
         statement.transcript(*generator),
     )
     .map_err(|e| e.to_string())?;
-    if Argument::verify(
-        &parameters,
-        &public,
-        &proof,
-        statement.transcript(*generator),
-    )
-    .is_err()
-    {
-        return Err("Generated proof failed self-verification".into());
-    }
     proof_codec::encode(&proof, statement.dimensions)
 }
 

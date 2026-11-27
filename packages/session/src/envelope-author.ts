@@ -10,7 +10,7 @@ import {
   type CborValue,
 } from "@p2pcards/encoding";
 import {
-  decodeAndVerifyEnvelope,
+  verifyEnvelopeArtifact,
   parseGameId,
   parseHash256,
   parseIdentityPublicKey,
@@ -153,7 +153,7 @@ export class PersistentEnvelopeAuthor {
             body: content.body,
           };
           if (beforeSign !== undefined) {
-            const result: unknown = beforeSign(head === null ? null : decodeAndVerifyEnvelope(head.canonicalBytes));
+            const result: unknown = beforeSign(head === null ? null : head);
             if (result !== undefined) {
               // Observe accidental async guard rejections without allowing signing.
               void Promise.resolve(result).catch(() => undefined);
@@ -161,7 +161,7 @@ export class PersistentEnvelopeAuthor {
             }
           }
           const artifact = signEnvelope(unsigned, this.#secretKey);
-          created = decodeAndVerifyEnvelope(artifact.canonicalBytes);
+          created = artifact;
           return artifact;
         } catch (cause) {
           callbackFailed = true;
@@ -199,9 +199,7 @@ export class PersistentEnvelopeAuthor {
       if (typedArrayByteLength.call(source) !== size || !Number.isSafeInteger(size) || size < 1 || size > MAX_AUTHORED_HISTORY_PAGE_BYTES) {
         throw new RangeError("Stored head exceeds the byte limit or has an invalid byte view");
       }
-      const bytes = new Uint8Array(size);
-      bytes.set(source);
-      verified = decodeAndVerifyEnvelope(bytes);
+      verified = verifyEnvelopeArtifact(candidate, source);
     } catch (cause) {
       throw new AuthoredEnvelopeStoreError("Envelope store returned an invalid chain head", {
         cause,

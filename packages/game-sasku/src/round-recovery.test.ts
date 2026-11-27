@@ -90,7 +90,10 @@ describe("Sasku round recovery", () => {
     }
     const commit = vi.spyOn(RoundRevealLedger.prototype, "commit");
     const recovered = PersistentSaskuRoundReceiver.recover(c.options);
-    expect(commit.mock.calls.map(([artifact]) => [artifact.envelope.phase, c.session.seatOf(artifact.envelope.from)]))
+    expect(commit.mock.calls.map(([argument]) => {
+      const { envelope } = "received" in argument ? argument.received : argument;
+      return [envelope.phase, c.session.seatOf(envelope.from)];
+    }))
       .toEqual(c.f.plans.flatMap((plan, step) => [0, 1, 2, 3].filter((seat) => seat !== plan.to)
         .map((seat) => [`round.${c.f.round}.deal.${step}`, seat])));
     expect(recovered.snapshot).toEqual(c.game.snapshot);
@@ -137,22 +140,27 @@ describe("Sasku round recovery", () => {
     expect(c.store.artifacts()).toEqual(records);
     expect(c.session.heads()).toEqual(heads);
 
-    const stable = recovered.snapshot;
+    const verify = vi.spyOn(deck, "verifyProvenDecryptionShare");
+    const resumed = PersistentSaskuRoundReceiver.restoreTrustedCheckpoint(c.options, c.game.exportCheckpoint());
+    expect(resumed.snapshot).toEqual(before);
+    expect(verify).not.toHaveBeenCalled();
+    verify.mockRestore();
+    const stable = resumed.snapshot;
     for (const original of [play.received, ...c.deals.slice().reverse(), opening.received, play.received]) {
-      await expect(recovered.receive(original)).resolves.toMatchObject({ status: "duplicate", chainStatus: "duplicate", persistenceStatus: "duplicate" });
-      expect(recovered.snapshot).toBe(stable);
+      await expect(resumed.receive(original)).resolves.toMatchObject({ status: "duplicate", chainStatus: "duplicate", persistenceStatus: "duplicate" });
+      expect(resumed.snapshot).toBe(stable);
     }
     const author = c.authors[1]!;
     const head = c.store.head(c.f.gameId, author.sender)!;
-    const continued = await recovered.authorAction(author, c.f.secrets[1]!, stable, { type: "play", position: 9 }, c.f.source);
+    const continued = await resumed.authorAction(author, c.f.secrets[1]!, stable, { type: "play", position: 9 }, c.f.source);
     expect(continued).toMatchObject({ status: "accepted", chainStatus: "accepted", persistenceStatus: "duplicate" });
     expect(continued.received.envelope).toMatchObject({ seq: head.envelope.seq + 1, prev: head.hash, phase: stable.ledger.phase });
     expect(c.session.classify(continued.received).status).toBe("duplicate");
     expect(c.game.snapshot).toBe(before);
     await c.game.receive(continued.received);
-    expect(recovered.snapshot).toEqual(c.game.snapshot);
+    expect(resumed.snapshot).toEqual(c.game.snapshot);
     expect(PersistentSaskuRoundReceiver.recover(c.options).snapshot).toEqual(c.game.snapshot);
-    expect(recovered.readPrivateHand(author.sender, c.f.secrets[1]!)!.remaining).not.toHaveProperty("9");
+    expect(resumed.readPrivateHand(author.sender, c.f.secrets[1]!)!.remaining).not.toHaveProperty("9");
   }, 15_000);
 
   it("never sorts a sender's valid deal-1 proofs ahead of its earlier deal-0 prerequisite", async () => {
@@ -507,7 +515,7 @@ describe("Sasku complete-hand recovery", () => {
     const native = RoundRevealLedger.prototype.commit;
     const commit = vi.spyOn(RoundRevealLedger.prototype, "commit").mockImplementation(function (this: RoundRevealLedger, argument, expectedSeat) {
       const result = native.call(this, argument, expectedSeat);
-      if (argument.envelope.phase === `round.${c.f.round}.deal.1`) {
+      if (("received" in argument ? argument.received : argument).envelope.phase === `round.${c.f.round}.deal.1`) {
         expect(this.snapshot).toMatchObject({ dealIndex: 1, deal: { pendingSenders: [2, 3] } });
         throw injected;
       }

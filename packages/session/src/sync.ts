@@ -1,6 +1,6 @@
 import { bytesEqual } from "@p2pcards/crypto";
 import {
-  decodeAndVerifyEnvelope,
+  verifyEnvelopeArtifact,
   parseIdentityPublicKey,
   type EnvelopeArtifact,
   type SyncRequestBody,
@@ -143,12 +143,14 @@ export function preflightSyncResponse(
   }
 
   // Capture byte references once and bound the entire batch before decoding or copying it.
-  const encoded: Uint8Array[] = [];
+  const encoded: { readonly candidate: EnvelopeArtifact; readonly bytes: Uint8Array }[] = [];
   let totalBytes = 0;
   for (let index = 0; index < actualCount; index += 1) {
     let bytes: Uint8Array;
+    let candidate: EnvelopeArtifact;
     try {
-      bytes = candidates[index]!.canonicalBytes;
+      candidate = candidates[index]!;
+      bytes = candidate.canonicalBytes;
       if (!(bytes instanceof Uint8Array) || bytes.constructor !== Uint8Array) {
         return Object.freeze({ status: "rejected", reason: "invalid_artifact", index });
       }
@@ -159,15 +161,15 @@ export function preflightSyncResponse(
       return Object.freeze({ status: "rejected", reason: "limit_exceeded" });
     }
     totalBytes += bytes.byteLength;
-    encoded.push(bytes);
+    encoded.push({ candidate, bytes });
   }
 
   const envelopes: EnvelopeArtifact[] = [];
   const gameId = registry.gameId;
-  for (const [index, bytes] of encoded.entries()) {
+  for (const [index, { candidate, bytes }] of encoded.entries()) {
     let artifact: EnvelopeArtifact;
     try {
-      artifact = decodeAndVerifyEnvelope(bytes);
+      artifact = verifyEnvelopeArtifact(candidate, bytes);
     } catch {
       return Object.freeze({ status: "rejected", reason: "invalid_artifact", index });
     }

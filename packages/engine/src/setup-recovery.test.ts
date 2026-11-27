@@ -117,7 +117,8 @@ describe("setup transcript recovery", () => {
       /another game/,
     );
 
-    const corrupt = keyEnvelope(0, 0, ZERO_HASH);
+    const signed = keyEnvelope(0, 0, ZERO_HASH);
+    const corrupt = { ...signed, canonicalBytes: signed.canonicalBytes };
     const lastIndex = corrupt.canonicalBytes.length - 1;
     corrupt.canonicalBytes[lastIndex] = corrupt.canonicalBytes[lastIndex]! ^ 1;
     expect(() => recoverSetup(GAME_ID, ROUND, ROSTER, [corrupt])).toThrow(

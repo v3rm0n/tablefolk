@@ -1,9 +1,9 @@
-import { bytesEqual } from "@p2pcards/crypto";
+import { bytesEqual, bytesToHex, RistrettoPoint } from "@p2pcards/crypto";
 import type { CborMap } from "@p2pcards/encoding";
 import { CardPointTable, initialMaskedCard, encodeCandidateShuffleStatement, unpackShuffleDeck,
   decodeCandidateShuffleProof, shuffleCardCount, type DeckSpec, type MaskedCard } from "@p2pcards/deck";
 import { decodeAndVerifyEnvelope, decodeRosterBody, encodeRosterBody, hashRosterBody,
-  type EnvelopeArtifact, type RosterBody } from "@p2pcards/protocol";
+  verifyEnvelopeArtifact, type EnvelopeArtifact, type RosterBody } from "@p2pcards/protocol";
 import { SetupEnvelopeCoordinator } from "./setup-envelope-coordinator";
 
 const DIMENSIONS = Object.freeze({ rows: 4, columns: 9 });
@@ -12,6 +12,11 @@ const CARD_COUNT = shuffleCardCount(DIMENSIONS);
 export interface CandidateShuffleBody {
   readonly outputDeck: Uint8Array;
   readonly proof: Uint8Array;
+}
+
+export interface CandidateShuffleCheckpoint {
+  readonly hashes: readonly string[];
+  readonly deck: readonly (readonly [Uint8Array, Uint8Array])[];
 }
 
 export interface CandidateShuffleVerifier {
@@ -31,10 +36,12 @@ export class CandidateShuffleLedger {
   readonly #options: CandidateShuffleLedgerOptions;
   readonly #roster: RosterBody;
   #deck: readonly MaskedCard[];
+  #encodedDeck: CandidateShuffleCheckpoint["deck"] | null = null;
   #seat = 0;
+  #prepared: { seat: number; outputDeck: Uint8Array; proof: Uint8Array } | null = null;
   #busy = false;
   #closed = false;
-  readonly #accepted: Uint8Array[] = [];
+  readonly #accepted: string[] = [];
 
   constructor(options: CandidateShuffleLedgerOptions) {
     if (!(options.setup instanceof SetupEnvelopeCoordinator) || options.setup.state !== "complete" ||
@@ -48,6 +55,26 @@ export class CandidateShuffleLedger {
     this.#options = Object.freeze({ ...options, round: options.round });
     this.#roster = roster;
     this.#deck = Object.freeze(Array.from({ length: CARD_COUNT }, (_, i) => initialMaskedCard(table.pointAt(i))));
+  }
+
+  exportCheckpoint(): CandidateShuffleCheckpoint {
+    this.#encodedDeck ??= this.#deck.map(({ A, B }) => [A.toBytes(), B.toBytes()] as const);
+    return { hashes: [...this.#accepted], deck: this.#encodedDeck.map(([A, B]) => [A.slice(), B.slice()]) };
+  }
+
+  /** Restore public derived state only after the caller matches local transcript heads. */
+  restoreTrustedCheckpoint(state: CandidateShuffleCheckpoint, contributions: readonly EnvelopeArtifact[]): void {
+    if (this.#seat !== 0 || this.#busy || this.#closed || contributions.length > 4 ||
+        state.hashes.length !== contributions.length || state.deck.length !== CARD_COUNT ||
+        contributions.some((artifact, seat) => state.hashes[seat] !== bytesToHex(artifact.hash))) {
+      throw new Error("Invalid shuffle checkpoint");
+    }
+    this.#deck = Object.freeze(state.deck.map(([A, B]) => Object.freeze({
+      A: RistrettoPoint.fromBytes(A), B: RistrettoPoint.fromBytes(B),
+    })));
+    this.#encodedDeck = state.deck.map(([A, B]) => [A.slice(), B.slice()]);
+    this.#accepted.push(...state.hashes);
+    this.#seat = contributions.length;
   }
 
   get nextSeat(): number | null { return this.#seat === 4 ? null : this.#seat; }
@@ -69,8 +96,12 @@ export class CandidateShuffleLedger {
   }
 
   async verifyPrepared(body: CandidateShuffleBody): Promise<boolean> {
+    const seat = this.#seat;
     const { statement } = this.#prepare(body);
-    return this.#options.verifier.verify(statement, body.proof.slice());
+    const captured = { seat, outputDeck: body.outputDeck.slice(), proof: body.proof.slice() };
+    const valid = await this.#options.verifier.verify(statement, captured.proof.slice()) === true;
+    if (valid && this.#seat === seat && !this.#closed) this.#prepared = captured;
+    return valid;
   }
 
   get finalDeck(): readonly MaskedCard[] {
@@ -80,11 +111,14 @@ export class CandidateShuffleLedger {
   close(): void { this.#closed = true; }
 
   /** Optional owner barrier runs after verification, before any state mutation. */
-  async accept(bytes: Uint8Array, beforeCommit?: () => Promise<void>): Promise<"accepted" | "duplicate"> {
+  async accept(candidate: Uint8Array | EnvelopeArtifact, beforeCommit?: () => Promise<void>): Promise<"accepted" | "duplicate"> {
+    if (this.#closed) throw new Error("Shuffle ledger is closed");
     if (this.#busy) throw new Error("Shuffle verification is busy");
+    const bytes = candidate instanceof Uint8Array ? candidate : candidate.canonicalBytes;
     if (!(bytes instanceof Uint8Array) || bytes.constructor !== Uint8Array || bytes.length > 16 * 1024) throw new Error("Invalid shuffle envelope size");
+    const artifact = candidate instanceof Uint8Array ? decodeAndVerifyEnvelope(bytes) : verifyEnvelopeArtifact(candidate, bytes);
     this.#busy = true;
-    try { return await this.acceptVerified(decodeAndVerifyEnvelope(bytes), beforeCommit); }
+    try { return await this.acceptVerified(artifact, beforeCommit); }
     finally { this.#busy = false; }
   }
 
@@ -93,7 +127,8 @@ export class CandidateShuffleLedger {
     if (this.#closed) throw new Error("Shuffle ledger is closed");
     const { canonicalBytes, envelope } = artifact;
     if (canonicalBytes.length > 16 * 1024) throw new Error("Invalid shuffle envelope size");
-    if (this.#accepted.some(previous => bytesEqual(previous, canonicalBytes))) {
+    const hash = bytesToHex(artifact.hash);
+    if (this.#accepted.includes(hash)) {
       await beforeCommit?.();
       if (this.#closed) throw new Error("Shuffle ledger closed during receipt");
       return "duplicate";
@@ -108,12 +143,16 @@ export class CandidateShuffleLedger {
     const { outputDeck, proof } = body as CborMap;
     if (!(outputDeck instanceof Uint8Array) || !(proof instanceof Uint8Array)) throw new Error("Invalid candidate shuffle body bytes");
     const { statement, deck } = this.#prepare({ outputDeck, proof });
-    if (await this.#options.verifier.verify(statement, proof) !== true) throw new Error("Invalid shuffle proof");
+    const prepared = this.#prepared;
+    if (!(prepared?.seat === this.#seat && bytesEqual(prepared.outputDeck, outputDeck) && bytesEqual(prepared.proof, proof)) &&
+        await this.#options.verifier.verify(statement, proof.slice()) !== true) throw new Error("Invalid shuffle proof");
     if (this.#closed) throw new Error("Shuffle ledger closed during verification");
     await beforeCommit?.();
     if (this.#closed) throw new Error("Shuffle ledger closed during receipt");
     this.#deck = deck;
-    this.#accepted.push(canonicalBytes);
+    this.#encodedDeck = null;
+    this.#accepted.push(hash);
+    this.#prepared = null;
     this.#seat++;
     return "accepted";
   }
