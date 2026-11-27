@@ -2,7 +2,7 @@ import { hexToBytes } from "@p2pcards/crypto";
 import { parseGameId, parseIdentityPublicKey } from "@p2pcards/protocol";
 import { describe, expect, it } from "vitest";
 import { createLobbyInvitation, identityFingerprint, parseLobbyInvitation } from "./lobby-invitation";
-import { connectionRulesHash, lobbyIceConfigHash, lobbyRtcConfiguration, parseRelayText } from "./lobby-config";
+import { connectionRulesHash, lobbyIceConfigHash, parseRelayText } from "./lobby-config";
 
 const GAME = parseGameId(new Uint8Array(16).fill(0x11));
 const HOST = parseIdentityPublicKey(hexToBytes("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"));
@@ -35,9 +35,6 @@ describe("browser lobby invitation profile", () => {
     expect(hash).toHaveLength(32);
     hash.fill(0xff);
     expect(connectionRulesHash()).not.toEqual(hash);
-    const configuration = lobbyRtcConfiguration();
-    configuration.iceServers = [];
-    expect(lobbyRtcConfiguration().iceServers).toHaveLength(1);
     expect(lobbyIceConfigHash()).toHaveLength(32);
   });
   it("normalizes reviewed relay URLs and rejects secret-bearing or remote insecure URLs", () => {

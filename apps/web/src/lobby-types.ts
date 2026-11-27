@@ -32,6 +32,7 @@ export interface BrowserLobbySnapshot {
     readonly canReady: boolean;
     readonly ownReady: boolean;
   } | null;
+  readonly iceCredentialWarning?: boolean;
   readonly peers: readonly LobbyPeerView[];
   readonly relays: readonly { readonly url: string; readonly state: string; readonly error: string | null }[];
   readonly busy: "identity" | "hosting" | "joining" | "ready" | "leaving" | null;

@@ -130,7 +130,8 @@ test("four isolated browser identities play a complete Sasku match and recover a
     expect(new Set(identities).size).toBe(4);
     await pages[2]!.reload();
     await expect(pages[2]!.getByRole("button", { name: "Join this table" })).toBeEnabled();
-    await configureRelay(pages[2]!, relayUrl);
+    await pages[2]!.getByText("Connection settings", { exact: true }).click();
+    await expect(pages[2]!.getByLabel("Custom Nostr relays")).toHaveValue(relayUrl);
     await pages[2]!.getByRole("button", { name: "Join this table" }).click();
     for (const page of pages) { await expect(page.getByRole("button", { name: /^(Not ready|Ready)$/ })).toBeVisible(); }
     expect(await ownFingerprint(pages[2]!)).toBe(identities[2]);
@@ -197,6 +198,17 @@ test("four isolated browser identities play a complete Sasku match and recover a
     await pages[2]!.getByRole("button", { name: "Ready", exact: true }).click();
     for (const page of pages) await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "bidding", { timeout: 120_000 });
     console.log(`WebRTC round startup to bidding: ${Math.round(performance.now() - roundStart)} ms`);
+    const mobile = pages[3]!;
+    await mobile.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect(mobile.getByText(/Bring this tab to the foreground/)).toBeVisible();
+    await mobile.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect(mobile.getByText(/This tab was in the background/)).toBeVisible();
     const seatedPages = await seatOrderedPages(pages);
     for (const page of pages) await expect(page.getByLabel("Your private hand").getByRole("button")).toHaveCount(9);
     for (const page of pages) await expect(page.getByLabel("Your private hand").locator("small")).toHaveCount(0);

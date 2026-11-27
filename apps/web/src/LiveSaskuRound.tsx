@@ -1,13 +1,19 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { SaskuActionIntent } from "@p2pcards/game-sasku";
 import { SASKU_SUITS, parseSaskuCard } from "@p2pcards/rules-sasku";
 import type { LiveRoundView } from "./live-round";
 import { SaskuCardFace, saskuCardName, SASKU_SUIT_MARKS } from "./sasku-card-display";
 import { compareSaskuHandCards } from "./sasku-hand-order";
 
+import { backgroundWarning, observeRoundVisibility } from "./connection-warnings";
+
 const SUIT_LABELS = { clubs: "Clubs", spades: "Spades", hearts: "Hearts", diamonds: "Diamonds" } as const;
 
-export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (intent: SaskuActionIntent) => Promise<void> }) {
+export function LiveSaskuRound({ view, act, warnOnBackground }: {
+  view: LiveRoundView;
+  act: (intent: SaskuActionIntent) => Promise<void>;
+  warnOnBackground: boolean;
+}) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const state = view.state?.hand;
@@ -23,6 +29,13 @@ export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (inten
   const preparing = ["setup", "shuffle", "dealing"].includes(view.phase);
   const done = view.phase === "match_complete";
   const roundDone = view.phase === "complete" || done;
+  const [tabVisibility, setTabVisibility] = useState<"visible" | "hidden" | "resumed">("visible");
+  const watchVisibility = warnOnBackground && !roundDone;
+  useEffect(() => {
+    setTabVisibility("visible");
+    if (watchVisibility) return observeRoundVisibility(document, setTabVisibility);
+  }, [watchVisibility, view.match.round]);
+  const visibilityWarning = watchVisibility ? backgroundWarning(view.phase, tabVisibility) : null;
   const auction = view.phase === "bidding" || view.phase === "choosing_trump";
   const team = view.seat % 2;
   const last = state?.completedTricks.at(-1);
@@ -66,6 +79,7 @@ export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (inten
         {preparing ? "Dealing" : done ? "Match over" : yourTurn ? "Your turn" : `Seat ${view.seat + 1}`}
       </span>
     </header>
+    {visibilityWarning && <p role="status" className="notice notice--network">{visibilityWarning}</p>}
     {(view.error || error) && <p role="alert" className="notice notice--error">{view.error ?? error}</p>}
     <div className="live-scoreboard" aria-label="Round scoreboard">
       <div>

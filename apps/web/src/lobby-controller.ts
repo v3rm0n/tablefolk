@@ -11,6 +11,7 @@ import { LobbyChainRegistry, PersistentEnvelopeAuthor, PersistentLobbyReceiver, 
 import { IndexedDbAuthoredEnvelopeStore, IndexedDbIdentityStore, IndexedDbSessionStore, type IndexedDbStoreOptions } from "@p2pcards/storage";
 import { TrysteroNostrSignalingAdapter, type MeshPeerConnectionFactory } from "@p2pcards/transport";
 
+import { browserIceDeployment, loadLobbyIce, type IceDeploymentConfig } from "./ice-config";
 import { connectionRulesHash, lobbyIceConfigHash, parseRelayText } from "./lobby-config";
 import { createLobbyInvitation, identityFingerprint, parseLobbyInvitation, type LobbyInvitation } from "./lobby-invitation";
 import { LobbyTransport, type LobbyTransportLike, type LobbyTransportOptions } from "./lobby-transport";
@@ -24,6 +25,8 @@ interface Room {
   readonly authored: IndexedDbAuthoredEnvelopeStore;
   readonly author: PersistentEnvelopeAuthor;
   readonly abort: AbortController;
+  readonly iceDeployment: IceDeploymentConfig | null;
+  iceCredentialWarning: boolean;
   lobby: LobbyChainRegistry;
   receiver: PersistentLobbyReceiver;
   signaling: TrysteroNostrSignalingAdapter | null;
@@ -46,6 +49,7 @@ interface Room {
   readonly sentRoundCompletions: Map<string, Map<number, { generation: number; marker: Uint8Array }>>;
   readonly early: { remote: IdentityPublicKey; payload: Uint8Array }[];
   readonly paths: Map<string, "direct" | "relayed" | "unknown">;
+  readonly retryingPeers: Set<string>;
 }
 
 export interface BrowserLobbyControllerOptions {
@@ -76,7 +80,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     this.#baseUrl = options.baseUrl ?? window.location.href;
     this.#snapshot = Object.freeze({
       phase: "loading", identity: null, pendingInvitation: options.initialInvitation ?? (new URL(this.#baseUrl).hash ? this.#baseUrl : ""),
-      room: null, peers: [], relays: [], busy: "identity", error: null, events: [],
+      room: null, peers: [], relays: [], iceCredentialWarning: false, busy: "identity", error: null, events: [],
     });
   }
 
@@ -128,18 +132,19 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     const epoch = ++this.#epoch;
     const self = this.#self();
     const host = bytesEqual(invitation.host, self.publicKey);
-    this.#set({ busy: host ? "hosting" : "joining", phase: "connecting", error: null, events: [] });
+    this.#set({ busy: host ? "hosting" : "joining", phase: "connecting", error: null, events: [], relays: [] });
     let room: Room | null = null;
     try {
       const relayUrls = parseRelayText(relayText);
+      const iceDeployment = this.#options.createTransport ? null : browserIceDeployment(this.#baseUrl);
       const stored = new IndexedDbSessionStore(this.#options.storage);
       const authored = new IndexedDbAuthoredEnvelopeStore(this.#options.storage);
       const context = { gameId: invitation.gameId, host: invitation.host, rulesHash: connectionRulesHash(), iceConfigHash: lobbyIceConfigHash() };
       const lobby = new LobbyChainRegistry(context);
       room = {
         invitation, host, stored, authored, author: new PersistentEnvelopeAuthor(invitation.gameId, self.secretKey, authored),
-        abort: new AbortController(), lobby, receiver: new PersistentLobbyReceiver(lobby, stored),
-        signaling: null, transport: null, queue: Promise.resolve(), pending: 0, blocked: false, recordCount: 0, releaseLease: null, flushes: new Map(), sentThrough: new Map(), ackWaiters: new Map(), paths: new Map(), game: null, playing: false, localReady: true, autoReadyRequested: false, peerReady: new Map(), barriers: new Map(), roundCompletions: new Map(), sentRoundCompletions: new Map(), early: [],
+        abort: new AbortController(), iceDeployment, iceCredentialWarning: false, lobby, receiver: new PersistentLobbyReceiver(lobby, stored),
+        signaling: null, transport: null, queue: Promise.resolve(), pending: 0, blocked: false, recordCount: 0, releaseLease: null, flushes: new Map(), sentThrough: new Map(), ackWaiters: new Map(), paths: new Map(), retryingPeers: new Set(), game: null, playing: false, localReady: true, autoReadyRequested: false, peerReady: new Map(), barriers: new Map(), roundCompletions: new Map(), sentRoundCompletions: new Map(), early: [],
       };
       this.#room = room;
       this.#refresh(room);
@@ -196,6 +201,9 @@ export class BrowserLobbyController implements BrowserLobbyActions {
         this.#event("Saved agreement restored. Synchronizing signed history with the other players.");
       }
       const current = room;
+      const ice = iceDeployment === null ? null : await loadLobbyIce(iceDeployment, current.abort.signal);
+      this.#require(current, epoch);
+      current.iceCredentialWarning = ice?.credentialWarning ?? false;
       const signaling = this.#options.createTransport ? null : new TrysteroNostrSignalingAdapter({
         ...(relayUrls === undefined ? {} : { relayUrls, relayRedundancy: relayUrls.length }),
         onRelayStateChange: () => { if (this.#room === current) { this.#refresh(current); } },
@@ -249,7 +257,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
         onChange: () => { if (this.#room === current) { this.#refresh(current); } },
       };
       room.transport = this.#options.createTransport ? this.#options.createTransport(transportOptions) : new LobbyTransport({
-        ...transportOptions, signaling: signaling!,
+        ...transportOptions, signaling: signaling!, rtcConfiguration: ice!.rtcConfiguration,
         ...(this.#options.createPeerConnection === undefined ? {} : { createPeerConnection: this.#options.createPeerConnection }),
       });
       await room.transport.start();
@@ -258,8 +266,9 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       this.#set({ busy: null }); this.#refresh(room);
     } catch (cause) {
       if (this.#epoch === epoch) {
+        const relays = relayViews(room?.signaling);
         await this.#closeRoom(room);
-        this.#set({ phase: "welcome", busy: null, room: null, peers: [], relays: [], error: message(cause) });
+        this.#set({ phase: "welcome", busy: null, room: null, peers: [], relays, iceCredentialWarning: false, error: message(cause) });
       }
       throw cause;
     }
@@ -517,9 +526,25 @@ export class BrowserLobbyController implements BrowserLobbyActions {
 
   async retryPeer(publicKey: string): Promise<void> {
     const room = this.#room;
-    if (room === null || room.transport === null || room.blocked) { return; }
-    try { await room.transport.retry(parseIdentityPublicKey(hexToBytes(publicKey))); }
-    catch (cause) { if (this.#room === room) { this.#set({ error: message(cause) }); } }
+    if (room === null || room.transport === null || room.blocked || room.retryingPeers.has(publicKey)) return;
+    room.retryingPeers.add(publicKey);
+    try {
+      const remote = parseIdentityPublicKey(hexToBytes(publicKey));
+      const ice = room.iceDeployment?.credentialEndpoint
+        ? await loadLobbyIce(room.iceDeployment, room.abort.signal)
+        : null;
+      this.#require(room);
+      if (ice !== null) {
+        room.iceCredentialWarning = ice.credentialWarning;
+        this.#refresh(room);
+      }
+      await room.transport.retry(remote, ice?.rtcConfiguration);
+      this.#refresh(room);
+    } catch (cause) {
+      if (this.#room === room) this.#set({ error: message(cause) });
+    } finally {
+      room.retryingPeers.delete(publicKey);
+    }
   }
 
   #enqueue(room: Room, operation: () => Promise<void>): Promise<void> {
@@ -621,7 +646,8 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     }));
     const peers = (room.transport?.peers ?? []).map((peer) => Object.freeze({
       publicKey: bytesToHex(peer.identity), fingerprint: identityFingerprint(peer.identity), generation: peer.generation,
-      state: room.transport?.authenticated(peer.identity) ? "authenticated" as const : peer.connectionState === "closed" ? "disconnected" as const : "connecting" as const,
+      state: room.transport?.authenticated(peer.identity) ? "authenticated" as const : peer.connectionState === "failed" ? "failed" as const :
+        ["closed", "disconnected"].includes(peer.connectionState) ? "disconnected" as const : "connecting" as const,
       path: room.paths.get(bytesToHex(peer.identity)) ?? "unknown" as const,
     }));
     const synchronized = roster.length === 4 && roster.every(key => bytesEqual(key, self) ||
@@ -677,9 +703,8 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       room: Object.freeze({ gameId: bytesToHex(room.invitation.gameId), host: bytesToHex(room.invitation.host), isHost: room.host,
         invitation: createLobbyInvitation(this.#baseUrl, room.invitation.gameId, room.invitation.host), seats: Object.freeze(seats),
         rosterHash: room.lobby.rosterHash === null ? null : bytesToHex(room.lobby.rosterHash), canReady, ownReady: room.localReady }),
-      peers: Object.freeze(peers), relays: Object.freeze((room.signaling?.relayDiagnostics ?? []).map((relay) => Object.freeze({
-        url: relay.url, state: relay.state, error: relay.lastError === null ? null : message(relay.lastError),
-      }))),
+      iceCredentialWarning: room.iceCredentialWarning,
+      peers: Object.freeze(peers), relays: relayViews(room.signaling),
     });
     if (canReady && !room.autoReadyRequested && this.#snapshot.busy === null) {
       room.autoReadyRequested = true;
@@ -693,6 +718,12 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     this.#snapshot = Object.freeze({ ...this.#snapshot, ...update });
     for (const listener of this.#listeners) { try { listener(); } catch { /* View observers cannot change protocol effects. */ } }
   }
+}
+
+function relayViews(signaling?: TrysteroNostrSignalingAdapter | null): BrowserLobbySnapshot["relays"] {
+  return Object.freeze((signaling?.relayDiagnostics ?? []).map(relay => Object.freeze({
+    url: relay.url, state: relay.state, error: relay.lastError === null ? null : message(relay.lastError),
+  })));
 }
 
 function message(cause: unknown): string { return (cause instanceof Error ? cause.message : "Lobby operation failed").slice(0, 300); }

@@ -294,6 +294,7 @@ describe("Trystero Nostr signaling adapter", () => {
     const failed = adapter(unavailable, [RELAYS[0]]);
     await expect(failed.join(ROOM, ALICE)).rejects.toThrow(/connect to any Nostr relay/);
     expect(failed.joined).toBe(false);
+    expect(failed.relayDiagnostics[0]).toMatchObject({ state: "failed", lastError: expect.any(Error) });
 
     const network = new FakeNostrRelayNetwork();
     const alice = adapter(network, [RELAYS[0]]);
@@ -327,22 +328,40 @@ describe("Trystero Nostr signaling adapter", () => {
     await expect(joining).rejects.toThrow(/cancelled/);
   });
 
-  it("waits for every selected relay subscription to reach EOSE", async () => {
+  it("joins on the first EOSE and diagnoses and retries a stalled subscription", async () => {
     const network = new FakeNostrRelayNetwork();
-    network.holdEose = true;
-    const alice = adapter(network, RELAYS, { connectTimeoutMs: 1_000 });
-    const joining = alice.join(ROOM, ALICE);
-    await waitUntil(
-      () => alice.relayDiagnostics.length === 2 &&
-        alice.relayDiagnostics.every(({ state }) => state === "subscribing"),
-    );
-    expect(alice.joined).toBe(false);
+    network.withheldEoseRelays.add(RELAYS[1]);
+    const alice = adapter(network, RELAYS, {
+      connectTimeoutMs: 100, reconnectBaseDelayMs: 20, reconnectMaxDelayMs: 20,
+    });
+    try {
+      await alice.join(ROOM, ALICE);
+      expect(alice.relayDiagnostics.find(({ url }) => url === RELAYS[1])?.state).toBe("subscribing");
+      await alice.send(BOB, new Uint8Array([1]));
+      await waitUntil(() => alice.relayDiagnostics.some(({ state }) => state === "failed"));
+      expect(alice.relayDiagnostics.find(({ url }) => url === RELAYS[1])?.lastError?.message).toMatch(/Timed out subscribing/);
+      network.withheldEoseRelays.clear();
+      await waitUntil(() => alice.relayDiagnostics.every(({ state }) => state === "connected"));
+      expect(alice.relayDiagnostics.every(({ lastError }) => lastError === null)).toBe(true);
+      expect(network.publishedEvents).toHaveLength(2);
+    } finally {
+      await alice.leave();
+    }
+  });
 
-    network.flushEose();
-    await joining;
-    expect(alice.joined).toBe(true);
-    expect(alice.relayDiagnostics.every(({ state }) => state === "connected")).toBe(true);
-    await alice.leave();
+  it("recovers a send during a total relay outage without losing its original ACK", async () => {
+    const network = new FakeNostrRelayNetwork();
+    const alice = adapter(network, [RELAYS[0]], { reconnectBaseDelayMs: 20, reconnectMaxDelayMs: 20 });
+    try {
+      await alice.join(ROOM, ALICE);
+      network.closeRelay(RELAYS[0]);
+      expect(alice.relayDiagnostics[0]).toMatchObject({ state: "disconnected", lastError: expect.any(Error) });
+      await alice.send(BOB, Uint8Array.of(7));
+      expect(alice.relayDiagnostics[0]).toMatchObject({ state: "connected", lastError: null });
+      expect(network.publishedEvents).toHaveLength(1);
+    } finally {
+      await alice.leave();
+    }
   });
 
   it("selects a deterministic room-specific relay subset", async () => {
@@ -483,7 +502,7 @@ describe("Trystero Nostr signaling adapter", () => {
     const alice = adapter(network, [RELAYS[0]]);
     await expect(alice.join(ROOM, ALICE)).rejects.toThrow(/connect to any Nostr relay/);
     expect(alice.joined).toBe(false);
-    expect(alice.failures.some(({ error }) => /closed subscription/.test(error.message))).toBe(true);
+    expect(alice.relayDiagnostics[0]?.lastError?.message).toBe("Nostr relay closed subscription (blocked)");
   });
 
   it("ignores delayed close events from sockets replaced after a subscription timeout", async () => {
