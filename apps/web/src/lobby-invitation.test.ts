@@ -40,7 +40,7 @@ describe("browser lobby invitation profile", () => {
   it("normalizes reviewed relay URLs and rejects secret-bearing or remote insecure URLs", () => {
     expect(parseRelayText(" ")).toBeUndefined();
     expect(parseRelayText("wss://relay.example\nwss://relay.example/\nws://127.0.0.1:1234")).toEqual(["wss://relay.example/", "ws://127.0.0.1:1234/"]);
-    for (const bad of ["ws://remote.example", "https://relay.example", "wss://user:secret@relay.example", "wss://relay.example/?token=secret", "wss://relay.example/#token", Array(6).fill("wss://relay.example").join("\n")]) {
+    for (const bad of ["ws://remote.example", "ws://[::1]:1234", "https://relay.example", "wss://user:secret@relay.example", "wss://relay.example/?token=secret", "wss://relay.example/#token", Array(6).fill("wss://relay.example").join("\n")]) {
       expect(() => parseRelayText(bad)).toThrow();
     }
   });

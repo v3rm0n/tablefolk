@@ -19,6 +19,7 @@ import { createLobbyInvitation, identityFingerprint, parseLobbyInvitation, type 
 import { LobbyTransport, type LobbyTransportLike, type LobbyTransportOptions } from "./lobby-transport";
 import { parseRoundCompletionMarker, roundCompletionMarker, sameRoundCompletion } from "./round-completion-marker";
 import type { BrowserLobbyActions, BrowserLobbySnapshot } from "./lobby-types";
+import { exportTranscript } from "./transcript";
 
 interface Room {
   readonly invitation: LobbyInvitation;
@@ -560,6 +561,12 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       if (this.#room === room) this.#set({ error: `Ready status delivery failed: ${message(cause)}` });
       throw cause;
     }
+  }
+
+  exportTranscript(): Uint8Array {
+    const lobby = this.#room?.lobby;
+    if (!lobby?.finalizedRegistry || !lobby.rosterArtifact) throw new Error("The table needs four ready players before export");
+    return exportTranscript(lobby.finalizedRegistry, lobby.rosterArtifact);
   }
 
   async playAction(intent: SaskuActionIntent): Promise<void> {

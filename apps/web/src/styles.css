@@ -1357,11 +1357,16 @@ code {
   min-height: 0;
 }
 .playing-card-face {
+  color: #17202b;
   display: block;
   width: 100%;
   height: auto;
   aspect-ratio: 5 / 7;
   flex: 0 0 auto;
+}
+.playing-card-face--hearts,
+.playing-card-face--diamonds {
+  color: #b51f32;
 }
 .live-hand-card {
   position: relative;
@@ -1582,4 +1587,18 @@ code {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
   .loading-spinner { animation: none; }
+}
+
+.transcript-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-block: 1rem;
+}
+
+.transcript-controls p {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+  margin: 0;
 }

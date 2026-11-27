@@ -9,17 +9,14 @@ import { assessEquivocationViolation, captureSessionHistory, createEquivocationV
 import { IndexedDbGameSecretStore, type IndexedDbStoreOptions, type IndexedDbSessionStore } from "@p2pcards/storage";
 import { legalSaskuCards, saskuBidStrength, type SaskuCardId } from "@p2pcards/rules-sasku";
 import { CandidateShuffleClient } from "./candidate-shuffle-client";
-import { FIRST_DEAL, FIRST_ROUND } from "./live-profile";
+import { FIRST_ROUND, liveRoundPolicy, MATCH_HISTORY_LIMITS } from "./live-profile";
 import { dealerForSaskuRound, INITIAL_SASKU_MATCH, MAX_SASKU_MATCH_ROUNDS, recordSaskuRound, type SaskuMatchState } from "./sasku-match";
-
-const MATCH_HISTORY_LIMITS = Object.freeze({ maxEnvelopes: 4096, maxBytes: 64 * 1024 * 1024 });
 
 interface MatchCheckpoint {
   readonly version: 1;
   readonly match: SaskuMatchState;
   readonly owner: CandidateRoundCheckpoint;
 }
-
 export interface LiveRoundView {
   readonly phase: "setup" | "shuffle" | "dealing" | "bidding" | "choosing_trump" | "playing" | "audit" | "complete" | "match_complete";
   readonly match: SaskuMatchState;
@@ -314,10 +311,8 @@ export class LiveRound {
 
   #openRound(round = this.#match.round, checkpoint?: CandidateRoundCheckpoint): Promise<CandidateSaskuRoundOwner> {
     return CandidateSaskuRoundOwner.open({ session: this.#options.session, sessionReceiver: this.#durable,
-      roster: this.#options.roster, self: this.#options.self, setupRound: 0, round,
-      dealer: dealerForSaskuRound(round), schedule: FIRST_DEAL, verifier: this.#client,
-      beaconRequired: false, batchDeal: true, dealBackend: this.#client, serializedByCaller: true,
-      historyLimits: MATCH_HISTORY_LIMITS, roundHistoryLimits: { ...MATCH_HISTORY_LIMITS, allowOtherRounds: true } }, checkpoint);
+      roster: this.#options.roster, self: this.#options.self, verifier: this.#client,
+      dealBackend: this.#client, serializedByCaller: true, ...liveRoundPolicy(round) }, checkpoint);
   }
   #validateMatchHistory(requireCurrent = true): number {
     const history = captureSessionHistory(this.#options.session, MATCH_HISTORY_LIMITS);

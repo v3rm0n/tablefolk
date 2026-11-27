@@ -3,6 +3,11 @@ import { expect, test } from "@playwright/test";
 test("one tab runs four local Sasku players with switchable private views", async ({ page, baseURL }, testInfo) => {
   test.setTimeout(180_000);
   const errors: string[] = [];
+  await page.addInitScript(() => {
+    document.addEventListener("securitypolicyviolation", event => {
+      throw new Error(`CSP violation: ${event.violatedDirective} blocked ${event.blockedURI}`);
+    });
+  });
   const sockets: string[] = [];
   await page.addInitScript(() => {
     Object.defineProperty(window, "RTCPeerConnection", { value: class { constructor() { throw new Error("The local demo must not open WebRTC"); } } });
@@ -69,7 +74,7 @@ test("one tab runs four local Sasku players with switchable private views", asyn
   expect(errors).toEqual([]);
 });
 
-test("the local four-player table finishes a match to twelve points", async ({ page, baseURL }) => {
+test("the local four-player table finishes a match and verifies its exported score", async ({ page, baseURL }, testInfo) => {
   test.setTimeout(600_000);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -88,14 +93,33 @@ test("the local four-player table finishes a match to twelve points", async ({ p
   }
   await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "match_complete");
   await expect(page.getByRole("heading", { name: /won the game/ })).toBeVisible();
+  await page.getByRole("tab", { name: /Player 1/ }).click();
+  const [first, second] = await page.locator(".live-match-score__team strong").allTextContents();
+  const downloadReady = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export transcript (.cbor)" }).click();
+  const download = await downloadReady;
+  expect(download.suggestedFilename()).toBe("sasku-transcript.cbor");
+  const path = testInfo.outputPath(download.suggestedFilename());
+  await download.saveAs(path);
+
+  await page.route("**/*", route => new URL(route.request().url()).origin === new URL(baseURL!).origin
+    ? route.continue() : route.abort());
+  await page.goto(baseURL!);
+  const chooserReady = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Verify transcript" }).click();
+  await (await chooserReady).setFiles(path);
+  await expect(page.getByRole("region", { name: "Match transcript" }).getByRole("status"))
+    .toHaveText(`Match verified. Team 1 + 3 scored ${first}. Team 2 + 4 scored ${second}.`, { timeout: 180_000 });
   expect(errors).toEqual([]);
 });
 
 async function playDemoCard(page: import("@playwright/test").Page, expectedActions: number): Promise<void> {
+  const round = page.getByLabel("Live Sasku round");
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    await page.getByLabel("Your private hand").locator("button.is-playable:enabled").first().click();
+    await expect(round).toHaveAttribute("data-actions", String(expectedActions - 1));
+    await round.getByLabel("Your private hand").locator("button.is-playable:enabled").first().click();
     try {
-      await expect(page.getByLabel("Live Sasku round")).toHaveAttribute("data-actions", String(expectedActions), { timeout: 5000 });
+      await expect(round).toHaveAttribute("data-actions", String(expectedActions), { timeout: 15_000 });
       return;
     } catch {
       if (await page.locator("[role='alert']").count()) throw new Error((await page.locator("[role='alert']").allInnerTexts()).join("; "));

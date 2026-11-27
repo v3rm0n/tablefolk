@@ -5,6 +5,7 @@ import cards from "../../../packages/rules-sasku/src/cards.ts?raw";
 import hand from "../../../packages/rules-sasku/src/hand.ts?raw";
 import scoring from "../../../packages/rules-sasku/src/scoring.ts?raw";
 import match from "./sasku-match.ts?raw";
+import { dealerForSaskuRound } from "./sasku-match";
 
 // The roster signatures bind this match policy and rules implementation.
 // Keep the existing profile digest so saved rosters survive the transport update.
@@ -18,4 +19,14 @@ export function liveRulesHash() {
     shuffle: "candidate-ristretto-4x9-parity-ac4fb67-sha512-cbor-v2",
     dealShares: "four-donor-all-other-positions-proof-batches-v1",
     readiness: "authenticated-own-prefix-watermark-ack-v1; per-round-audit-result-marker-v1", matchTarget: 12, maxRounds: 32 })));
+}
+
+export const MATCH_HISTORY_LIMITS = Object.freeze({ maxEnvelopes: 4096, maxBytes: 64 * 1024 * 1024 });
+
+export function liveRoundPolicy(round: number) {
+  return {
+    setupRound: 0, round, dealer: dealerForSaskuRound(round), schedule: FIRST_DEAL,
+    beaconRequired: false, batchDeal: true, historyLimits: MATCH_HISTORY_LIMITS,
+    roundHistoryLimits: { ...MATCH_HISTORY_LIMITS, allowOtherRounds: true },
+  };
 }

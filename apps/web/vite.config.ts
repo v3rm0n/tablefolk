@@ -4,7 +4,15 @@ import { fileURLToPath } from "node:url";
 
 export default defineConfig({
   base: "./",
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "development-html-with-hmr",
+      apply: "serve",
+      // Vite mounts inline styles and the React refresh preamble in development.
+      transformIndexHtml: html => html.replace(/^ *<meta http-equiv="Content-Security-Policy"[^>]*>\n/m, ""),
+    },
+  ],
   build: {
     rolldownOptions: {
       input: {

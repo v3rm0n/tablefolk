@@ -58,6 +58,7 @@ export interface BrowserLobbyActions {
   markReady(): Promise<void>;
   setReady(ready: boolean): Promise<void>;
   voteToEndTable?(): Promise<void>;
+  exportTranscript?(): Uint8Array;
   playAction?(intent: SaskuActionIntent): Promise<void>;
   retryPeer(publicKey: string): Promise<void>;
   leave(): Promise<void>;

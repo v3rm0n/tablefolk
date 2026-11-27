@@ -357,6 +357,24 @@ IndexedDB database **`p2pcards`** (schema version 1):
    store a phase snapshot on `main`; `#3` adds a derived local reload checkpoint
    keyed by the four `(seat, seq, hash)` transcript heads so page reloads
    restore immediately while retaining the full signed transcript in
-   `transcripts` for peer sync and on-demand full re-verification. Exported
-   offline transcripts (`#8`) omit transport-layer `HELLO` messages and contain
-   `{version, rules_hash, roster, envelopes}` in canonical order.
+   `transcripts` for peer sync and on-demand full re-verification.
+
+### Offline transcript format
+
+Version 1 is a canonical CBOR map with four fields.
+
+| Field | Value |
+| --- | --- |
+| `version` | Unsigned integer `1` |
+| `rules_hash` | 32-byte rules hash, which must match the signed roster and a supported verifier profile |
+| `roster` | Byte string containing the final host-signed `ROSTER` envelope |
+| `envelopes` | Array of byte strings containing the other original signed envelopes, ordered by ascending sender public-key bytes and then ascending sequence number |
+
+The verifier inserts the roster envelope in its chain position. Earlier roster
+envelopes remain in the array, which preserves the original signatures and
+predecessors. Export contains the finalized seats’ signed chains. Transport
+frames such as `HELLO`, history acknowledgments, and round completion markers
+are outside these chains and omitted. Files can be verified locally in the app
+without connecting to the table or its relays. Verification uses the signed
+roster as the source of player identities. A valid prefix can reproduce scores
+for audited rounds, while a full match requires an audited winning round.
