@@ -89,3 +89,101 @@ retaining every signed share and proof. Reuse verifier workers while keeping
 proving workers disposable and cancellable. Measure readiness acknowledgements
 before changing their scope. The wire change and compatibility boundary are
 recorded in [sasku.md](sasku.md#3-match-profile-sasku-match-candidate3) and [protocol.md](protocol.md).
+
+## 2026-11-27: Pragmatic Card-Game Scope & Re-ordered Roadmap
+
+Status: **Accepted.**
+
+Tablefolk is a non-business-critical peer-to-peer card game among friends, not a
+financial or high-stakes custody system. This decision simplifies engineering
+scope and re-orders the remaining roadmap around speed, real-world connectivity,
+and maintainability while preserving every player-facing cryptographic guarantee
+in [spec.md](spec.md#11-goals) (**G1–G7**): no trusted party, hidden-information
+secrecy, fair verifiable shuffles, deterministic rule enforcement and audit,
+offline verifiability, NAT traversal, and static hosting.
+
+### D5 — Re-order Milestones Around Speed, Connectivity, and Practical Verifiability
+
+Execute remaining work in four pragmatic phases:
+
+1. **Speed & WASM crypto consolidation (#2, #3, #5, #6):** move shuffle
+   remasking and batched Chaum–Pedersen DLEQ into Rust/WASM, cache static
+   derivations, reuse a single persistent crypto worker, eliminate redundant
+   in-process re-verification, add trusted local reload checkpoints, collapse
+   nested round queues, parameterize `(m, n)` Bayer–Groth layouts, trim the
+   `SHUFFLE` wire body, and graduate `experiments/shuffle-backend` into a
+   top-level crate.
+2. **TURN & ephemeral reconnect (#4, #7):** move `HEADS`/`SYNC_*` out of the
+   hash chain, remove per-message `PeerHistoryBarrier` stalls, replace hard
+   automatic 60 s forfeit timers with human-triggered table abort voting, add
+   deployment-configured TURN support, harden live Nostr relay failover, and
+   surface disconnect/relay/background-tab warnings.
+3. **In-browser transcript export & CSP (#8):** freeze a minimal CBOR transcript
+   container (omitting `HELLO`), provide in-browser export and verification
+   (without maintaining a separate Node CLI), enable strict static CSP, and add
+   network/CBOR boundary fuzzing.
+4. **Additional games only when wanted:** generalize draws, exchanges,
+   reshuffles, and rules packaging only when a concrete second game supplies
+   real requirements.
+
+### D6 — Replace External Audit & Second Reference Gate With Soundness Vectors, Self-Audit, and Disclaimer
+
+Supersedes the independent-review release gate in D2. Rather than blocking
+releases on an independent external cryptographic audit and a second full
+reference implementation, verify the frozen Bayer–Groth profile with:
+
+- cross-runtime test vectors (native Rust, browser WASM, and independent
+  Python/TypeScript challenge-derivation checks),
+- mutation and soundness tests covering tampered statements, proofs, and edge
+  cases,
+- a focused self-audit of the vendored `cards-proofs` adaptation, secret
+  zeroization, and RNG usage, and
+- a transparent disclaimer in the app and documentation stating that the
+  cryptography has not undergone an independent external audit.
+
+### D7 — Keep Raw Ed25519 Identity Seeds in IndexedDB With Strict CSP
+
+Drop the requirement for WebCrypto non-extractable Ed25519 identity keys. Keep
+the existing raw 32-byte Ed25519 seed in IndexedDB protected by a strict static
+Content-Security-Policy (#8). Per-game ElGamal secrets (`x_i`) are already
+stored raw in IndexedDB, the local browser JS heap is inside the threat-model
+trust boundary, and async WebCrypto calls inside IndexedDB transactions
+introduce transaction auto-commit pitfalls without meaningful security gain.
+
+### D8 — Standardize on Nostr Signaling With Configurable Relays
+
+Drop the unused `trystero-torrent`, `trystero-mqtt`, and `manual` signaling
+adapter requirements from [spec.md](spec.md). Standardize on Nostr signaling
+with configurable relay lists and resilient failover (#7).
+
+### D9 — Limit Wire `VIOLATION` Certificates to Equivocation
+
+Drop bespoke wire `VIOLATION` certificate formats for non-equivocation faults
+(invalid proof, unscheduled share, illegal action, audit violation). Every
+honest peer already observes the offending signed envelope and validates it
+deterministically; only `equivocation` requires paired `[env1, env2]` wire
+evidence because two peers may initially observe different envelopes at the same
+`(from, seq)`.
+
+### D10 — Planned Protocol & Runtime Simplifications
+
+Accept the following architectural shifts (tracked in #2–#8; active `main` still
+runs `sasku-match-candidate@3` until each issue lands):
+
+- **Ephemeral `HEADS` / `SYNC_REQ` / `SYNC_RESP` (#4):** move liveness and
+  catch-up out of the signed per-sender hash chain onto ephemeral messages over
+  the DTLS+`HELLO`-authenticated mesh, avoiding the self-repair chain gap
+  paradox, idle transcript bloat, and per-message `PeerHistoryBarrier` RTT
+  stalls.
+- **Trusted local IndexedDB reload checkpoints (#3):** store a derived local
+  checkpoint keyed by the four `(seat, seq, hash)` transcript heads so reloads
+  restore immediately while retaining the full signed transcript for peer sync
+  and on-demand full verification.
+- **Single reused crypto Web Worker (#2):** reuse one persistent worker for
+  proving, verification, and batched DLEQ (zeroizing private witness buffers in
+  `finally` and terminating/respawning only on error or timeout) instead of
+  spawning a fresh worker per shuffle.
+- **Omit `HELLO` from offline transcripts (#8):** `HELLO` binds ephemeral WebRTC
+  DTLS fingerprints that an offline third party cannot verify against a live TLS
+  handshake, so exported CBOR transcripts contain `{version, rules_hash, roster,
+  envelopes}` in canonical order without `HELLO`.

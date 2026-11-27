@@ -163,8 +163,10 @@ ten fields (no extensions):
 - **`RAND_REVEAL`** (`phase: "setup.rand"`): `{s}` (32-byte preimage). Accepted
   only after all seats commit; `seed = SHA-256(s_0 || ... || s_{N-1})`.
   *(Note: `sasku-match-candidate@3` uses key-only setup and omits `setup.rand`.)*
-- **`SHUFFLE`** (`phase: "round.<r>.shuffle.<i>"`): candidate integration body is
-  `{statement, proof}` (two byte strings); see [shuffle.md](shuffle.md).
+- **`SHUFFLE`** (`phase: "round.<r>.shuffle.<i>"`): on `main`, the candidate
+  integration body is `{statement, proof}` (two byte strings); see
+  [shuffle.md](shuffle.md). *(Planned in `#6`: shrink to `{outputDeck, proof}`
+  and reconstruct the parameterized `(m, n)` statement locally.)*
 - **`SHARES`** (`phase: "round.<r>.deal.<k>"`): `{to, items}` where `to` is
   `0..7` and `items` contains 1–128 unique-position `{pos, S, R1, R2, z}` items
   (`pos` in `0..127`). Each item's Chaum–Pedersen DLEQ statement is
@@ -182,25 +184,42 @@ ten fields (no extensions):
 
 ### Housekeeping & control
 
-- **`WITNESS`:** `{heads}` or `{heads, state_hash}` where `heads` has 0–8
-  unique `{from, seq, hash}` entries in ascending finalized-seat order. Emitted
-  after game/lobby envelopes and periodically (`>= 5 s` idle), but **not**
-  immediately after housekeeping envelopes (`WITNESS`, `SYNC_REQ`, `SYNC_RESP`,
+> **Current `main` vs. target `#4`:** On `main`, `WITNESS`, `SYNC_REQ`, and
+> `SYNC_RESP` are implemented as signed per-sender chained envelopes. Under the
+> accepted pragmatic scope ([decisions.md](decisions.md#d10--planned-protocol--runtime-simplifications),
+> `#4`), liveness and catch-up (`HEADS`, `SYNC_REQ`, `SYNC_RESP`) move to
+> ephemeral unchained messages over the DTLS+`HELLO`-authenticated data channel,
+> keeping the signed per-sender hash chain strictly for lobby/game envelopes and
+> equivocation `VIOLATION` evidence.
+
+- **`WITNESS` (current `main`; replaced by ephemeral `HEADS` in `#4`):**
+  `{heads}` or `{heads, state_hash}` where `heads` has 0–8 unique
+  `{from, seq, hash}` entries in ascending finalized-seat order. Emitted after
+  game/lobby envelopes and periodically (`>= 5 s` idle), but **not** immediately
+  after housekeeping envelopes (`WITNESS`, `SYNC_REQ`, `SYNC_RESP`,
   `TIMEOUT_VOTE`, `VIOLATION`) to prevent witness loops.
-- **`SYNC_REQ`:** `{from, from_seq, to_seq}` (inclusive `from_seq <= to_seq`).
-- **`SYNC_RESP`:** `{envelopes}` (non-empty array of complete nested signed
-  envelope maps, not byte strings). Preflight verifies every nested signature,
-  game, sender, contiguous sequence, and internal `prev` link before mutation.
-  Outer response persistence precedes nested original dispatch; an outer
-  envelope cannot repair its own chain gap using its nested body.
-  - Default bounds: `<= 128` envelopes / `4 MiB` for standalone sync
+- **`SYNC_REQ` (chained on `main`; ephemeral in `#4`):**
+  `{from, from_seq, to_seq}` (inclusive `from_seq <= to_seq`).
+- **`SYNC_RESP` (chained on `main`; ephemeral in `#4`):** `{envelopes}`
+  (non-empty array of complete nested signed envelope maps, not byte strings).
+  On `main`, preflight verifies every nested signature, game, sender, contiguous
+  sequence, and internal `prev` link before mutation; outer response persistence
+  precedes nested original dispatch; an outer envelope cannot repair its own
+  chain gap using its nested body. Moving `SYNC_*` off the hash chain in `#4`
+  eliminates that self-repair paradox.
+  - Default bounds on `main`: `<= 128` envelopes / `4 MiB` for standalone sync
     (`<= 32` originals / `64 KiB` in `CandidateSaskuRoundOwner`).
-- **`VIOLATION`:** currently only `reason: "equivocation"` is byte-profiled:
-  `{seat, reason: "equivocation", evidence: [env1, env2]}`. Both evidence items
-  are complete nested signed envelopes for the same `(game, from, seq)` with
-  different hashes, sorted in ascending lexicographic hash order; `seat` must
-  match `from`'s finalized roster seat. Other violation reasons and
-  `TIMEOUT_VOTE` remain unprofiled.
+- **`VIOLATION`:** `reason: "equivocation"` is the **only** wire `VIOLATION`
+  certificate format: `{seat, reason: "equivocation", evidence: [env1, env2]}`.
+  Both evidence items are complete nested signed envelopes for the same
+  `(game, from, seq)` with different hashes, sorted in ascending lexicographic
+  hash order; `seat` must match `from`'s finalized roster seat. Non-equivocation
+  faults (invalid proof, unscheduled share, illegal action, audit violation) do
+  not use bespoke wire `VIOLATION` certificates because every honest peer
+  already observes and validates the offending signed envelope directly (see
+  [decisions.md](decisions.md#d9--limit-wire-violation-certificates-to-equivocation)).
+  Automatic `TIMEOUT_VOTE` deadlines are superseded by human-triggered table
+  abort voting (`#4`).
 
 ---
 
@@ -292,7 +311,7 @@ IndexedDB database **`p2pcards`** (schema version 1):
 
 | Object store | Key / index | Contents & invariants |
 | --- | --- | --- |
-| `identity` | `"self"` | `{version: 1, secretKey[32], publicKey[32]}`. Raw Ed25519 seed fallback (not non-extractable WebCrypto). Atomic get-or-create; corrupt records fail closed and are never silently regenerated. |
+| `identity` | `"self"` | `{version: 1, secretKey[32], publicKey[32]}`. Raw 32-byte Ed25519 seed protected by strict CSP (non-extractable WebCrypto key storage is not required; see [decisions.md](decisions.md#d7--keep-raw-ed25519-identity-seeds-in-indexeddb-with-strict-csp)). Atomic get-or-create; corrupt records fail closed and are never silently regenerated. |
 | `games` | `game_id` | Per-game ElGamal secret scalar (`32` canonical LE bytes, persisted before `KEY_SHARE`), monotonic `lobbyRoster` snapshot, and optional `setupBeaconSecret` (`{version: 1, round, sender, roster, secret}`). No plaintext hands are stored. |
 | `transcripts` | auto-inc arrival key; unique `(game, sender, seq)` | Canonical signed envelope bytes + `authored` flag. Exact duplicates are idempotent; equal-sequence conflicts preserve the first record and surface both for equivocation. Arrival order is diagnostic only. |
 | `authored_heads` | `(game, sender)` | Atomic sequence-allocation checkpoint updated in the same transaction as appending to `transcripts`. Verified against the sender's last indexed row and count before signing. |
@@ -309,10 +328,14 @@ IndexedDB database **`p2pcards`** (schema version 1):
 3. **Validate before commit, commit before memory mutation:** incoming messages
    pass signature, chain, proof, and public-rule checks before persistence;
    in-memory state advances only after durable receipt succeeds.
-4. **Re-verify on reload:** recovery re-checks signatures, sender chains, setup,
-   and shuffle proofs from original stored bytes rather than trusting cached
-   flags or arrival order. Web Locks prevent concurrent tabs with the same
-   identity from writing the same table.
-5. **No authoritative phase snapshot yet:** `games` does not store a trusted
-   phase snapshot; the signed transcript remains the sole recovery source of
-   truth.
+4. **Reload recovery (current `main` vs. target `#3`):** On `main`, recovery
+   re-checks signatures, sender chains, setup, and shuffle proofs from original
+   stored bytes rather than trusting cached flags or arrival order. Web Locks
+   prevent concurrent tabs with the same identity from writing the same table.
+5. **Trusted local reload checkpoints (planned in `#3`):** `games` does not yet
+   store a phase snapshot on `main`; `#3` adds a derived local reload checkpoint
+   keyed by the four `(seat, seq, hash)` transcript heads so page reloads
+   restore immediately while retaining the full signed transcript in
+   `transcripts` for peer sync and on-demand full re-verification. Exported
+   offline transcripts (`#8`) omit transport-layer `HELLO` messages and contain
+   `{version, rules_hash, roster, envelopes}` in canonical order.

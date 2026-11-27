@@ -9,8 +9,9 @@ the browser under the active **`sasku-match-candidate@3`** profile.
 
 > **Experimental status:** The browser runs complete four-player Sasku matches
 > over WebRTC with verified candidate Bayer–Groth proofs, private dealing, and
-> audited scoring, but the shuffle proof backend has not yet received
-> independent cryptographic review.
+> audited scoring. The cryptography has not undergone an independent external
+> audit; see [decisions.md](decisions.md#2026-11-27-pragmatic-card-game-scope--re-ordered-roadmap)
+> for the soundness-vector and self-audit release criteria.
 
 ---
 
@@ -104,7 +105,7 @@ commits every player to the exact rules implementation and match parameters:
 
 ### Phase ownership & serialization
 
-`LiveRound` coordinates setup and hands off each round to
+On `main`, `LiveRound` coordinates setup and hands off each round to
 `CandidateSaskuRoundOwner` (`@p2pcards/game-sasku`), which keeps the mutable
 shuffle and round receivers private behind one serialized, bounded queue
 (defaults: **32 operations**, **1 MiB** total, **64 KiB** per envelope):
@@ -126,12 +127,17 @@ shuffle and round receivers private behind one serialized, bounded queue
    shares (`readPrivateHand`); they never enter public snapshots, logs, or
    storage.
 
+*(Planned simplification in `#3` & `#5`: consolidate the nested `LiveRound` /
+`CandidateSaskuRoundOwner` / persistent receiver queues into a single-owner
+round coordinator, verify envelopes once at untrusted boundaries, and cache the
+decrypted 9-card private hand per round.)*
+
 ### Worker lifecycle
 
-`CandidateShuffleClient` runs WASM proofs off the main thread using artifacts
-staged into `apps/web/public/shuffle-candidate/`:
+On `main`, `CandidateShuffleClient` runs WASM proofs off the main thread using
+artifacts staged into `apps/web/public/shuffle-candidate/`:
 
-- **Proving** always runs in a **disposable worker**; permutation and remasking
+- **Proving** runs in a **disposable worker**; permutation and remasking
   scalars never leave the worker, and temporary buffers are cleared before
   termination.
 - **Verification** reuses a warmed worker between successful calls to avoid
@@ -140,35 +146,53 @@ staged into `apps/web/public/shuffle-candidate/`:
   terminates the active worker immediately; stale results cannot settle later
   calls. Missing WASM artifacts fail closed at build/startup.
 
+*(Planned in `#2`: move shuffle remasking and batched Chaum–Pedersen DLEQ into
+Rust/WASM and reuse a single persistent crypto worker across prove, verify, and
+DLEQ calls, zeroizing private witness buffers in `finally` and respawning only
+on timeout or error.)*
+
 ### Readiness barrier & sync boundaries
 
-- **Browser readiness exchange:** on every new authenticated connection, each
-  peer replays its full original authored history (and only the verified,
-  acknowledged suffix while that connection stays alive), then exchanges
-  ephemeral generation-bound **prefix/ack** markers outside the signed
-  transcript. All three peers must satisfy this barrier before local drivers
-  author new contributions. Disconnecting pauses new local actions; reconnecting
-  replays original signed bytes instead of re-signing.
-- **Reload recovery:** restoring a table validates the finalized roster,
-  re-verifies complete sender chains, setup, and every stored shuffle proof
-  without writing to storage, and checks that the local IndexedDB game key
-  matches its signed `KEY_SHARE`.
-- **Owner-coordinated `SYNC_REQ`/`SYNC_RESP`:** `CandidateSaskuRoundOwner`
-  supports bounded control-scope sync receipt and serving (`phase: "control.sync"`,
-  `<= 32` originals, `<= 64 KiB` per envelope) on the same queue, stopping on
-  missing prerequisites rather than self-deadlocking. Automatic range-based
-  catch-up orchestration is not yet wired into the browser UI.
+- **Browser readiness exchange (current `main` vs. target `#4`):** on `main`,
+  each new authenticated connection replays its full original authored history
+  (and only the verified, acknowledged suffix while that connection stays
+  alive), then exchanges ephemeral generation-bound **prefix/ack** markers
+  (`PeerHistoryBarrier`) outside the signed transcript. All three peers must
+  satisfy this barrier before local drivers author new contributions.
+  Disconnecting pauses new local actions; reconnecting replays original signed
+  bytes instead of re-signing. In `#4`, ephemeral unchained `HEADS` /
+  `SYNC_REQ` / `SYNC_RESP` replace both chained `WITNESS`/`SYNC_*` and
+  per-message `PeerHistoryBarrier` RTT stalls, enabling automatic mid-round
+  reconnect and relay-assisted catch-up.
+- **Reload recovery (current `main` vs. target `#3`):** on `main`, restoring a
+  table validates the finalized roster, re-verifies complete sender chains,
+  setup, and every stored shuffle proof without writing to storage, and checks
+  that the local IndexedDB game key matches its signed `KEY_SHARE`. In `#3`, a
+  trusted local IndexedDB reload checkpoint keyed by the four
+  `(seat, seq, hash)` transcript heads enables immediate restore while keeping
+  the full signed transcript for peer sync and on-demand full verification.
+- **Owner-coordinated `SYNC_REQ`/`SYNC_RESP` (current `main`):**
+  `CandidateSaskuRoundOwner` currently supports bounded chained control-scope
+  sync receipt and serving (`phase: "control.sync"`, `<= 32` originals,
+  `<= 64 KiB` per envelope) on the same queue; automatic ephemeral catch-up is
+  tracked in `#4`.
 
 ---
 
 ## 5. Known Limitations & Remaining Work
 
-- All four original authors must remain online to advance a match; there is no
-  relay-assisted catch-up or timeout-forfeit controller yet.
-- STUN is configured without TURN, so strict NATs/firewalls can block direct
-  WebRTC links.
-- Local audits are reproducible per browser, not peer-signed match-result
-  certificates, and exported offline verification is not yet implemented.
-- Independent cryptographic review of the shuffle profile/WASM backend and
-  cross-browser validation (Firefox/Safari/mobile) remain release gates; see
-  [IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md).
+- **Performance (`#2`, `#3`, `#5`, `#6`):** shuffle remasking and DLEQ still run
+  in JS, envelopes are re-verified across internal layers and on reload, and
+  `SHUFFLE` still transmits the full statement alongside the proof.
+- **Connectivity & reconnect (`#4`, `#7`):** STUN is configured without TURN,
+  so strict NATs/firewalls can block direct WebRTC links; all four original
+  authors must currently stay online because ephemeral `HEADS`/`SYNC_*`
+  catch-up and human-triggered abort voting are not yet wired into the browser.
+- **Offline verification & CSP (`#8`):** in-browser CBOR transcript export and
+  verification (omitting `HELLO`) and strict static CSP headers are not yet
+  implemented.
+- **Cryptographic assurance & cross-browser validation (`#6`, `#7`):** freezing
+  the parameterized `(m, n)` shuffle profile, expanding cross-runtime/mutation/
+  soundness vectors, completing a focused self-audit (with a transparent
+  no-external-audit disclaimer), and validating Chrome/Firefox/Safari/mobile
+  remain tracked in [IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md).

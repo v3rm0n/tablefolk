@@ -2,8 +2,9 @@
 
 Status: **executable candidate, integrated into the experimental Sasku match
 path (`sasku-match-candidate@3`).** This profile and its Rust/WASM
-implementation are **not** frozen for production and have **not** undergone
-independent cryptographic review.
+implementation are **not** yet frozen (pending `(m, n)` parameterization in
+`#6`) and have **not** undergone an independent external cryptographic audit;
+see [decisions.md](decisions.md#d6--replace-external-audit--second-reference-gate-with-soundness-vectors-self-audit-and-disclaimer).
 
 For build, staging, and cross-runtime verification commands, see
 [experiments/shuffle-backend/README.md](../experiments/shuffle-backend/README.md).
@@ -170,20 +171,27 @@ directly from `Rng + CryptoRng` via `Scalar::rand`.
   - `validate_candidate_shuffle_statement36(statement)` — structural admission
   - `prove_candidate_shuffle36(statement, permutation, randomizers)` — returns 3,650-byte proof
   - `verify_candidate_shuffle36(statement, proof)` — returns boolean (or error on malformed input)
-- **Signed envelope body:** `SHUFFLE` carries `{statement, proof}` (two byte
-  strings). Mathematical validity does not prove roster membership, key
-  ownership, or input-deck provenance; `CandidateShuffleLedger` checks those
+- **Signed envelope body:** on `main`, `SHUFFLE` carries `{statement, proof}`
+  (two byte strings). Mathematical validity does not prove roster membership,
+  key ownership, or input-deck provenance; `CandidateShuffleLedger` checks those
   against completed setup and the preceding verified deck (starting from
   `CardPointTable` with identity `A` components).
+  *(Planned in `#2` & `#6`: move shuffle remasking and batched Chaum–Pedersen
+  DLEQ into Rust/WASM, cache the derived CRS, parameterize `(m, n)`, shrink the
+  `SHUFFLE` body to `{outputDeck, proof}` with locally reconstructed statements,
+  and graduate `experiments/shuffle-backend` into a top-level crate.)*
 
 ---
 
 ## 6. Open Cryptographic Gates
 
-1. Freeze the complete profile (and specify layouts beyond 4×9 if supporting
-   other deck sizes).
-2. Produce implementation-independent positive and rejection proof vectors
-   (current cross-runtime tests exercise the same adapted Rust core natively
-   and in WASM, plus independent Python/TS challenge-derivation checks).
-3. Independently review the `vendor/cards-proofs` adaptation, constant-time /
-   secret-memory behavior, and RNG usage before making public security claims.
+1. Freeze the parameterized `(m, n)` profile (`m, n >= 2`, `m * n <= 128`,
+   covering 36-card 4×9 and 52-card 4×13 decks), shrink the `SHUFFLE` wire body
+   to `{outputDeck, proof}`, and graduate `experiments/shuffle-backend` into a
+   top-level crate (`#6`).
+2. Expand cross-runtime (native Rust, browser WASM, and independent Python/TS
+   challenge-derivation checks), mutation, and soundness test vectors covering
+   positive proofs and negative/tampered-statement rejections.
+3. Complete a focused self-audit of the `vendor/cards-proofs` adaptation,
+   secret-memory zeroization, and RNG usage, and keep a transparent disclaimer
+   that the cryptography has not undergone an independent external audit.

@@ -9,10 +9,11 @@ multiplayer card games with no game server, starting with four-player
 > **Status:** Plays complete four-player Sasku matches to 12 game points
 > (`sasku-match-candidate@3`) with DTLS-authenticated WebRTC, Rust/WASM
 > Bayer–Groth shuffle proofs, private dealing, audited scoring, dealer
-> rotation, and reload recovery. **The shuffle proof backend is experimental
-> and awaits independent cryptographic review.** General reconnect catch-up,
-> TURN configuration, offline transcript export, and cross-browser validation
-> remain follow-up work.
+> rotation, and reload recovery. **Disclaimer: the cryptography is self-audited
+> and has not undergone an independent external audit.** WASM crypto
+> consolidation, ephemeral reconnect, TURN support, in-browser transcript
+> export, and strict CSP remain follow-up work (see
+> [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)).
 
 ## Requirements
 
@@ -63,9 +64,10 @@ npm run check  # workspace typechecks, unit/integration tests, and production bu
   must match on all four browsers.
 - STUN is configured without TURN, so strict NATs or firewalls may fail to
   connect, and all four players must stay online to advance a hand.
-- Browser identities currently store a raw Ed25519 seed in IndexedDB (not a
-  non-extractable WebCrypto key). Clearing site data loses that identity;
-  Web Locks prevent two tabs with the same identity from writing the same table.
+- Browser identities store a raw 32-byte Ed25519 seed in IndexedDB (protected
+  by strict CSP; see [docs/decisions.md](docs/decisions.md)). Clearing site data
+  loses that identity; Web Locks prevent two tabs with the same identity from
+  writing the same table.
 
 ## Browser Tests
 
