@@ -70,13 +70,22 @@ of unnecessary architecture; repeated responsibilities and delivery dependencies
 - A backend feasibility blocker is recorded explicitly rather than hidden behind
   a placeholder verifier or further unrelated infrastructure work.
 
-## 2026-09-26: Short-lived Sasku startup profile
+## 2026-09-25: Extend the Candidate Browser Path to Full 12 P Sasku Matches
 
-Status: **Accepted for the next candidate match profile.**
+Status: **Accepted.**
+
+With one verified live Sasku hand working end-to-end, extend the candidate
+browser profile to play successive audited rounds with rotating dealers until a
+partnership reaches 12 game points (capped at 32 hands per table). Keep the
+existing per-round verification, audit, and local recovery guarantees.
+
+## 2026-09-26: Short-lived Sasku startup profile (`sasku-match-candidate@3`)
+
+Status: **Accepted.**
 
 Keep the untrusted-peer checks in D1. Remove the unused setup randomness beacon
 from this match profile, and batch the four-seat private deal by donor while
-retaining every signed share and proof. Reuse workers where private witnesses are
-cleared and cancellation remains reliable. Measure readiness acknowledgements
-before changing their scope. The precise wire change and compatibility boundary
-are recorded in [round-start-performance.md](round-start-performance.md).
+retaining every signed share and proof. Reuse verifier workers while keeping
+proving workers disposable and cancellable. Measure readiness acknowledgements
+before changing their scope. The wire change and compatibility boundary are
+recorded in [sasku.md](sasku.md#3-match-profile-sasku-match-candidate3) and [protocol.md](protocol.md).
