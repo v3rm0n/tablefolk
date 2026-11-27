@@ -2,25 +2,38 @@ import { RistrettoPoint, RISTRETTO_SCALAR_ORDER, encodeRistrettoScalar, scalarFr
 import { encodeCanonical } from "@p2pcards/encoding";
 import { describe, expect, it } from "vitest";
 import {
-  CANDIDATE_SHUFFLE_PROOF_36_PROFILE as PROFILE,
-  CANDIDATE_SHUFFLE_PROOF_36_BYTES as SIZE,
-  decodeCandidateShuffleProof36 as decode,
-  encodeCandidateShuffleProof36 as encode,
+  CANDIDATE_SHUFFLE_PROOF_PROFILE as PROFILE,
+  decodeCandidateShuffleProof,
+  encodeCandidateShuffleProof,
 } from "./shuffle-proof-codec";
 
 const isScalar = (i: number) => (i >= 24 && i <= 44) || (i >= 48 && i <= 67) || i >= 93;
 const elements = Array.from({ length: 106 }, (_, i) => isScalar(i)
   ? encodeRistrettoScalar(scalarFromBigInt(BigInt(i)))
   : RistrettoPoint.base().multiply(scalarFromBigInt(BigInt(i))).toBytes());
-const canonical = encodeCanonical([PROFILE, elements]);
+const dimensions = { rows: 4, columns: 9 };
+const encode = (values: readonly Uint8Array[]) => encodeCandidateShuffleProof(values, dimensions);
+const decode = (bytes: Uint8Array) => decodeCandidateShuffleProof(bytes, dimensions);
+const canonical = encodeCanonical([PROFILE, 4, 9, elements]);
+const SIZE = canonical.length;
 const headerLength = canonical.length - 106 * 34;
 
-describe("candidate fixed 36-card proof codec", () => {
+describe("candidate dimension-scoped proof codec", () => {
   it("matches canonical CBOR independently of the fixed grammar parser", () => {
     expect(encode(elements)).toEqual(canonical);
     expect(decode(canonical)).toEqual(elements);
-    expect(SIZE).toBe(canonical.length);
+    expect(SIZE).toBe(3645);
   });
+
+  it.each([[4, 13, 126], [2, 64, 359], [64, 2, 731]])(
+    "uses the canonical %ix%i header and %i elements", (rows, columns, count) => {
+      const values = Array.from({ length: count }, () => new Uint8Array(32));
+      const bytes = encodeCandidateShuffleProof(values, { rows, columns });
+      expect(bytes).toEqual(encodeCanonical([PROFILE, rows, columns, values]));
+      expect(decodeCandidateShuffleProof(bytes, { rows, columns })).toEqual(values);
+      expect(() => decodeCandidateShuffleProof(bytes, dimensions)).toThrow();
+    },
+  );
 
   it("permits zero scalars and identity points without claiming proof validity", () => {
     const zeros = Array.from({ length: 106 }, () => new Uint8Array(32));
@@ -72,10 +85,10 @@ describe("candidate fixed 36-card proof codec", () => {
 
   it("rejects alternate CBOR structures and unknown profiles", () => {
     for (const value of [
-      [PROFILE + "x", elements], [PROFILE, elements.slice(1)], [PROFILE, [...elements, elements[0]!]],
-      { profile: PROFILE, elements }, [PROFILE, elements, 0],
+      [PROFILE + "x", 4, 9, elements], [PROFILE, 4, 9, elements.slice(1)], [PROFILE, 4, 9, [...elements, elements[0]!]],
+      { profile: PROFILE, elements }, [PROFILE, 4, 9, elements, 0], ["bg-ristretto255-36-4x9-proof-candidate-v1", elements],
     ]) { expect(() => decode(encodeCanonical(value))).toThrow(); }
-    const overlongArray = new Uint8Array([0x98, 2, ...canonical.slice(1)]);
+    const overlongArray = new Uint8Array([0x98, 4, ...canonical.slice(1)]);
     expect(() => decode(overlongArray)).toThrow();
   });
 

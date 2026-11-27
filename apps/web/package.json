@@ -8,7 +8,7 @@
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "preview": "vite preview",
-    "prepare:shuffle": "node ../../experiments/shuffle-backend/stage-web-candidate.mjs",
+    "prepare:shuffle": "node ../../crates/shuffle-wasm/stage-web-candidate.mjs",
     "predev": "npm run prepare:shuffle",
     "prebuild": "npm run prepare:shuffle"
   },

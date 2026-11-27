@@ -5,7 +5,7 @@ import { DEFAULT_STUN_URLS } from "@p2pcards/transport";
 
 import { liveRulesHash } from "./live-profile";
 
-export const CONNECTION_RULES = Object.freeze({ id: "sasku-match-candidate", version: "2", players: 4, label: "Sasku match" });
+export const CONNECTION_RULES = Object.freeze({ id: "sasku-match-candidate", version: "4", players: 4, label: "Sasku match" });
 
 export function connectionRulesHash(): Hash256 {
   return liveRulesHash();

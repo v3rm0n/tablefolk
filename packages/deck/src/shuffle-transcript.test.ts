@@ -102,8 +102,8 @@ describe("candidate SHA-512/CBOR shuffle transcript", () => {
 
   it("enforces read, byte, and event budgets without a partial append", () => {
     const t = new Transcript(new Uint8Array([1])), control = new Transcript(new Uint8Array([1]));
-    for (let i = 0; i < 3; i++) { t.appendPublicBytes(new Uint8Array(8192)); control.appendPublicBytes(new Uint8Array(8192)); }
-    expect(() => t.appendPublicBytes(new Uint8Array(8192))).toThrow(/event bound/);
+    for (let i = 0; i < 7; i++) { t.appendPublicBytes(new Uint8Array(8712)); control.appendPublicBytes(new Uint8Array(8712)); }
+    expect(() => t.appendPublicBytes(new Uint8Array(8712))).toThrow(/event bound/);
     expect(t.challenge(label).read()).toEqual(control.challenge(label).read());
     const bounded = new Transcript(new Uint8Array([1]));
     const reader = bounded.challenge(label);
@@ -122,7 +122,7 @@ describe("candidate SHA-512/CBOR shuffle transcript", () => {
     for (const invalid of [new Uint8Array(), new Uint8Array(65)]) {
       expect(() => t.label(invalid)).toThrow(); expect(() => t.challenge(invalid)).toThrow();
     }
-    expect(() => t.appendPublicBytes(new Uint8Array(8193))).toThrow();
+    expect(() => t.appendPublicBytes(new Uint8Array(8713))).toThrow();
     expect(() => t.appendPublicBytes(null as unknown as Uint8Array)).toThrow();
     class Subclass extends Uint8Array {}
     expect(() => new Transcript(new Subclass([1]))).toThrow();

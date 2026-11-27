@@ -56,27 +56,29 @@ jobs:
         with:
           path: |
             ~/.cargo/registry
-            ~/.cargo/git
             ~/.cargo/bin/wasm-bindgen
-            experiments/shuffle-backend/target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-1.90.0-bindgen-0.2.100-${{ hashFiles('experiments/shuffle-backend/Cargo.lock', 'experiments/shuffle-backend/vendor/cards-proofs/source-manifest.json') }}
+            crates/shuffle-wasm/target
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-1.90.0-bindgen-0.2.100-${{ hashFiles('crates/shuffle-wasm/Cargo.lock', 'crates/shuffle-wasm/vendor/cards-proofs/source-manifest.json') }}
       - name: Verify attributed proof sources
-        run: node experiments/shuffle-backend/verify-vendor.mjs
+        run: node crates/shuffle-wasm/verify-vendor.mjs
+      - name: Run Rust shuffle tests
+        working-directory: crates/shuffle-wasm
+        run: cargo test --release --locked
       - name: Build candidate shuffle WASM
-        working-directory: experiments/shuffle-backend
+        working-directory: crates/shuffle-wasm
         run: |
-          cargo build --release --locked --features candidate-transcript --lib --target wasm32-unknown-unknown
+          cargo build --release --locked --lib --target wasm32-unknown-unknown
           if ! command -v wasm-bindgen >/dev/null || [ "$(wasm-bindgen --version)" != 'wasm-bindgen 0.2.100' ]; then
             cargo install wasm-bindgen-cli --version 0.2.100 --locked
           fi
-          wasm-bindgen target/wasm32-unknown-unknown/release/shuffle_backend_evaluation.wasm --target web --out-dir pkg-transcript
+          wasm-bindgen target/wasm32-unknown-unknown/release/shuffle_wasm.wasm --target web --out-dir pkg
       - name: Build static site
         run: npm run build
       - name: Check deployable assets
         run: |
           test -s apps/web/dist/index.html
-          test -s apps/web/dist/shuffle-candidate/shuffle_backend_evaluation.js
-          test -s apps/web/dist/shuffle-candidate/shuffle_backend_evaluation_bg.wasm
+          test -s apps/web/dist/shuffle-candidate/shuffle_wasm.js
+          test -s apps/web/dist/shuffle-candidate/shuffle_wasm_bg.wasm
       - name: Upload Pages site
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4

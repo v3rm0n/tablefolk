@@ -38,12 +38,12 @@ export {
 } from "./proofs";
 export {
   CANDIDATE_SHUFFLE_STATEMENT_PROFILE,
-  MIN_CANDIDATE_SHUFFLE_STATEMENT_BYTES,
-  MAX_CANDIDATE_SHUFFLE_STATEMENT_BYTES,
-  encodeCandidateShuffleStatement36,
-  decodeCandidateShuffleStatement36,
-  encodeCandidateShuffleWitness36,
-  type CandidateShuffleStatement36,
+  encodeCandidateShuffleStatement,
+  decodeCandidateShuffleStatement,
+  encodeCandidateShuffleWitness,
+  packShuffleDeck,
+  unpackShuffleDeck,
+  type CandidateShuffleStatement,
 } from "./shuffle-statement";
 export {
   CandidateShuffleTranscript,
@@ -51,15 +51,14 @@ export {
   type CandidateShuffleChallenge,
 } from "./shuffle-transcript";
 export {
-  CANDIDATE_SHUFFLE_PROOF_36_PROFILE,
-  CANDIDATE_SHUFFLE_PROOF_36_BYTES,
-  decodeCandidateShuffleProof36,
-  encodeCandidateShuffleProof36,
+  CANDIDATE_SHUFFLE_PROOF_PROFILE,
+  decodeCandidateShuffleProof,
+  encodeCandidateShuffleProof,
 } from "./shuffle-proof-codec";
 export {
-  deriveShuffleCrs36,
-  SHUFFLE_CRS_36_PROFILE,
-  type ShuffleCrs36,
+  deriveShuffleCrs,
+  SHUFFLE_CRS_PROFILE,
+  type ShuffleCrs,
 } from "./shuffle-crs";
 export {
   createUnprovenDeckShuffle,
@@ -76,3 +75,4 @@ export {
   type PositionShare,
   type SharesBody,
 } from "./wire";
+export { MAX_SHUFFLE_CARDS, shuffleCardCount, type ShuffleDimensions } from "./shuffle-dimensions";

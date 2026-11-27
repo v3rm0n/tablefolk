@@ -88,7 +88,7 @@ from this match profile, and batch the four-seat private deal by donor while
 retaining every signed share and proof. Reuse verifier workers while keeping
 proving workers disposable and cancellable. Measure readiness acknowledgements
 before changing their scope. The wire change and compatibility boundary are
-recorded in [sasku.md](sasku.md#3-match-profile-sasku-match-candidate3) and [protocol.md](protocol.md).
+recorded in [sasku.md](sasku.md#3-match-profile-sasku-match-candidate4) and [protocol.md](protocol.md).
 
 ## 2026-11-27: Pragmatic Card-Game Scope & Re-ordered Roadmap
 
@@ -167,8 +167,8 @@ evidence because two peers may initially observe different envelopes at the same
 
 ### D10 — Planned Protocol & Runtime Simplifications
 
-Accept the following architectural shifts (tracked in #2–#8; active `main` still
-runs `sasku-match-candidate@3` until each issue lands):
+Accept the following architectural shifts, tracked in #2–#8. The active
+profile at the time of this decision was `sasku-match-candidate@3`.
 
 - **Ephemeral `HEADS` / `SYNC_REQ` / `SYNC_RESP` (#4):** move liveness and
   catch-up out of the signed per-sender hash chain onto ephemeral messages over

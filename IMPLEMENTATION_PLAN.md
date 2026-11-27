@@ -8,14 +8,14 @@ accepted scope and architecture decisions live in
 ## Current Status
 
 The browser application plays complete four-player Sasku matches to 12 game
-points under the experimental `sasku-match-candidate@3` profile:
+points under the experimental `sasku-match-candidate@4` profile:
 
 - **Implemented on `main`:** strict RFC 8949 deterministic CBOR
   (`@p2pcards/encoding`), SHA-256/512 and Ed25519/Ristretto255 primitives
   (`@p2pcards/crypto`), signed envelopes and per-sender hash chains
   (`@p2pcards/protocol`, `@p2pcards/session`), ElGamal masking, Schnorr PoP,
   Chaum–Pedersen DLEQ, and candidate 36-card 4×9 Bayer–Groth Rust/WASM proofs in
-  Web Workers (`@p2pcards/deck`, `experiments/shuffle-backend`), encrypted Nostr
+  Web Workers (`@p2pcards/deck`, `crates/shuffle-wasm`), encrypted Nostr
   signaling and DTLS-authenticated WebRTC full-mesh transport
   (`@p2pcards/transport`), durable IndexedDB persistence and full-replay restart
   recovery (`@p2pcards/storage`), complete Sasku rules, audit, and multi-round
@@ -57,12 +57,10 @@ connectivity, and simplicity.
 - [ ] **#5 — Single-owner round queue:** collapse nested async round queues into
       a single-owner coordinator and remove hostile-in-process-caller defenses
       while keeping strict validation at network and storage boundaries.
-- [ ] **#6 — Parameterized `(m, n)` Bayer–Groth profile & crate graduation:**
-      parameterize `(m, n)` (`m, n >= 2`, `m * n <= 128`) across CRS, proof
-      codec, and statement schema (benchmarking 36-card 4×9 and 52-card 4×13),
-      shrink the `SHUFFLE` wire body to `{outputDeck, proof}` with locally
-      reconstructed statements, and graduate `experiments/shuffle-backend` into
-      a top-level crate.
+- [x] **#6 — Parameterized `(m, n)` Bayer–Groth profile & crate graduation:**
+      v2 supports 4×9 and 4×13 with cross-runtime checks and timings.
+      `SHUFFLE` carries `{outputDeck, proof}` and peers reconstruct the
+      statement. The Rust/WASM crate lives at `crates/shuffle-wasm`.
 - [ ] **Soundness vectors & focused self-audit:** expand cross-runtime (native
       Rust, browser WASM, Python/TS), mutation, and soundness proof vectors and
       complete a focused self-audit of the vendored `cards-proofs` adaptation,

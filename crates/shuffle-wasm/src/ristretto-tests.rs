@@ -1,6 +1,6 @@
 use super::*;
 use ark_ff::{BigInteger, Field, PrimeField};
-use crate::{adapter_vectors::{hex, unhex}, decode_exact, serialize};
+use crate::{decode_exact, serialize};
 use rand::rngs::OsRng;
 
 #[test]
@@ -100,4 +100,12 @@ fn pedersen_uses_independent_nonidentity_bases_and_preserves_linearity() {
     assert_eq!(Comm::commit(&key, &[], Scalar::from(7)).unwrap(), key.h * Scalar::from(7));
     assert_eq!(Comm::commit(&key, &[], Scalar::zero()).unwrap(), Point::zero());
     assert!(Comm::commit(&key, &[Scalar::zero(); 10], Scalar::zero()).is_err());
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn unhex(value: &str) -> Result<Vec<u8>, std::num::ParseIntError> {
+    (0..value.len()).step_by(2).map(|i| u8::from_str_radix(&value[i..i + 2], 16)).collect()
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createUnprovenDeckShuffle, decodeCandidateShuffleStatement36, encodeCandidateShuffleStatement36, encodeCandidateShuffleProof36 } from "@p2pcards/deck";
+import { createUnprovenDeckShuffle, decodeCandidateShuffleStatement, packShuffleDeck, encodeCandidateShuffleProof } from "@p2pcards/deck";
 import { parseHash256, decodeAndVerifyEnvelope } from "@p2pcards/protocol";
 import { PersistentEnvelopeAuthor, PersistentSessionReceiver, SessionChainRegistry, recoverSessionChains } from "@p2pcards/session";
 import { SASKU_DECK_SPEC } from "@p2pcards/rules-sasku";
@@ -18,10 +18,10 @@ async function fixture() {
     self: f.roster[0]!, setupRound: 0, round: f.round, deckSpec: SASKU_DECK_SPEC, verifier };
   const receiver = await PersistentCandidateShuffleReceiver.open(options);
   const prepare = () => {
-    const s = decodeCandidateShuffleStatement36(receiver.nextStatement());
+    const s = decodeCandidateShuffleStatement(receiver.nextStatement());
     const shuffled = createUnprovenDeckShuffle(s.inputDeck, s.aggregateKey, f.source);
-    return { statement: encodeCandidateShuffleStatement36({ ...s, outputDeck: shuffled.outputDeck }),
-      proof: encodeCandidateShuffleProof36(Array.from({ length: 106 }, () => new Uint8Array(32))) };
+    return { outputDeck: packShuffleDeck(shuffled.outputDeck, s.inputDeck.length),
+      proof: encodeCandidateShuffleProof(Array.from({ length: 106 }, () => new Uint8Array(32)), { rows: 4, columns: 9 }) };
   };
   const sign = (body = prepare(), overrides = {}) => f.sign(receiver.snapshot.nextSeat!, "SHUFFLE",
     `round.${f.round}.shuffle.${receiver.snapshot.nextSeat}`, body, overrides);
@@ -99,8 +99,7 @@ describe("durable candidate shuffle receiver", () => {
     await expect(f.reopen()).rejects.toThrow(/complete shuffle chain/);
     const g = await fixture();
     const body = g.prepare();
-    const s = decodeCandidateShuffleStatement36(body.statement);
-    await g.durable.receive(g.sign(1, "SHUFFLE", `round.${g.round}.shuffle.1`, { ...body, statement: encodeCandidateShuffleStatement36({ ...s, seat: 1 }) }));
+    await g.durable.receive(g.sign(1, "SHUFFLE", `round.${g.round}.shuffle.1`, body));
     await expect(g.reopen()).rejects.toThrow(/scope or sender/);
   });
   it("rejects session changes during asynchronous recovery", async () => {
@@ -125,6 +124,8 @@ describe("durable candidate shuffle receiver", () => {
     const result = await f.receiver.author(author, body, expected);
     expect(result.status).toBe("accepted"); expect(result.received.envelope.seq).toBe(3);
     expect(append).toHaveBeenCalledOnce();
+    expect(result.received.envelope.body).toEqual(body);
+    expect(f.verifier.verify.mock.calls[1]).toEqual(f.verifier.verify.mock.calls[2]);
     await expect(f.receiver.author(author, body, expected)).rejects.toThrow(/Stale/);
     expect((await f.reopen()).snapshot.nextSeat).toBe(1);
   });

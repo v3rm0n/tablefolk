@@ -61,7 +61,7 @@ it("authors controls in queue order and keeps subsequent shuffle preparation usa
   c.verifier.verify.mockImplementationOnce(async () => { started.resolve(); await gate.promise; return true; });
   const snapshot = c.owner.snapshot;
   if (snapshot.phase !== "shuffle") throw new Error("Expected shuffle");
-  const body = c.shuffles[0]!.envelope.body as { statement: Uint8Array; proof: Uint8Array };
+  const body = c.shuffles[0]!.envelope.body as { outputDeck: Uint8Array; proof: Uint8Array };
   const shuffle = c.owner.authorShuffle(c.local, body, snapshot.state); await started.promise;
   const request = c.owner.authorSyncRequest(c.local, { from: c.f.roster[1]!, fromSeq: 3, toSeq: 3 });
   expect((await c.local.readHead())!.envelope.seq).toBe(2);

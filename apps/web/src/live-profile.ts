@@ -11,10 +11,10 @@ export const FIRST_ROUND = 1;
 export const FIRST_DEALER = 3;
 export const FIRST_DEAL = Object.freeze([0, 1, 2, 3].map(to => Object.freeze({ to, count: 9 })));
 export function liveRulesHash() {
-  return parseHash256(sha256(encodeCanonical({ id: "sasku-match-candidate/3", cards, hand, scoring, match,
+  return parseHash256(sha256(encodeCanonical({ id: "sasku-match-candidate/4", cards, hand, scoring, match,
     setupRound: 0, round: FIRST_ROUND, dealer: FIRST_DEALER, deal: FIRST_DEAL,
     beacon: "none; key-only setup; seat-order-fixed",
-    shuffle: "candidate-ristretto-4x9-parity-ac4fb67-sha512-cbor-v1",
+    shuffle: "candidate-ristretto-4x9-parity-ac4fb67-sha512-cbor-v2",
     dealShares: "four-donor-all-other-positions-proof-batches-v1",
     readiness: "authenticated-own-prefix-watermark-ack-v1; per-round-audit-result-marker-v1", matchTarget: 12, maxRounds: 32 })));
 }

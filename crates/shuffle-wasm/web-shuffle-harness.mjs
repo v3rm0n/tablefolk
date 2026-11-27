@@ -9,7 +9,7 @@ import { CandidateShuffleClient } from "../../apps/web/src/candidate-shuffle-cli
 import { CandidateShuffleLedger } from "../../packages/engine/src/candidate-shuffle-ledger.ts";
 import { roundRevealFixture } from "../../packages/engine/src/round-reveal.test-fixture.ts";
 import { SASKU_DECK_SPEC } from "../../packages/rules-sasku/src/index.ts";
-import { encodeCandidateShuffleProof36 } from "../../packages/deck/src/index.ts";
+import { encodeCandidateShuffleProof } from "../../packages/deck/src/index.ts";
 import { parseHash256, encodeSyncRequestBody, encodeSyncResponseBody } from "../../packages/protocol/src/index.ts";
 globalThis.runWebShuffleChecks = async () => {
     const f = roundRevealFixture({ seats: 4, deckSpec: SASKU_DECK_SPEC });
@@ -25,8 +25,8 @@ globalThis.runWebShuffleChecks = async () => {
         const result = await client.prove(ledger.nextStatement());
         if (seat === 0) {
           const invalid = f.sign(seat, "SHUFFLE", `round.${f.round}.shuffle.${seat}`, {
-            statement: result.statement,
-            proof: encodeCandidateShuffleProof36(Array.from({ length: 106 }, () => new Uint8Array(32))),
+            outputDeck: result.outputDeck,
+            proof: encodeCandidateShuffleProof(Array.from({ length: 106 }, () => new Uint8Array(32)), { rows: 4, columns: 9 }),
           });
           try { await ledger.accept(invalid.canonicalBytes); } catch { invalidRejected = ledger.nextSeat === 0; }
           if (!invalidRejected) throw new Error("Invalid proof advanced the shuffle ledger");

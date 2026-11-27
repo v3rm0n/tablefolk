@@ -1,5 +1,5 @@
 import { bytesEqual, type RistrettoScalar } from "@p2pcards/crypto";
-import { PersistentCandidateShuffleReceiver, recoverSetup, type CandidateShuffleSnapshot } from "@p2pcards/engine";
+import { PersistentCandidateShuffleReceiver, recoverSetup, type CandidateShuffleBody, type CandidateShuffleSnapshot } from "@p2pcards/engine";
 import { decodeAndVerifyEnvelope, decodeRosterBody, encodeRosterBody, parseIdentityPublicKey,
   decodeSyncRequestBody, encodeSyncRequestBody, decodeSyncResponseBody, encodeSyncResponseBody, encodeUnsignedEnvelope, expectExactMap, expectArray,
   type EnvelopeArtifact, type IdentityPublicKey, type SyncRequestBody, type UnsignedEnvelope } from "@p2pcards/protocol";
@@ -237,13 +237,13 @@ export class CandidateSaskuRoundOwner {
       throw this.#failure ?? error;
     }
   }
-  authorShuffle(author: PersistentEnvelopeAuthor, prepared: { readonly statement: Uint8Array; readonly proof: Uint8Array }, expected: CandidateShuffleSnapshot): Promise<CandidateRoundReceipt> {
+  authorShuffle(author: PersistentEnvelopeAuthor, prepared: CandidateShuffleBody, expected: CandidateShuffleSnapshot): Promise<CandidateRoundReceipt> {
     try {
       this.#checkAuthor(author);
-      const size = prepared.statement.length + prepared.proof.length;
+      const size = prepared.outputDeck.length + prepared.proof.length;
       this.#capacity(size);
       if (size > 16 * 1024) throw new Error("Invalid shuffle preparation size");
-      const captured = { statement: prepared.statement.slice(), proof: prepared.proof.slice() };
+      const captured = { outputDeck: prepared.outputDeck.slice(), proof: prepared.proof.slice() };
       return this.#enqueue(size, -1, 0, () => {
         if (this.#round) throw new Error("Shuffle phase is complete");
         return this.#shuffle.author(author, captured, expected);

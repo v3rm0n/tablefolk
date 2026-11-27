@@ -2,7 +2,10 @@ import { asciiToBytes, encodeRistrettoScalar, reduceWideRistrettoScalar, sha512,
 import { encodeCanonical, type CborValue } from "@p2pcards/encoding";
 import { proofChallengeInput, parseGameId, type ProofContext } from "@p2pcards/protocol";
 
-export const CANDIDATE_SHUFFLE_TRANSCRIPT_PROFILE = "bg-ristretto255-36-4x9-fs-candidate-v1";
+const MAX_PUBLIC_BYTES = 128 * 64 + (64 + 1) * 8; // Arkworks prefixes the matrix and its rows.
+const MAX_EVENT_BYTES = 64 * 1024;
+
+export const CANDIDATE_SHUFFLE_TRANSCRIPT_PROFILE = "bg-ristretto255-fs-candidate-v2";
 
 export interface CandidateShuffleChallenge {
   readonly input: Uint8Array;
@@ -34,7 +37,7 @@ export class CandidateShuffleTranscript {
 
   /** The pinned backend's compressed public serialization, explicitly framed. */
   appendPublicBytes(bytes: Uint8Array): void {
-    this.#push([1, capture(bytes, 0, 8192)]);
+    this.#push([1, capture(bytes, 0, MAX_PUBLIC_BYTES)]);
   }
 
   challenge(label: Uint8Array): { read(): CandidateShuffleChallenge } {
@@ -59,7 +62,7 @@ export class CandidateShuffleTranscript {
 
   #push(event: CborValue): void {
     const size = encodeCanonical(event).length;
-    if (this.#events.length >= 128 || this.#eventBytes + size > 32768) {
+    if (this.#events.length >= 128 || this.#eventBytes + size > MAX_EVENT_BYTES) {
       throw new Error("Candidate transcript event bound");
     }
     this.#events.push(event);

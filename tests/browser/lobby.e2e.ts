@@ -297,7 +297,7 @@ test("invalid invitations fail without relay traffic and mobile welcome stays us
 });
 
 test("an invitation link leads with joining and keeps the invitation field out of view", async ({ page }, testInfo) => {
-  const fragment = `#g=${"11".repeat(16)}&h=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a&r=sasku-match-candidate%403&s=trystero-nostr`;
+  const fragment = `#g=${"11".repeat(16)}&h=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a&r=sasku-match-candidate%404&s=trystero-nostr`;
   await page.goto(`/${fragment}`);
   await expect(page.getByRole("heading", { name: "You're invited to Sasku." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Join this table" })).toBeEnabled();
