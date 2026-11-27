@@ -1,5 +1,5 @@
 import { bytesEqual, bytesToHex, randomBytes, scalarFromBigInt, type RandomSource, type RistrettoScalar } from "@p2pcards/crypto";
-import { decodeActionBody, decodeAuditDiscloseBody, encodeActionBody, encodeAuditDiscloseBody, encodeSharesBody, type ActionBody, type MaskedCard } from "@p2pcards/deck";
+import { decodeActionBody, decodeAuditDiscloseBody, encodeActionBody, encodeAuditDiscloseBody, encodeSharesBody, type ActionBody, type DecryptionShareBatchBackend, type MaskedCard } from "@p2pcards/deck";
 import {
   MAX_ROUND_REVEAL_ENVELOPE_BYTES, RoundRevealError, RoundRevealLedger, SetupEnvelopeCoordinator,
   type PrivateDealStep, type RoundRevealSnapshot, type RoundRevealTransition,
@@ -23,6 +23,7 @@ export interface PersistentSaskuRoundOptions {
   readonly deck: readonly MaskedCard[];
   readonly schedule: readonly PrivateDealStep[];
   readonly batchDeal?: boolean;
+  readonly dealBackend?: DecryptionShareBatchBackend;
   readonly dealer: SaskuSeat;
   readonly session: SessionChainRegistry;
   readonly sessionReceiver: PersistentSessionReceiver;
@@ -101,6 +102,8 @@ interface RoundTransition {
 /** Owns deal, public play, and local hand audit. Setup, shuffle provenance, and the agreed schedule/dealer remain caller prerequisites. */
 export class PersistentSaskuRoundReceiver {
   readonly #ledger: RoundRevealLedger;
+  readonly #setup: SetupEnvelopeCoordinator;
+  readonly #dealBackend: DecryptionShareBatchBackend | undefined;
   readonly #hand: SaskuPublicHandController;
   readonly #session: SessionChainRegistry;
   readonly #durable: PersistentSessionReceiver;
@@ -135,6 +138,7 @@ export class PersistentSaskuRoundReceiver {
     this.#maxPendingEnvelopes = positiveInteger(options.maxPendingEnvelopes ?? DEFAULT_MAX_PENDING_SASKU_ENVELOPES);
     this.#maxPendingBytes = positiveInteger(options.maxPendingBytes ?? DEFAULT_MAX_PENDING_SASKU_BYTES);
     this.#session = options.session;
+    this.#setup = options.setup;
     this.#durable = options.sessionReceiver;
     this.#hand = new SaskuPublicHandController({ dealer: options.dealer });
     this.#ledger = new RoundRevealLedger({
@@ -143,6 +147,7 @@ export class PersistentSaskuRoundReceiver {
       ...(options.batchDeal === undefined ? {} : { batchDeal: options.batchDeal }),
     });
     this.#round = options.round;
+    this.#dealBackend = options.dealBackend;
     const counts = [0, 0, 0, 0];
     for (let pos = 0; pos < 36; pos += 1) {
       const owner = this.#ledger.ownerAt(pos);
@@ -155,38 +160,59 @@ export class PersistentSaskuRoundReceiver {
 
   /** Read-only reconstruction from a quiescent, already restored session and the same trusted round context. */
   static recover(options: PersistentSaskuRoundOptions, limits?: SaskuRoundRecoveryLimits): PersistentSaskuRoundReceiver {
-    const captured = Object.freeze({ ...options });
-    const receiver = new PersistentSaskuRoundReceiver(captured);
+    const receiver = new PersistentSaskuRoundReceiver(options);
     try {
-      const history = captureSaskuRoundHistory(captured.setup, receiver.#session, receiver.#round, limits);
-      const next = [0, 0, 0, 0];
-      let remaining = history.bySeat.reduce((sum, messages) => sum + messages.length, 0);
-      while (remaining > 0) {
-        const snapshot = receiver.#snapshot;
-        const type = snapshot.audit !== null ? "AUDIT_DISCLOSE" : snapshot.ledger.deal !== null ? "SHARES" : "ACTION";
-        const phase = snapshot.audit?.phase ?? snapshot.ledger.phase;
-        let progressed = false;
-        // Never skip a sender's earlier round message to reach a later, conveniently named phase.
-        for (let seat = 0; seat < 4; seat += 1) {
-          const artifact = history.bySeat[seat]![next[seat]!];
-          if (artifact === undefined || artifact.envelope.type !== type || artifact.envelope.phase !== phase) continue;
-          const transition = receiver.#classify(artifact);
-          if (transition.status !== "accepted") { throw new SaskuRoundRecoveryError("Round history repeats a semantic contribution"); }
-          receiver.#commit(transition);
-          next[seat]! += 1;
-          remaining -= 1;
-          progressed = true;
-          break;
-        }
-        if (!progressed) { throw new SaskuRoundRecoveryError("Round history has missing or out-of-order prerequisites"); }
+      for (const artifact of receiver.#replay(limits)) {
+        receiver.#commitRecovered(receiver.#classify(artifact));
       }
-      history.assertUnchanged();
       return receiver;
-    } catch (cause) {
-      receiver.close();
-      if (cause instanceof SaskuRoundRecoveryError || cause instanceof RangeError || cause instanceof TypeError) throw cause;
-      throw new SaskuRoundRecoveryError("Could not reconstruct Sasku round semantics", { cause });
+    } catch (cause) { throw receiver.#recoveryError(cause); }
+  }
+
+  static async recoverWithBackend(options: PersistentSaskuRoundOptions, limits?: SaskuRoundRecoveryLimits): Promise<PersistentSaskuRoundReceiver> {
+    const backend = options.dealBackend;
+    if (!backend) return this.recover(options, limits);
+    const receiver = new PersistentSaskuRoundReceiver(options);
+    try {
+      for (const artifact of receiver.#replay(limits)) {
+        const prepared = artifact.envelope.type === "SHARES"
+          ? await receiver.#ledger.prepareDealReceipt(decodeAndVerifyEnvelope(artifact.canonicalBytes), backend) : undefined;
+        receiver.#commitRecovered(receiver.#classify(artifact, prepared?.transition), prepared?.commit);
+      }
+      return receiver;
+    } catch (cause) { throw receiver.#recoveryError(cause); }
+  }
+
+  *#replay(limits?: SaskuRoundRecoveryLimits): Generator<EnvelopeArtifact> {
+    const history = captureSaskuRoundHistory(this.#setup, this.#session, this.#round, limits);
+    const next = [0, 0, 0, 0];
+    let remaining = history.bySeat.reduce((sum, messages) => sum + messages.length, 0);
+    while (remaining > 0) {
+      const snapshot = this.#snapshot;
+      const type = snapshot.audit !== null ? "AUDIT_DISCLOSE" : snapshot.ledger.deal !== null ? "SHARES" : "ACTION";
+      const phase = snapshot.audit?.phase ?? snapshot.ledger.phase;
+      // Only the first unprocessed message from each sender is eligible.
+      const seat = history.bySeat.findIndex((chain, index) => {
+        const envelope = chain[next[index]!]?.envelope;
+        return envelope?.type === type && envelope.phase === phase;
+      });
+      if (seat === -1) throw new SaskuRoundRecoveryError("Round history has missing or out-of-order prerequisites");
+      yield history.bySeat[seat]![next[seat]!]!;
+      next[seat]! += 1;
+      remaining -= 1;
     }
+    history.assertUnchanged();
+  }
+
+  #commitRecovered(transition: RoundTransition, commitPreparedDeal?: () => RoundRevealTransition): void {
+    if (transition.status !== "accepted") throw new SaskuRoundRecoveryError("Round history repeats a semantic contribution");
+    this.#commit(transition, commitPreparedDeal);
+  }
+
+  #recoveryError(cause: unknown): unknown {
+    this.close();
+    if (cause instanceof SaskuRoundRecoveryError || cause instanceof RangeError || cause instanceof TypeError) return cause;
+    return new SaskuRoundRecoveryError("Could not reconstruct Sasku round semantics", { cause });
   }
 
   get snapshot(): SaskuRoundSnapshot { return this.#snapshot; }
@@ -246,7 +272,7 @@ export class PersistentSaskuRoundReceiver {
       try { scalarFromBigInt(secretKey); }
       catch { throw new RoundRevealError("invalid_local_key"); }
       const seat = this.#session.seatOf(identity)! as SaskuSeat;
-      return () => {
+      return async () => {
         const requireCurrent = (): void => this.#requireContribution(expected, seat, "SHARES");
         requireCurrent();
         const guardedSource: RandomSource = { fill: (bytes) => {
@@ -254,7 +280,9 @@ export class PersistentSaskuRoundReceiver {
           bytes.set(randomBytes(bytes.length, source));
           requireCurrent();
         } };
-        const body = this.#ledger.createDealShares(seat, secretKey, guardedSource);
+        const body = this.#dealBackend && source === undefined
+          ? await this.#ledger.createDealSharesWithBackend(seat, secretKey, this.#dealBackend)
+          : this.#ledger.createDealShares(seat, secretKey, guardedSource);
         return this.#authorAndReceive(author, identity, () => ({
           round: this.#round, phase: expected.ledger.phase, type: "SHARES", body: encodeSharesBody(body),
         }), requireCurrent);
@@ -474,7 +502,7 @@ export class PersistentSaskuRoundReceiver {
     } catch (cause) { throw this.#fail("recovery_required", cause); }
   }
 
-  #classify(received: EnvelopeArtifact): RoundTransition {
+  #classify(received: EnvelopeArtifact, prepared?: RoundRevealTransition): RoundTransition {
     const expectedSeat = this.#hand.snapshot.turn ?? undefined;
     let classification: RoundRevealTransition | { readonly type: "AUDIT_DISCLOSE"; readonly seat: SaskuSeat; readonly status: "accepted" | "duplicate" };
     try {
@@ -495,7 +523,8 @@ export class PersistentSaskuRoundReceiver {
         if (prior !== undefined && prior !== bytesToHex(received.hash)) { throw new RoundRevealError("conflicting_contribution"); }
         classification = { type: "AUDIT_DISCLOSE", seat, status: prior === undefined ? "accepted" : "duplicate" };
       } else {
-        classification = Object.freeze({ ...this.#ledger.classify(decodeAndVerifyEnvelope(received.canonicalBytes), expectedSeat) });
+        classification = Object.freeze({ ...(prepared ??
+          this.#ledger.classify(decodeAndVerifyEnvelope(received.canonicalBytes), expectedSeat)) });
         if (classification.type !== received.envelope.type || classification.seat !== this.#session.seatOf(parseIdentityPublicKey(received.envelope.from)) ||
             !bytesEqual(classification.received.canonicalBytes, received.canonicalBytes)) {
           throw this.#fail("recovery_required", new Error("Reveal classification does not match the original envelope"));
@@ -529,7 +558,11 @@ export class PersistentSaskuRoundReceiver {
     if (this.#failure !== null) { throw this.#failure; }
     if (this.#closed && !finishAuthored) { throw new SaskuRoundReceiverError("closed"); }
     const received = decodeAndVerifyEnvelope(bytes);
-    const transition = this.#classify(received);
+    const prepared = this.#dealBackend && received.envelope.type === "SHARES"
+      ? await this.#ledger.prepareDealReceipt(decodeAndVerifyEnvelope(bytes), this.#dealBackend) : undefined;
+    if (this.#closed && !finishAuthored) { throw new SaskuRoundReceiverError("closed"); }
+    if (this.#failure !== null) { throw this.#failure; }
+    const transition = this.#classify(received, prepared?.transition);
     let receipt: Awaited<ReturnType<PersistentSessionReceiver["receive"]>>;
     let chainStatus: "accepted" | "duplicate";
     let persistenceStatus: "stored" | "duplicate";
@@ -572,13 +605,16 @@ export class PersistentSaskuRoundReceiver {
 
     // A local private read can discover a bad supplied deck while persistence is pending.
     if (this.#failure !== null) { throw this.#failure; }
-    this.#commit(transition);
+    this.#commit(transition, prepared?.commit);
     return Object.freeze({
       status: transition.status, received, chainStatus, persistenceStatus, snapshot: this.#snapshot,
     });
   }
 
-  #commit({ received, expectedSeat, type, seat, status, action }: RoundTransition): void {
+  #commit(
+    { received, expectedSeat, type, seat, status, action }: RoundTransition,
+    commitPreparedDeal?: () => RoundRevealTransition,
+  ): void {
     try {
       if (type === "AUDIT_DISCLOSE") {
         if (status === "accepted") {
@@ -601,7 +637,8 @@ export class PersistentSaskuRoundReceiver {
           this.#snapshot = Object.freeze({ ...this.#snapshot, audit: Object.freeze({ phase: audit.phase, pendingSenders, result }) });
         }
       } else {
-        const committed = this.#ledger.commit(decodeAndVerifyEnvelope(received.canonicalBytes), expectedSeat);
+        const committed = commitPreparedDeal ? commitPreparedDeal()
+          : this.#ledger.commit(decodeAndVerifyEnvelope(received.canonicalBytes), expectedSeat);
         if (committed.status !== status || committed.type !== type || committed.seat !== seat ||
             !bytesEqual(committed.received.canonicalBytes, received.canonicalBytes)) {
           throw new Error("Reveal commit does not match the original transition");

@@ -1,3 +1,4 @@
+import type { DecryptionShareBatchBackend } from "@p2pcards/deck";
 import { PersistentCandidateShuffleReceiver, recoverSetup, type PersistentCandidateShuffleOptions, type PrivateDealStep } from "@p2pcards/engine";
 import { captureSessionHistory } from "@p2pcards/session";
 import { SASKU_DECK_SPEC, type SaskuSeat } from "@p2pcards/rules-sasku";
@@ -10,6 +11,7 @@ export interface CandidateShuffledSaskuRoundOptions extends Omit<PersistentCandi
   readonly schedule: readonly PrivateDealStep[];
   readonly roundHistoryLimits?: SaskuRoundRecoveryLimits;
   readonly batchDeal?: boolean;
+  readonly dealBackend?: DecryptionShareBatchBackend;
 }
 
 /** Re-verifies the complete durable shuffle chain before restoring private dealing/play. No supplied deck is accepted. */
@@ -24,9 +26,9 @@ export async function recoverCandidateShuffledSaskuRound(input: CandidateShuffle
   try {
     history.assertUnchanged();
     if (!shuffle.snapshot.complete) throw new Error("Sasku requires all four verified shuffle contributions");
-    round = PersistentSaskuRoundReceiver.recover({ setup, round: options.round, deck: shuffle.finalDeck,
+    round = await PersistentSaskuRoundReceiver.recoverWithBackend({ setup, round: options.round, deck: shuffle.finalDeck,
       dealer, schedule, ...(options.batchDeal === undefined ? {} : { batchDeal: options.batchDeal }),
-      session: options.session, sessionReceiver: options.sessionReceiver }, roundLimits);
+      ...(options.dealBackend === undefined ? {} : { dealBackend: options.dealBackend }), session: options.session, sessionReceiver: options.sessionReceiver }, roundLimits);
     history.assertUnchanged();
     return round;
   } catch (error) { round?.close(); throw error; }

@@ -32,8 +32,10 @@ export {
   verifyGameKeyShare,
   verifyProvenDecryptionShare,
   type ChaumPedersenProof,
-  type GameKeyShare,
+  type DecryptionShareBatchBackend,
+  type DecryptionShareCard,
   type ProvenDecryptionShare,
+  type GameKeyShare,
   type SchnorrProofOfPossession,
 } from "./proofs";
 export {

@@ -19,6 +19,9 @@ Local changes for the shuffle crate:
   response absorption, challenge reduction, and bounds. Profile v2 allows
   serialized matrices of up to 128 ciphertexts with Arkworks length prefixes.
 
+The local prover also clears the private permutation, shuffle witness copies,
+and aggregate remasking scalar on drop.
+
 All other source files, including proof equations and transcript append call
 sites, match the pinned upstream bytes. `source-manifest.json` records original
 and local source hashes; `node ../../verify-vendor.mjs` checks the local snapshot.

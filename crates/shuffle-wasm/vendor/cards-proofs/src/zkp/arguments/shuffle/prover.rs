@@ -12,6 +12,7 @@ use crate::{
 };
 
 use ark_ff::{Field, Zero};
+use zeroize::Zeroizing;
 use ark_std::{borrow::BorrowMut, vec::Vec, rand::{Rng,CryptoRng}};
 
 pub struct Prover<'a, Scalar, Enc, Comm>
@@ -50,15 +51,15 @@ where
 
         t.label(b"shuffle_argument");
 
-        let r: Vec<Scalar> = sample_vector(rng, self.statement.m);
+        let r = Zeroizing::new(sample_vector(rng, self.statement.m));
 
         let index = (1..=self.statement.m * self.statement.n)
             .map(|x| Scalar::from(x as u64))
             .collect::<Vec<_>>();
 
-        let a = self.witness.permutation.apply(&index);
+        let a = Zeroizing::new(self.witness.permutation.apply(&index));
 
-        let a_chunks = reshape(&a, self.statement.m, self.statement.n)?;
+        let a_chunks = Zeroizing::new(reshape(&a, self.statement.m, self.statement.n)?);
 
         let a_commits = a_chunks
             .iter()
@@ -79,13 +80,13 @@ where
 
         let challenge_powers = scalar_powers(x, self.witness.permutation.len())[1..].to_vec();
 
-        let b = self.witness.permutation.apply(&challenge_powers);
-        let s: Vec<Scalar> = sample_vector(rng, self.statement.m);
+        let b = Zeroizing::new(self.witness.permutation.apply(&challenge_powers));
+        let s = Zeroizing::new(sample_vector(rng, self.statement.m));
 
-        let b_chunks = b
+        let b_chunks = Zeroizing::new(b
             .chunks(self.statement.n)
             .map(|c| c.to_vec())
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>());
 
         let b_commits = b_chunks
             .iter()
@@ -99,16 +100,16 @@ where
         let y: Scalar = tr.read_uniform();
         let z: Scalar = tr.read_uniform();
 
-        let d = a
+        let d = Zeroizing::new(a
             .iter()
             .zip(b.iter())
             .map(|(&a, &b)| y * a + b)
-            .collect::<Vec<_>>();
-        let ts = r
+            .collect::<Vec<_>>());
+        let ts = Zeroizing::new(r
             .iter()
             .zip(s.iter())
             .map(|(&r, &s)| y * r + s)
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>());
 
         // Engage in product argument ---------------------------------------------------------------------
         let product_argument_parameters = product_argument::Parameters::new(
@@ -117,11 +118,11 @@ where
             self.parameters.commit_key,
         );
 
-        let d_minus_z = d.iter().map(|&x| x - z).collect::<Vec<Scalar>>();
-        let d_minus_z_chunks = d_minus_z
+        let d_minus_z = Zeroizing::new(d.iter().map(|&x| x - z).collect::<Vec<Scalar>>());
+        let d_minus_z_chunks = Zeroizing::new(d_minus_z
             .chunks(self.statement.n)
             .map(|c| c.to_vec())
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>());
 
         let d_minus_z_commits = d_minus_z_chunks
             .iter()
@@ -152,8 +153,7 @@ where
             self.parameters.generator,
         );
 
-        let minus_rho_witness = self.witness.rho.iter().map(|&x| -x).collect::<Vec<_>>();
-        let rho = dot_product(&minus_rho_witness, &b)?;
+        let rho = Zeroizing::new(-dot_product(self.witness.rho, &b)?);
 
         let temp = dot_product(&b, self.statement.shuffled_ciphers)?;
         let zero_cipher = Enc::Plaintext::zero();
@@ -176,7 +176,7 @@ where
         let multi_exp_statement =
             multi_exponentiation::Statement::new(&shuffled_chunks, product, &b_commits);
 
-        let multi_exp_witness = multi_exponentiation::Witness::new(&b_chunks, &s, rho);
+        let multi_exp_witness = multi_exponentiation::Witness::new(&b_chunks, &s, *rho);
 
         let multi_exp_proof = multi_exponentiation::MultiExponentiation::prove(
             rng,

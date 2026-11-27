@@ -193,6 +193,7 @@ dependencies = [
  "ark-std",
  "sha2",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
@@ -568,6 +569,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "wasm-bindgen",
+ "zeroize",
 ]
 
 [[package]]

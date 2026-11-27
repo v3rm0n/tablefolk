@@ -47,7 +47,7 @@
     },
     "src/utils/permutation.rs": {
       "upstream": "158a4d125711dbfbd299716bcfda66b318947b3cfefcc4213e9b01db1659a5c8",
-      "local": "158a4d125711dbfbd299716bcfda66b318947b3cfefcc4213e9b01db1659a5c8"
+      "local": "df47000ca87d024823102eedf50d7269d2214cdae02905237f2525d4905f727c"
     },
     "src/utils/rand.rs": {
       "upstream": "965e45cc69b1c2c859f8b285122fc9d43aded381b30605e361024d26927a2231",
@@ -119,7 +119,7 @@
     },
     "src/zkp/arguments/multi_exponentiation/mod.rs": {
       "upstream": "f4380e9b2f6e124c89eadc0b3fdf48cf9a67fcf1f02ef34d5ee8fcab72f73001",
-      "local": "f4380e9b2f6e124c89eadc0b3fdf48cf9a67fcf1f02ef34d5ee8fcab72f73001"
+      "local": "39a3053978308bca17b4edb6eeae803e47651a4bbd8583f4a4b2dda0fd4bdf2a"
     },
     "src/zkp/arguments/multi_exponentiation/proof.rs": {
       "upstream": "98cbc93d987050dd604c1f6d5c2037989b9255dc7a4349cf94d1ff7a4c9da8f3",
@@ -127,7 +127,7 @@
     },
     "src/zkp/arguments/multi_exponentiation/prover.rs": {
       "upstream": "64606cef2b1b7f66e454d8aa83bb3b1a52653cf5eb098afb574d67699931adca",
-      "local": "64606cef2b1b7f66e454d8aa83bb3b1a52653cf5eb098afb574d67699931adca"
+      "local": "8706b14357ad103a03b0581163bd4df2dccff986ae5fb93015454d8189575486"
     },
     "src/zkp/arguments/multi_exponentiation/tests.rs": {
       "upstream": "ae9175faa862f7ec6b9f669cd5a0a7f8b47bea273aa2a96e664503836c4d7e00",
@@ -143,7 +143,7 @@
     },
     "src/zkp/arguments/shuffle/prover.rs": {
       "upstream": "9a65217da443abfa47f635eea7d69ddea465c8ea654d0663362851bc2ea64d56",
-      "local": "9a65217da443abfa47f635eea7d69ddea465c8ea654d0663362851bc2ea64d56"
+      "local": "760de24967c2cda41593985bc9bebc643a68830f7a414a8fadf7ec926220874c"
     },
     "src/zkp/arguments/shuffle/tests.rs": {
       "upstream": "a308169a359b0501de05d8b0909e928c56bd1fcda419cc5576e70d274423383b",

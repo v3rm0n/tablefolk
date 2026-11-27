@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RistrettoPoint } from "@p2pcards/crypto";
+import { RistrettoPoint, scalarFromBigInt } from "@p2pcards/crypto";
 import { encodeCandidateShuffleStatement, encodeCandidateShuffleProof, packShuffleDeck } from "@p2pcards/deck";
 import { parseGameId, parseHash256 } from "@p2pcards/protocol";
 import { CandidateShuffleClient } from "./candidate-shuffle-client";
@@ -8,6 +8,7 @@ const dimensions = { rows: 4, columns: 9 };
 const statement = encodeCandidateShuffleStatement({ ...dimensions, gameId: parseGameId(new Uint8Array(16)), round: 0, seat: 0,
   rosterHash: parseHash256(new Uint8Array(32)), aggregateKey: RistrettoPoint.base(), inputDeck: deck, outputDeck: deck });
 const proof = encodeCandidateShuffleProof(Array.from({ length: 106 }, () => new Uint8Array(32)), dimensions);
+const outputDeck = packShuffleDeck(deck, deck.length);
 function fixture() {
   const workers: Array<{ onmessage: ((event: { data: unknown }) => void) | null; onerror: (() => void) | null; onmessageerror: (() => void) | null; postMessage: ReturnType<typeof vi.fn>; terminate: ReturnType<typeof vi.fn> }> = [];
   const make = vi.fn(() => {
@@ -28,6 +29,30 @@ describe("candidate shuffle worker lifecycle", () => {
     expect(f.make).toHaveBeenCalledOnce();
     f.client.close();
     expect(f.workers[0]!.terminate).toHaveBeenCalledOnce();
+  });
+  it("reuses the worker across shuffle and deal operations and clears the dispatched secret", async () => {
+    const f = fixture();
+    const shuffle = f.client.prove(statement), w = f.workers[0]!;
+    w.onmessage!({ data: { outputDeck, proof } });
+    await shuffle;
+
+    const gameId = parseGameId(new Uint8Array(16));
+    const context = { gameId, round: 1, phase: "round.1.deal.0" };
+    const cards = [{ pos: 24, A: RistrettoPoint.base() }];
+    const clone = vi.fn();
+    w.postMessage.mockImplementationOnce(request => clone(structuredClone(request)));
+    const create = f.client.createDleqBatch(context, scalarFromBigInt(7n), cards);
+    const original = w.postMessage.mock.lastCall![0].secret as Uint8Array;
+    expect(original).toEqual(new Uint8Array(32));
+    expect(clone.mock.lastCall![0].secret[0]).toBe(7);
+    w.onmessage!({ data: { shares: new Uint8Array(128) } });
+
+    const verify = f.client.verifyDleqBatch(context, RistrettoPoint.base(), cards, await create);
+    w.onmessage!({ data: { valid: true } });
+    await expect(verify).resolves.toBe(true);
+    expect(f.make).toHaveBeenCalledOnce();
+    expect(w.terminate).not.toHaveBeenCalled();
+    f.client.close();
   });
   it("rejects busy calls, aborts, and ignores a queued late result", async () => {
     const f = fixture(), abort = new AbortController();
@@ -59,8 +84,7 @@ describe("candidate shuffle worker lifecycle", () => {
     const f = fixture(); await expect(f.client.verify(statement.slice(1), proof)).rejects.toThrow(); expect(f.make).not.toHaveBeenCalled();
     const captured = statement.slice(), pending = f.client.prove(captured), w = f.workers[0]!;
     captured.fill(0);
-    expect(w.postMessage.mock.calls[0]![0]).toEqual({ operation: "prove", statement });
-    const outputDeck = packShuffleDeck(deck, deck.length);
+    expect(w.postMessage.mock.calls[0]![0]).toEqual({ operation: "prove", statement, outputDeckBytes: outputDeck.length });
     w.onmessage!({ data: { outputDeck, proof } }); expect(await pending).toEqual({ outputDeck, proof });
   });
 });

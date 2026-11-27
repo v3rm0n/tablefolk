@@ -1,6 +1,7 @@
 //! Bounded Bayer–Groth shuffle proving and verification over Ristretto255.
 mod crs;
 mod dimensions;
+mod dleq;
 mod proof_codec;
 mod ristretto;
 mod shuffle_api;
@@ -26,13 +27,54 @@ pub fn verify_candidate_shuffle(statement: &[u8], proof: &[u8]) -> Result<bool, 
 }
 
 /// Private witness arguments must never be broadcast, logged, or persisted.
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn prove_candidate_shuffle(
     statement: &[u8],
     permutation: &[u8],
     randomizers: &[u8],
 ) -> Result<Vec<u8>, String> {
     shuffle_api::prove(statement, permutation, randomizers)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn prove_candidate_shuffle(
+    statement: &[u8],
+    permutation: Vec<u8>,
+    randomizers: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    let permutation = zeroize::Zeroizing::new(permutation);
+    let randomizers = zeroize::Zeroizing::new(randomizers);
+    shuffle_api::prove(statement, &permutation, &randomizers)
+}
+
+/// Returns the packed shuffled outputDeck followed by its canonical proof bytes.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn prepare_and_prove_candidate_shuffle(template: &[u8]) -> Result<Vec<u8>, String> {
+    shuffle_api::prepare_and_prove(template)
+}
+
+/// Creates packed DLEQ shares and erases the supplied secret bytes on return.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn create_dleq_batch(
+    context: &[u8],
+    secret: &mut [u8],
+    cards: &[u8],
+) -> Result<Vec<u8>, String> {
+    use zeroize::Zeroize;
+    let result = dleq::create(context, secret, cards);
+    secret.zeroize();
+    result
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn verify_dleq_batch(
+    context: &[u8],
+    key: &[u8],
+    cards: &[u8],
+    shares: &[u8],
+) -> Result<bool, String> {
+    dleq::verify(context, key, cards, shares)
 }
 
 fn serialize<T: CanonicalSerialize>(value: &T) -> Vec<u8> {

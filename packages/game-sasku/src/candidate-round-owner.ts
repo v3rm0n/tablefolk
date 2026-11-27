@@ -399,9 +399,10 @@ export class CandidateSaskuRoundOwner {
         this.#options.roster.seats, history.envelopes, this.#options.beaconRequired).coordinator;
       const deck = this.#shuffle.finalDeck;
       history.assertUnchanged();
-      round = PersistentSaskuRoundReceiver.recover({ setup, round: this.#options.round, deck,
+      round = await PersistentSaskuRoundReceiver.recoverWithBackend({ setup, round: this.#options.round, deck,
         dealer: this.#options.dealer, schedule: this.#options.schedule,
-        ...(this.#options.batchDeal === undefined ? {} : { batchDeal: this.#options.batchDeal }), session: this.#options.session,
+        ...(this.#options.batchDeal === undefined ? {} : { batchDeal: this.#options.batchDeal }),
+        ...(this.#options.dealBackend === undefined ? {} : { dealBackend: this.#options.dealBackend }), session: this.#options.session,
         sessionReceiver: this.#options.sessionReceiver }, this.#options.roundHistoryLimits);
       history.assertUnchanged();
       if (this.#closed) { round.close(); return; }

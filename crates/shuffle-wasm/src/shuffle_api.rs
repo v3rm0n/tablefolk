@@ -1,18 +1,18 @@
 //! Bounded public statement and private witness admission.
 use crate::{
-    Argument, Enc, Scalar, crs,
+    Argument, Scalar, crs,
     dimensions::{Dimensions, MAX_CARDS, cbor_head},
     proof_codec,
-    ristretto::{Ciphertext, Parameters, Point},
+    ristretto::{Ciphertext, Parameters, Point, nonzero_scalar},
 };
 use ark_ff::Zero;
 use ark_serialize::CanonicalDeserialize;
 use cards_proofs::{
-    homomorphic_encryption::HomomorphicEncryptionScheme,
     utils::permutation::Permutation,
     zkp::{ArgumentOfKnowledge, arguments::shuffle},
 };
 use rand::{CryptoRng, Rng, rngs::OsRng};
+use zeroize::Zeroizing;
 
 pub const PROFILE: &str = "bg-ristretto255-statement-candidate-v2";
 const FIXED_BYTES: usize = 3 + PROFILE.len() + 17 + 1 + 34 + 34 + 2 * 3;
@@ -93,6 +93,10 @@ impl<'a> Reader<'a> {
 }
 impl Statement {
     fn decode(bytes: &[u8]) -> Result<Self, String> {
+        Self::decode_with_mode(bytes, false)
+    }
+
+    fn decode_with_mode(bytes: &[u8], template: bool) -> Result<Self, String> {
         if !(MIN_BYTES..=MAX_BYTES).contains(&bytes.len()) {
             return Err("Invalid statement byte length".into());
         }
@@ -117,8 +121,18 @@ impl Statement {
         if key.is_zero() {
             return Err("Identity shuffle key".into());
         }
+        let input_start = r.offset;
         let input = r.deck(count)?;
-        let output = r.deck(count)?;
+        let output = if template {
+            let input_end = r.offset;
+            r.fixed(count * 64)?;
+            if bytes[input_start..input_end] != bytes[input_end..r.offset] {
+                return Err("Invalid shuffle preparation template".into());
+            }
+            input.clone()
+        } else {
+            r.deck(count)?
+        };
         if r.offset != bytes.len() {
             return Err("Trailing statement bytes".into());
         }
@@ -162,12 +176,13 @@ pub fn validate_statement(bytes: &[u8]) -> Result<(), String> {
 pub fn verify(statement: &[u8], proof: &[u8]) -> Result<bool, String> {
     let statement = Statement::decode(statement)?;
     let proof = proof_codec::decode(proof, statement.dimensions)?;
-    let (generator, commitments) = crs::derive(statement.dimensions)?;
+    let crs = crs::derive(statement.dimensions)?;
+    let (generator, commitments) = &*crs;
     let encryption = Parameters {
         generator: Point::base(),
     };
     let parameters =
-        shuffle::Parameters::new(&encryption, &statement.key, &commitments, &generator);
+        shuffle::Parameters::new(&encryption, &statement.key, commitments, generator);
     let public = shuffle::Statement::new(
         &statement.input,
         &statement.output,
@@ -178,7 +193,7 @@ pub fn verify(statement: &[u8], proof: &[u8]) -> Result<bool, String> {
         &parameters,
         &public,
         &proof,
-        statement.transcript(generator),
+        statement.transcript(*generator),
     )
     .is_ok())
 }
@@ -199,10 +214,7 @@ fn prove_with_rng<R: Rng + CryptoRng>(
         return Err("Invalid private witness length".into());
     }
     let mut seen = [false; MAX_CARDS];
-    let mut masks = Vec::with_capacity(count);
-    let encryption = Parameters {
-        generator: Point::base(),
-    };
+    let mut masks = Zeroizing::new(Vec::with_capacity(count));
     for (j, (&position, bytes)) in permutation
         .iter()
         .zip(randomizers.chunks_exact(32))
@@ -212,44 +224,77 @@ fn prove_with_rng<R: Rng + CryptoRng>(
             return Err("Invalid private permutation".into());
         }
         seen[position as usize] = true;
-        let mask =
-            Scalar::deserialize_compressed(bytes).map_err(|_| "Noncanonical private randomizer")?;
+        let mask = Zeroizing::new(
+            Scalar::deserialize_compressed(bytes).map_err(|_| "Noncanonical private randomizer")?,
+        );
         if mask.is_zero() {
             return Err("Zero private randomizer".into());
         }
-        let expected = statement.input[position as usize]
-            + Enc::encrypt(&encryption, &statement.key, &Point::zero(), &mask);
+        let expected = statement.input[position as usize].remask_base(&statement.key, &mask);
         if expected != statement.output[j] {
             return Err("Private witness does not match statement".into());
         }
-        masks.push(mask);
+        masks.push(*mask);
     }
     // All public/private admission and relation checks precede proof RNG use.
     let permutation =
         Permutation::from(permutation.iter().map(|p| *p as usize).collect::<Vec<_>>());
-    let (generator, commitments) = crs::derive(statement.dimensions)?;
+    prove_admitted(&statement, &permutation, &masks, rng)
+}
+
+pub fn prepare_and_prove(template: &[u8]) -> Result<Vec<u8>, String> {
+    let mut statement = Statement::decode_with_mode(template, true)?;
+    let count = statement.dimensions.card_count();
+    let mut rng = OsRng;
+    let permutation = Permutation::from_rng(&mut rng, count);
+    let mut masks = Zeroizing::new(vec![Scalar::zero(); count]);
+    for (index, (&position, mask)) in permutation.iter().zip(masks.iter_mut()).enumerate() {
+        *mask = nonzero_scalar(&mut rng);
+        statement.output[index] = statement.input[position].remask_base(&statement.key, mask);
+    }
+    let proof = prove_admitted(&statement, &permutation, &masks[..], &mut rng)?;
+    let mut result = Vec::with_capacity(count * 64 + proof.len());
+    for card in &statement.output {
+        result.extend_from_slice(&card.0.to_bytes());
+        result.extend_from_slice(&card.1.to_bytes());
+    }
+    result.extend_from_slice(&proof);
+    Ok(result)
+}
+
+fn prove_admitted<R: Rng + CryptoRng>(
+    statement: &Statement,
+    permutation: &Permutation,
+    masks: &[Scalar],
+    rng: &mut R,
+) -> Result<Vec<u8>, String> {
+    let encryption = Parameters {
+        generator: Point::base(),
+    };
+    let crs = crs::derive(statement.dimensions)?;
+    let (generator, commitments) = &*crs;
     let parameters =
-        shuffle::Parameters::new(&encryption, &statement.key, &commitments, &generator);
+        shuffle::Parameters::new(&encryption, &statement.key, commitments, generator);
     let public = shuffle::Statement::new(
         &statement.input,
         &statement.output,
         statement.dimensions.rows(),
         statement.dimensions.columns(),
     );
-    let witness = shuffle::Witness::new(&permutation, &masks);
+    let witness = shuffle::Witness::new(permutation, masks);
     let proof = Argument::prove(
         rng,
         &parameters,
         &public,
         &witness,
-        statement.transcript(generator),
+        statement.transcript(*generator),
     )
     .map_err(|e| e.to_string())?;
     if Argument::verify(
         &parameters,
         &public,
         &proof,
-        statement.transcript(generator),
+        statement.transcript(*generator),
     )
     .is_err()
     {
@@ -261,7 +306,9 @@ fn prove_with_rng<R: Rng + CryptoRng>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Enc;
     use ark_serialize::CanonicalSerialize;
+    use cards_proofs::homomorphic_encryption::HomomorphicEncryptionScheme;
     use cards_proofs::transcript::{array, bytes};
     use rand::RngCore;
 

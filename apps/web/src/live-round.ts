@@ -173,7 +173,7 @@ export class LiveRound {
     return CandidateSaskuRoundOwner.open({ session: this.#options.session, sessionReceiver: this.#durable,
       roster: this.#options.roster, self: this.#options.self, setupRound: 0, round: this.#match.round,
       dealer: dealerForSaskuRound(this.#match.round), schedule: FIRST_DEAL, verifier: this.#client,
-      beaconRequired: false, batchDeal: true,
+      beaconRequired: false, batchDeal: true, dealBackend: this.#client,
       historyLimits: MATCH_HISTORY_LIMITS, roundHistoryLimits: { ...MATCH_HISTORY_LIMITS, allowOtherRounds: true } });
   }
   #validateMatchHistory(): void {

@@ -1,3 +1,5 @@
+use zeroize::Zeroizing;
+
 use super::proof::Proof;
 use super::{Parameters, Statement, Witness};
 
@@ -74,7 +76,7 @@ where
 
         let mut b: Vec<Scalar> = sample_vector(rng, num_of_diagonals + 1);
         let mut s: Vec<Scalar> = sample_vector(rng, num_of_diagonals + 1);
-        let mut tau: Vec<Scalar> = sample_vector(rng, num_of_diagonals + 1);
+        let mut tau = Zeroizing::new(sample_vector(rng, num_of_diagonals + 1));
 
         b[m] = Scalar::zero();
         s[m] = Scalar::zero();

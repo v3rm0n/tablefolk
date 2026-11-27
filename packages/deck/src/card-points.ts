@@ -16,6 +16,12 @@ export class DeckSpecError extends Error {
   }
 }
 
+const tables = new Map<string, {
+  readonly cardIds: readonly string[];
+  readonly points: readonly RistrettoPoint[];
+  readonly cardByPoint: ReadonlyMap<string, string>;
+}>();
+
 export class CardPointTable {
   readonly #deckSpecId: string;
   readonly #cardIds: readonly string[];
@@ -30,6 +36,16 @@ export class CardPointTable {
       throw new DeckSpecError(
         `Deck must contain ${MIN_DECK_SIZE} to ${MAX_DECK_SIZE} cards; got ${spec.cards.length}`,
       );
+    }
+
+    this.#deckSpecId = spec.id;
+    const cached = tables.get(spec.id);
+    if (cached && cached.cardIds.length === spec.cards.length &&
+        cached.cardIds.every((id, position) => id === spec.cards[position])) {
+      this.#cardIds = cached.cardIds;
+      this.#points = cached.points;
+      this.#cardByPoint = cached.cardByPoint;
+      return;
     }
 
     const seenIds = new Set<string>();
@@ -59,13 +75,14 @@ export class CardPointTable {
       seenIds.add(cardId);
       pointMap.set(encoded, cardId);
       cardIds.push(cardId);
+      Object.freeze(point);
       points.push(point);
     }
 
-    this.#deckSpecId = spec.id;
     this.#cardIds = Object.freeze(cardIds);
     this.#points = Object.freeze(points);
     this.#cardByPoint = pointMap;
+    tables.set(spec.id, { cardIds: this.#cardIds, points: this.#points, cardByPoint: this.#cardByPoint });
   }
 
   get deckSpecId(): string {

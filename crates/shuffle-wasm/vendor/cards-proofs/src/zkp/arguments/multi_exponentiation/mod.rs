@@ -103,6 +103,12 @@ where
     pub rho: Scalar,
 }
 
+impl<Scalar: Field> Drop for Witness<'_, Scalar> {
+    fn drop(&mut self) {
+        self.rho.zeroize();
+    }
+}
+
 impl<'a, Scalar> Witness<'a, Scalar>
 where
     Scalar: Field,

@@ -32,7 +32,7 @@ export function encodeCandidateShuffleStatement(value: CandidateShuffleStatement
     throw new RangeError("Invalid shuffle round or seat");
   }
   const key = pointBytes(value.aggregateKey);
-  if (RistrettoPoint.fromBytes(key).isIdentity()) { throw new Error("Identity shuffle key"); }
+  if (value.aggregateKey.isIdentity()) { throw new Error("Identity shuffle key"); }
   return encodeCanonical([CANDIDATE_SHUFFLE_STATEMENT_PROFILE, rows, columns, game, round, seat,
     roster, key, packShuffleDeck(value.inputDeck, cardCount), packShuffleDeck(value.outputDeck, cardCount)]);
 }
@@ -106,7 +106,7 @@ export function encodeCandidateShuffleWitness(witness: DeckShuffleWitness, dimen
 
 function pointBytes(point: RistrettoPoint): Uint8Array {
   if (!(point instanceof RistrettoPoint)) throw new TypeError("Expected Ristretto point");
-  const bytes = point.toBytes(); RistrettoPoint.fromBytes(bytes); return bytes;
+  return point.toBytes();
 }
 /** Pack ordered ciphertexts as contiguous canonical A/B point pairs. */
 export function packShuffleDeck(deck: readonly MaskedCard[], cardCount: number): Uint8Array {

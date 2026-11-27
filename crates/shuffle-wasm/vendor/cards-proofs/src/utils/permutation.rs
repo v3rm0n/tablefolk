@@ -4,6 +4,12 @@ use ark_std::{borrow::ToOwned, boxed::Box, vec::Vec, rand::{Rng, distributions::
 #[derive(Clone,PartialEq,Eq,Debug)]
 pub struct Permutation(Box<[usize]>);
 
+impl Drop for Permutation {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut *self.0);
+    }
+}
+
 impl core::ops::Deref for Permutation {
     type Target = [usize];
     fn deref(&self) -> &[usize] { &self.0 }

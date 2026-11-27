@@ -3,6 +3,8 @@ use crate::dimensions::{Dimensions, cbor_head};
 use crate::ristretto::{CommitKey, Point};
 use ark_ff::Zero;
 use sha2::{Digest, Sha512};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub const PROFILE: &str = "bg-ristretto255-crs-candidate-v2";
 
@@ -40,8 +42,17 @@ fn validate(point: Point, previous: &[Point]) -> Result<(), String> {
     Ok(())
 }
 
-pub fn derive(dimensions: Dimensions) -> Result<(Point, CommitKey), String> {
-    derive_with_observer(dimensions, |_, _, _, _, _| {})
+pub fn derive(dimensions: Dimensions) -> Result<Arc<(Point, CommitKey)>, String> {
+    static CACHE: OnceLock<Mutex<HashMap<(usize, usize), Arc<(Point, CommitKey)>>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (dimensions.rows(), dimensions.columns());
+    if let Some(entry) = cache.lock().unwrap().get(&key) {
+        return Ok(Arc::clone(entry));
+    }
+    let derived = Arc::new(derive_with_observer(dimensions, |_, _, _, _, _| {})?);
+    let mut guard = cache.lock().unwrap();
+    Ok(Arc::clone(guard.entry(key).or_insert(derived)))
 }
 
 fn derive_with_observer(
@@ -112,7 +123,9 @@ mod tests {
 
     #[test]
     fn identity_equal_and_negated_bases_fail_closed() {
-        let (proof, _) = derive(Dimensions::new(4, 9).unwrap()).unwrap();
+        let crs = derive(Dimensions::new(4, 9).unwrap()).unwrap();
+        assert!(Arc::ptr_eq(&crs, &derive(Dimensions::new(4, 9).unwrap()).unwrap()));
+        let proof = crs.0;
         for point in [Point::zero(), Point::base(), -Point::base(), proof, -proof] {
             assert!(validate(point, &[Point::base(), proof]).is_err());
         }
