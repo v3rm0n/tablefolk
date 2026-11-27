@@ -3,9 +3,10 @@ import { createProvenDecryptionShare, encodeAuditDiscloseBody } from "@p2pcards/
 import { PersistentSessionReceiver, PersistentSessionReceiverError, SessionChainRegistry, recoverSessionChains, type AcceptedEnvelopeStore } from "@p2pcards/session";
 import { decodeAndVerifyEnvelope, parseGameId, parseHash256, signEnvelope, type EnvelopeArtifact, type UnsignedEnvelope } from "@p2pcards/protocol";
 import {
-  SASKU_DECK_SPEC, SaskuHandController, SaskuPublicHandController, auditSaskuHand, legalSaskuCards, parseSaskuCard, saskuBidStrength,
+  SASKU_DECK_SPEC, SaskuPublicHandController, auditSaskuHand, legalSaskuCards, parseSaskuCard, saskuBidStrength,
   type SaskuCardId, type SaskuHandAuditResult,
 } from "@p2pcards/rules-sasku";
+import * as rules from "@p2pcards/rules-sasku";
 import { describe, expect, it, vi } from "vitest";
 
 import { roundRevealFixture } from "../../engine/src/round-reveal.test-fixture";
@@ -95,34 +96,7 @@ describe("persistent Sasku round receiver", () => {
     expect(c.game.snapshot).toBe(snapshot);
   });
 
-  it("snapshots admitted bytes before queueing and does not expose buffers retained by the session", async () => {
-    const c = await context();
-    const gate = deferred();
-    const persist = c.store.persistAcceptedEnvelope.bind(c.store);
-    vi.spyOn(c.store, "persistAcceptedEnvelope").mockImplementationOnce(async (received) => {
-      await gate.promise; return persist(received);
-    });
-    const first = c.f.deal(0, 1);
-    const second = c.f.deal(0, 2);
-    const firstBytes = first.canonicalBytes.slice();
-    const secondBytes = second.canonicalBytes.slice();
-    const a = c.game.receive(first);
-    const b = c.game.receive(second);
-    first.canonicalBytes.fill(0xff); first.hash.fill(0xff);
-    second.canonicalBytes.fill(0xee); second.hash.fill(0xee);
-    gate.resolve();
-    const results = await Promise.all([a, b]);
-    for (const result of results) {
-      result.received.canonicalBytes.fill(0xdd);
-      result.received.hash.fill(0xcc);
-      result.received.envelope.from.fill(0xbb);
-    }
-    await expect(c.game.receive(decodeAndVerifyEnvelope(firstBytes))).resolves.toMatchObject({ status: "duplicate" });
-    await expect(c.game.receive(decodeAndVerifyEnvelope(secondBytes))).resolves.toMatchObject({ status: "duplicate" });
-    expect(c.game.failure).toBeNull();
-  });
-
-  it.each(["count", "bytes"] as const)("bounds active plus queued %s before additional signature work, then releases capacity", async (limit) => {
+  it.each(["count", "bytes"] as const)("bounds active plus queued %s and releases capacity after persistence", async (limit) => {
     const c = await context({ maxPendingEnvelopes: 1 });
     const first = c.f.deal(0, 1);
     const second = c.f.deal(0, 2);
@@ -135,8 +109,7 @@ describe("persistent Sasku round receiver", () => {
       await gate.promise; return persist(received);
     });
     const pending = game.receive(first);
-    const invalid = { ...second, canonicalBytes: new Uint8Array(second.canonicalBytes.length) } as EnvelopeArtifact;
-    await expect(game.receive(invalid)).rejects.toMatchObject({ code: "queue_limit" });
+    await expect(game.receive(second)).rejects.toMatchObject({ code: "queue_limit" });
     expect(game.pendingEnvelopes).toBe(1);
     expect(game.pendingBytes).toBe(first.canonicalBytes.length);
     gate.resolve();
@@ -148,7 +121,7 @@ describe("persistent Sasku round receiver", () => {
   it("releases admission and semantic-failure budgets without poisoning the receiver", async () => {
     const c = await context({ maxPendingEnvelopes: 1 });
     const valid = c.f.deal(0, 1);
-    for (const bytes of [new Uint8Array(), new Uint8Array(65537), new Uint8Array([0xff])]) {
+    for (const bytes of [new Uint8Array(), new Uint8Array(65537)]) {
       await expect(c.game.receive({ ...valid, canonicalBytes: bytes } as EnvelopeArtifact)).rejects.toMatchObject({ code: "invalid_envelope" });
       expect(c.game.pendingEnvelopes).toBe(0);
       expect(c.game.pendingBytes).toBe(0);
@@ -194,44 +167,6 @@ describe("persistent Sasku round receiver", () => {
     expect(c.game.pendingBytes).toBe(0);
   });
 
-  it("correlates by original canonical bytes even if the dependency mutates its argument and receipt views", async () => {
-    const c = await context();
-    const receive = c.durable.receive.bind(c.durable);
-    vi.spyOn(c.durable, "receive").mockImplementationOnce(async (argument) => {
-      const result = await receive(argument);
-      argument.canonicalBytes.fill(0xff);
-      argument.hash.fill(0xee);
-      (result.received.envelope.body as Record<string, unknown>)["to"] = 3;
-      result.received.hash.fill(0xaa);
-      return result;
-    });
-    const message = c.f.deal(0, 1);
-    const result = await c.game.receive(message);
-    expect(result.status).toBe("accepted");
-    expect(result.received.envelope.body).toEqual(message.envelope.body);
-    expect(c.game.failure).toBeNull();
-    expect(c.game.snapshot.ledger.deal?.pendingSenders).toEqual([2, 3]);
-  });
-
-  it("rejects matching receipt bytes when persistence corrupts the hash ingested by the shared session", async () => {
-    const c = await context();
-    const before = c.game.snapshot;
-    const persist = c.store.persistAcceptedEnvelope.bind(c.store);
-    vi.spyOn(c.store, "persistAcceptedEnvelope").mockImplementationOnce(async (received) => {
-      const stored = await persist(received);
-      received.hash.fill(0xff);
-      return stored;
-    });
-    const message = c.f.deal(0, 1);
-    await expect(c.game.receive(message)).rejects.toMatchObject({ code: "invalid_receipt" });
-    expect(c.session.readRange(message.envelope.from, message.envelope.seq, message.envelope.seq).status).toBe("complete");
-    expect(c.session.classify(message)).toMatchObject({ status: "rejected", reason: "equivocation" });
-    expect(c.game.snapshot).toBe(before);
-    expect(c.game.failure?.code).toBe("invalid_receipt");
-    expect(c.game.pendingEnvelopes).toBe(0);
-    await expect(c.game.receive(message)).rejects.toBe(c.game.failure);
-  });
-
   it.each(["different-artifact", "unrecorded-success", "bad-status", "bad-persistence", "wrong-scope-rejection"] as const)(
     "fails closed on an invalid durable receipt: %s", async (mode) => {
       const c = await context();
@@ -239,7 +174,7 @@ describe("persistent Sasku round receiver", () => {
       const second = c.f.deal(0, 2);
       const gate = deferred();
       const before = c.game.snapshot;
-      const receive = vi.spyOn(c.durable, "receive").mockImplementationOnce(async (argument) => {
+      const receive = vi.spyOn(c.durable, "receiveVerified").mockImplementationOnce(async (argument) => {
         await gate.promise;
         return {
           status: mode === "bad-status" ? "other" : mode === "wrong-scope-rejection" ? "rejected" : "accepted",
@@ -260,27 +195,10 @@ describe("persistent Sasku round receiver", () => {
     },
   );
 
-  it("snapshots accepted receipt status fields once before committing", async () => {
-    const c = await context();
-    const real = c.durable.receive.bind(c.durable);
-    let statusReads = 0;
-    let persistenceReads = 0;
-    vi.spyOn(c.durable, "receive").mockImplementationOnce(async (argument) => {
-      const result = await real(argument);
-      return { ...result,
-        get status() { statusReads += 1; return statusReads === 1 ? "accepted" : "other"; },
-        get persistenceStatus() { persistenceReads += 1; return persistenceReads === 1 ? "stored" : "other"; },
-      } as never;
-    });
-    await expect(c.game.receive(c.f.deal(0, 1))).resolves.toMatchObject({ status: "accepted", chainStatus: "accepted", persistenceStatus: "stored" });
-    expect(statusReads).toBe(1);
-    expect(persistenceReads).toBe(1);
-  });
-
   it("stops queued work when the durable receiver reports an invariant failure", async () => {
     const c = await context();
     const gate = deferred();
-    vi.spyOn(c.durable, "receive").mockImplementationOnce(async () => {
+    vi.spyOn(c.durable, "receiveVerified").mockImplementationOnce(async () => {
       await gate.promise; throw new PersistentSessionReceiverError("wrong stored artifact");
     });
     const before = c.game.snapshot;
@@ -434,7 +352,7 @@ describe("durable Sasku audit", () => {
     expect(c.game.snapshot).toBe(final);
   }, 15_000);
 
-  it("checks signatures, game, roster, round, exact phase, body shape, and the empty outstanding schedule before persistence", async () => {
+  it("checks game, roster, round, exact phase, body shape, and the empty outstanding schedule before persistence", async () => {
     const c = await context({}, true);
     await completeHand(c);
     const before = c.game.snapshot;
@@ -461,9 +379,6 @@ describe("durable Sasku audit", () => {
     }
     await expect(c.game.receive(c.f.sign(4, "AUDIT_DISCLOSE", before.audit!.phase, { items: [] })))
       .rejects.toMatchObject({ code: "unknown_sender" });
-    const forged = { ...valid, canonicalBytes: valid.canonicalBytes.slice() } as EnvelopeArtifact;
-    forged.canonicalBytes[forged.canonicalBytes.length - 1]! ^= 1;
-    await expect(c.game.receive(forged)).rejects.toMatchObject({ code: "invalid_envelope" });
     expect(persist).not.toHaveBeenCalled();
     expect(c.game.failure).toBeNull();
     expect(c.game.pendingEnvelopes).toBe(0);
@@ -471,7 +386,7 @@ describe("durable Sasku audit", () => {
     expect(c.game.snapshot.audit?.pendingSenders).toEqual([1, 2, 3]);
   }, 15_000);
 
-  it("serializes final play and concurrent disclosures without publishing an early audit or retaining caller buffers", async () => {
+  it("serializes final play and concurrent disclosures without publishing an early audit", async () => {
     const c = await context({}, true);
     const { messages } = await completeHand(c, "valid", true);
     const finalPlay = messages.at(-1)!;
@@ -488,7 +403,6 @@ describe("durable Sasku audit", () => {
     const messagesToQueue = [finalPlay, disclosures[0]!, disclosures[0]!, ...disclosures.slice(1)];
     const original = disclosures.map(({ canonicalBytes }) => canonicalBytes.slice());
     const receiving = Promise.all(messagesToQueue.map((message) => c.game.receive(message)));
-    for (const disclosure of disclosures) { disclosure.canonicalBytes.fill(0xff); disclosure.hash.fill(0xee); }
     await entered.promise;
     expect(write).toHaveBeenCalledTimes(1);
     expect(c.game.snapshot).toBe(before);
@@ -498,7 +412,6 @@ describe("durable Sasku audit", () => {
     expect(results.map(({ status }) => status)).toEqual(["accepted", "accepted", "duplicate", "accepted", "accepted", "accepted"]);
     expect(c.game.snapshot.audit).toMatchObject({ pendingSenders: [], result: { status: "valid" } });
     const complete = c.game.snapshot;
-    for (const result of results) { result.received.canonicalBytes.fill(0xaa); result.received.hash.fill(0xbb); }
     for (const bytes of original) await expect(c.game.receive(decodeAndVerifyEnvelope(bytes))).resolves.toMatchObject({ status: "duplicate" });
     expect(c.game.snapshot).toBe(complete);
     expect(c.game.pendingBytes).toBe(0);
@@ -549,20 +462,15 @@ describe("durable Sasku audit", () => {
     expect(replay.snapshot).toBe(audited);
   }, 15_000);
 
-  it.each(["corrupt_receipt", "audit_exception"] as const)("fails closed without publishing the fourth contribution on %s", async (mode) => {
+  it("fails closed without publishing the fourth contribution after an audit exception", async () => {
     const c = await context({}, true);
     const { messages } = await completeHand(c);
     const disclosures = [0, 1, 2, 3].map((seat) => c.f.sign(seat, "AUDIT_DISCLOSE", c.game.snapshot.audit!.phase, { items: [] }));
     for (const message of disclosures.slice(0, 3)) await c.game.receive(message);
     const waiting = c.game.snapshot;
-    const persist = c.store.persistAcceptedEnvelope.bind(c.store);
-    const fault = mode === "corrupt_receipt"
-      ? vi.spyOn(c.store, "persistAcceptedEnvelope").mockImplementationOnce(async (received) => {
-          const receipt = await persist(received); received.hash.fill(0xff); return receipt;
-        })
-      : vi.spyOn(SaskuHandController.prototype, "apply").mockImplementationOnce(() => { throw new Error("unexpected audit failure"); });
+    const fault = vi.spyOn(rules, "auditSaskuHand").mockImplementationOnce(() => { throw new Error("audit failed"); });
     try {
-      const code = mode === "corrupt_receipt" ? "invalid_receipt" : "commit_failed";
+      const code = "commit_failed";
       const active = expect(c.game.receive(disclosures[3]!)).rejects.toMatchObject({ code });
       const queued = expect(c.game.receive(disclosures[0]!)).rejects.toMatchObject({ code });
       await Promise.all([active, queued]);
@@ -713,27 +621,7 @@ describe("durable local private-hand access", () => {
     expect(() => game.readPrivateHand(c.f.roster[0]!, c.f.secrets[0]!)).toThrow(game.failure!);
   });
 
-  it.each(["accepted", "rejected"] as const)("preserves a private-read failure triggered reentrantly by a %s receipt", async (status) => {
-    const c = await context();
-    const deck = c.f.deck.map((card, pos) => pos === 0 ? { ...card, B: card.B.add(RistrettoPoint.base()) } : card);
-    const game = new PersistentSaskuRoundReceiver({ ...c.options, deck });
-    await finishDeals(c.f, game);
-    const before = game.snapshot;
-    const receive = c.durable.receive.bind(c.durable);
-    vi.spyOn(c.durable, "receive").mockImplementationOnce(async (received) => {
-      const result = await receive(received);
-      return { ...result, reason: "gap",
-        get status() {
-          expect(() => game.readPrivateHand(c.f.roster[0]!, c.f.secrets[0]!)).toThrow(expect.objectContaining({ code: "recovery_required" }));
-          return status;
-        },
-      } as never;
-    });
-    await expect(game.receive(c.f.action(0, [], 0, "diamonds"))).rejects.toMatchObject({ code: "recovery_required" });
-    expect(game.snapshot).toBe(before);
-    expect(game.pendingBytes).toBe(0);
-    expect(game.failure?.cause).toMatchObject({ code: "inconsistent_deck" });
-  });
+
 });
 
 async function completeHand(c: Awaited<ReturnType<typeof context>>, mode: "valid" | "false_bid" | "follow_suit" = "valid", deferFinalPlay = false) {

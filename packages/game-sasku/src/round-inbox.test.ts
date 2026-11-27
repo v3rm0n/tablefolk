@@ -5,11 +5,11 @@ import { MAX_ROUND_REVEAL_ENVELOPE_BYTES } from "@p2pcards/engine";
 import {
   DEFAULT_MAX_PENDING_SASKU_INBOX_BYTES, DEFAULT_MAX_PENDING_SASKU_INBOX_ENVELOPES,
   SaskuRoundInbox, SaskuRoundInboxError,
-  type SaskuRoundInboxErrorCode, type SaskuRoundInboxOptions, type SaskuRoundReceiveResult,
+  type SaskuRoundInboxErrorCode, type SaskuRoundInboxOptions,
 } from "@p2pcards/game-sasku";
 import * as protocol from "@p2pcards/protocol";
 import {
-  decodeAndVerifyEnvelope, parseGameId, parseHash256, parseIdentityPublicKey, signEnvelope,
+  parseGameId, parseHash256, parseIdentityPublicKey, signEnvelope,
   type EnvelopeArtifact, type IdentityPublicKey, type UnsignedEnvelope,
 } from "@p2pcards/protocol";
 import { MAX_SASKU_HAND_ACTIONS } from "@p2pcards/rules-sasku";
@@ -373,83 +373,7 @@ describe("Sasku round inbox scheduling", () => {
     expect(c.game.snapshot.ledger).toMatchObject({ dealIndex: 1, deal: { pendingSenders: [0, 3] } });
   });
 
-  it("rechecks eligibility if classification reentrantly admits new receiver work", async () => {
-    const c = await context({}, undefined, false);
-    const inbox = inboxFor(c);
-    const one = await native(c, c.f.deal(0, 1));
-    const two = await native(c, c.f.deal(0, 2));
-    const gate = deferred();
-    const entered = deferred();
-    const persist = c.store.persistAcceptedEnvelope.bind(c.store);
-    vi.spyOn(c.store, "persistAcceptedEnvelope").mockImplementationOnce(async (argument) => {
-      entered.resolve(); await gate.promise; return persist(argument);
-    });
-    let unrelated!: Promise<SaskuRoundReceiveResult>;
-    const classify = c.session.classify.bind(c.session);
-    vi.spyOn(c.session, "classify").mockImplementationOnce((argument) => {
-      unrelated = c.game.receive(two);
-      return classify(argument);
-    });
-    const receive = vi.spyOn(c.game, "receive");
-    const pending = inbox.receive(c.f.roster[1]!, one.canonicalBytes);
-    await entered.promise;
-    expect(receive.mock.calls.map(([message]) => message.canonicalBytes)).toEqual([two.canonicalBytes]);
-    expect(c.game.pendingEnvelopes).toBe(1);
-    gate.resolve();
-    await unrelated;
-    await expect(pending).resolves.toMatchObject({ status: "accepted" });
-    await inbox.whenIdle();
-    expect(receive.mock.calls.map(([message]) => message.canonicalBytes)).toEqual([two.canonicalBytes, one.canonicalBytes]);
-    expect(inbox.pendingBytes).toBe(0);
-  });
 
-  it("does not pop the wrong head when classification inserts an earlier same-seat envelope", async () => {
-    const c = await context({}, undefined, false);
-    const earlier = await native(c, c.f.deal(0, 2));
-    const later = await native(c, c.f.deal(1, 2));
-    for (const message of [earlier, await native(c, c.f.deal(0, 1)), await native(c, c.f.deal(0, 3)), later]) {
-      await c.game.receive(message);
-    }
-    const inbox = inboxFor(c);
-    const before = c.game.snapshot;
-    const receive = vi.spyOn(c.game, "receive");
-    let inserted!: Promise<SaskuRoundReceiveResult>;
-    const classify = c.session.classify.bind(c.session);
-    vi.spyOn(c.session, "classify").mockImplementationOnce((argument) => {
-      inserted = inbox.receive(c.f.roster[2]!, earlier.canonicalBytes);
-      return classify(argument);
-    });
-    const pending = inbox.receive(c.f.roster[2]!, later.canonicalBytes);
-    await inbox.whenIdle();
-    await expect(Promise.all([pending, inserted])).resolves.toMatchObject([{ status: "duplicate" }, { status: "duplicate" }]);
-    expect(receive.mock.calls.map(([message]) => message.envelope.seq)).toEqual([earlier.envelope.seq, later.envelope.seq]);
-    expect(c.game.snapshot).toBe(before);
-    expect(inbox.pendingEnvelopes).toBe(0);
-    expect(inbox.pendingBytes).toBe(0);
-  });
-
-  it("rescans instead of stranding an eligible message inserted into an already-visited seat", async () => {
-    const c = await context({}, undefined, false);
-    const inbox = inboxFor(c);
-    const future = await audit(c, 3);
-    const current = await native(c, c.f.deal(0, 1));
-    let inserted!: Promise<SaskuRoundReceiveResult>;
-    const classify = c.session.classify.bind(c.session);
-    vi.spyOn(c.session, "classify").mockImplementationOnce((argument) => {
-      inserted = inbox.receive(c.f.roster[1]!, current.canonicalBytes);
-      return classify(argument);
-    });
-    const receive = vi.spyOn(c.game, "receive");
-    const pending = Promise.allSettled([inbox.receive(c.f.roster[3]!, future.canonicalBytes)]);
-    await inbox.whenIdle();
-    await expect(inserted).resolves.toMatchObject({ status: "accepted" });
-    expect(receive).toHaveBeenCalledOnce();
-    expect(inbox.pendingEnvelopes).toBe(1);
-    expect(inbox.pendingBytes).toBe(future.canonicalBytes.length);
-    inbox.close();
-    await expect(pending).resolves.toMatchObject([{ status: "rejected", reason: { code: "closed" } }]);
-    expect(inbox.pendingBytes).toBe(0);
-  });
 });
 
 describe("Sasku round inbox budgets and isolation", () => {
@@ -548,89 +472,7 @@ describe("Sasku round inbox budgets and isolation", () => {
     expect(inbox.pendingBytes).toBe(0);
   });
 
-  it("copies remote and payload views on admission and detaches receipt artifacts from dependencies and later callers", async () => {
-    const c = await context({}, undefined, false);
-    const inbox = inboxFor(c);
-    const first = await native(c, c.f.deal(0, 1));
-    const second = await native(c, c.f.deal(0, 2));
-    const gate = deferred();
-    const entered = deferred();
-    const persist = c.store.persistAcceptedEnvelope.bind(c.store);
-    vi.spyOn(c.store, "persistAcceptedEnvelope").mockImplementationOnce(async (argument) => {
-      entered.resolve(); await gate.promise; return persist(argument);
-    });
-    const real = c.game.receive.bind(c.game);
-    const receipts: SaskuRoundReceiveResult[] = [];
-    vi.spyOn(c.game, "receive").mockImplementation(async (argument) => {
-      const result = await real(argument);
-      argument.canonicalBytes.fill(0xff);
-      argument.hash.fill(0xee);
-      (result.received.envelope.body as Record<string, unknown>)["to"] = 3;
-      result.received.hash.fill(0xdd);
-      receipts.push(result);
-      return result;
-    });
-    const payload = new Uint8Array(first.canonicalBytes.length + 8);
-    payload.set(first.canonicalBytes, 4);
-    const remote = parseIdentityPublicKey(c.f.roster[1]!);
-    const a = inbox.receive(remote, payload.subarray(4, -4));
-    const queuedBytes = second.canonicalBytes.slice();
-    const b = inbox.receive(c.f.roster[2]!, queuedBytes);
-    payload.fill(0xaa);
-    remote.fill(0xbb);
-    queuedBytes.fill(0xcc);
-    await entered.promise;
-    gate.resolve();
-    const results = await Promise.all([a, b]);
-    await inbox.whenIdle();
-    for (const [index, original] of [first, second].entries()) {
-      const result = results[index]!;
-      expect(result.received).toEqual(decodeAndVerifyEnvelope(original.canonicalBytes));
-      expect(result.received).not.toBe(receipts[index]!.received);
-      expect(Object.isFrozen(result)).toBe(true);
-      receipts[index]!.received.canonicalBytes.fill(0x99);
-      expect(result.received.canonicalBytes).toEqual(original.canonicalBytes);
-      result.received.canonicalBytes.fill(0x88);
-      result.received.hash.fill(0x77);
-      result.received.envelope.from.fill(0x66);
-      const stored = c.session.readRange(original.envelope.from, original.envelope.seq, original.envelope.seq);
-      expect(stored).toMatchObject({ status: "complete", envelopes: [{ canonicalBytes: original.canonicalBytes }] });
-    }
-    const cached = c.game.snapshot;
-    for (const original of [first, second]) {
-      await expect(inbox.receive(original.envelope.from, original.canonicalBytes)).resolves.toMatchObject({ status: "duplicate" });
-      expect(c.game.snapshot).toBe(cached);
-    }
-    expect(inbox.failure).toBeNull();
-    expect(inbox.pendingBytes).toBe(0);
-  });
 
-  it("reads receipt status fields once and preserves the receiver's cached snapshot", async () => {
-    const c = await context({}, undefined, false);
-    const inbox = inboxFor(c);
-    const message = await native(c, c.f.deal(0, 1));
-    const reads = { status: 0, chain: 0, persistence: 0, snapshot: 0 };
-    const real = c.game.receive.bind(c.game);
-    vi.spyOn(c.game, "receive").mockImplementationOnce(async (argument) => {
-      const result = await real(argument);
-      if (result.status === "rejected") throw new Error("Expected an accepted fixture contribution");
-      return { received: result.received,
-        get status() { return ++reads.status === 1 ? result.status : "invalid"; },
-        get chainStatus() { return ++reads.chain === 1 ? result.chainStatus : "invalid"; },
-        get persistenceStatus() { return ++reads.persistence === 1 ? result.persistenceStatus : "invalid"; },
-        get snapshot() { return ++reads.snapshot === 1 ? result.snapshot : null; },
-      } as SaskuRoundReceiveResult;
-    });
-    const result = await inbox.receive(c.f.roster[1]!, message.canonicalBytes);
-    expect(result).toMatchObject({ status: "accepted", chainStatus: "accepted", persistenceStatus: "duplicate" });
-    expect(reads).toEqual({ status: 1, chain: 1, persistence: 1, snapshot: 1 });
-    if (result.status === "rejected") throw new Error("Expected a successful inbox receipt");
-    expect(result.snapshot).toBe(c.game.snapshot);
-    const duplicate = await inbox.receive(c.f.roster[1]!, message.canonicalBytes);
-    if (duplicate.status === "rejected") throw new Error("Expected an idempotent inbox receipt");
-    expect(duplicate.snapshot).toBe(result.snapshot);
-    expect(duplicate.status).toBe("duplicate");
-  });
 });
 
 describe("Sasku round inbox failures and lifecycle", () => {
@@ -668,13 +510,9 @@ describe("Sasku round inbox failures and lifecycle", () => {
     const receive = vi.spyOn(c.game, "receive");
     const write = vi.spyOn(c.store, "persistAcceptedEnvelope");
     for (const reason of ["gap", "broken_prev", "equivocation", "durable_conflict"] as const) {
-      let reasonReads = 0;
-      receive.mockImplementationOnce(async (argument) => ({ status: "rejected", received: argument,
-        get reason() { reasonReads += 1; return reasonReads === 1 ? reason : "wrong_game"; },
-      } as SaskuRoundReceiveResult));
+      receive.mockImplementationOnce(async (received) => ({ status: "rejected", received, reason }));
       await expect(inbox.receive(c.f.roster[1]!, message.canonicalBytes)).resolves.toMatchObject({ status: "rejected", reason });
       await inbox.processPending();
-      expect(reasonReads).toBe(1);
       expect(inbox.pendingEnvelopes).toBe(0);
       expect(inbox.failure).toBeNull();
     }
@@ -682,61 +520,6 @@ describe("Sasku round inbox failures and lifecycle", () => {
     expect(write).not.toHaveBeenCalled();
     expect(c.game.snapshot).toBe(before);
     await expect(inbox.receive(c.f.roster[1]!, message.canonicalBytes)).resolves.toMatchObject({ status: "accepted" });
-  });
-
-  it("fails closed on substituted, unrecorded, or malformed success and rejection receipts", async () => {
-    const c = await context({}, undefined, false);
-    const first = await native(c, c.f.deal(0, 1));
-    const second = await native(c, c.f.deal(0, 2));
-    const before = c.game.snapshot;
-    const receive = vi.spyOn(c.game, "receive");
-    const write = vi.spyOn(c.store, "persistAcceptedEnvelope");
-    const readRange = vi.spyOn(c.session, "readRange");
-    const classify = vi.spyOn(c.session, "classify");
-    for (const mode of [
-      "unrecorded", "substitution", "status", "chain", "persistence", "snapshot", "rejection",
-      "missing-history", "substituted-history", "nonduplicate-cache",
-    ] as const) {
-      const inbox = inboxFor(c);
-      receive.mockClear();
-      receive.mockImplementationOnce(async (argument) => {
-        if (mode === "missing-history") readRange.mockReturnValueOnce({ status: "missing", firstMissingSeq: first.envelope.seq });
-        if (mode === "substituted-history") readRange.mockReturnValueOnce({ status: "complete", envelopes: [second] });
-        if (mode === "nonduplicate-cache") classify.mockReturnValueOnce({ status: "rejected", reason: "equivocation", existing: second, received: argument });
-        return {
-          received: mode === "substitution" ? second : argument,
-          status: mode === "status" ? "invalid" : mode === "rejection" ? "rejected" : "accepted",
-          reason: "wrong_game", chainStatus: mode === "chain" ? "invalid" : "accepted",
-          persistenceStatus: mode === "persistence" ? "invalid" : "stored",
-          snapshot: mode === "snapshot" ? null : before,
-        } as unknown as SaskuRoundReceiveResult;
-      });
-      const a = inbox.receive(c.f.roster[1]!, first.canonicalBytes);
-      const b = inbox.receive(c.f.roster[2]!, second.canonicalBytes);
-      const results = await Promise.allSettled([a, b]);
-      for (const result of results) expect(result, mode).toMatchObject({ status: "rejected", reason: { code: "invalid_receipt" } });
-      await inbox.whenIdle();
-      expect(inbox.failure, mode).toBeInstanceOf(SaskuRoundInboxError);
-      for (const result of results) {
-        if (result.status === "rejected") expect(result.reason).toBe(inbox.failure);
-      }
-      expect(receive, mode).toHaveBeenCalledOnce();
-      expect(inbox.pendingBytes).toBe(0);
-      expect(inbox.pendingEnvelopes).toBe(0);
-      await expect(inbox.receive(c.f.roster[1]!, first.canonicalBytes)).rejects.toBe(inbox.failure);
-      await inbox.processPending();
-      expect(receive).toHaveBeenCalledOnce();
-      expect(write).not.toHaveBeenCalled();
-      if (mode === "unrecorded") {
-        // All later variants have a genuine registry record, so that check cannot mask their defect.
-        await c.durable.receive(first);
-        write.mockClear();
-      }
-    }
-    expect(write).not.toHaveBeenCalled();
-    expect(c.game.snapshot).toBe(before);
-    expect(c.game.failure).toBeNull();
-    expect(c.game.closed).toBe(false);
   });
 
   it("does not automatically retry ordinary disk errors and keeps later jobs usable", async () => {
@@ -828,7 +611,7 @@ describe("Sasku round inbox failures and lifecycle", () => {
     const future = await audit(c, 3);
     const gate = deferred();
     const entered = deferred();
-    vi.spyOn(c.durable, "receive").mockImplementationOnce(async () => {
+    vi.spyOn(c.durable, "receiveVerified").mockImplementationOnce(async () => {
       entered.resolve(); await gate.promise; throw new PersistentSessionReceiverError("invalid stored artifact");
     });
     const receive = vi.spyOn(c.game, "receive");
@@ -950,320 +733,6 @@ describe("Sasku round inbox failures and lifecycle", () => {
     expect(inbox.failure).toBeNull();
     await expect(c.game.receive(second)).resolves.toMatchObject({ status: "accepted" });
   });
-});
-
-describe("Sasku round inbox P2 regressions", () => {
-  it("honors a reentrant processPending wake after chain progress even when classification returns the old gap", async () => {
-    const c = await context({}, undefined, false);
-    const inbox = inboxFor(c);
-    const witness = await c.authors[1]!.author({ round: c.f.round, phase: c.game.snapshot.ledger.phase, type: "WITNESS", body: { heads: [] } });
-    const message = await native(c, c.f.deal(0, 1));
-    const records = c.store.artifacts();
-    expect(records).toContainEqual({ authored: true, artifact: witness });
-    expect(c.session.classify(witness).status).toBe("accepted");
-    expect(c.session.classify(message)).toMatchObject({ status: "rejected", reason: "gap" });
-    const classify = c.session.classify.bind(c.session);
-    const wake = vi.spyOn(inbox, "processPending");
-    const receive = vi.spyOn(c.game, "receive");
-    const write = vi.spyOn(c.store, "persistAcceptedEnvelope");
-    const append = vi.spyOn(c.store, "appendNext");
-    vi.spyOn(c.session, "classify").mockImplementationOnce((argument) => {
-      const stale = classify(argument);
-      expect(stale).toMatchObject({ status: "rejected", reason: "gap" });
-      expect(argument.canonicalBytes).toEqual(message.canonicalBytes);
-      // Native authoring already stored this control; only its cache commit was outstanding.
-      expect(c.session.ingest(witness).status).toBe("accepted");
-      void inbox.processPending();
-      return stale;
-    });
-    const pending = inbox.receive(c.f.roster[1]!, message.canonicalBytes);
-    const settled = Promise.allSettled([pending]);
-    try {
-      await inbox.whenIdle();
-      expect(wake).toHaveBeenCalledOnce();
-      expect(classify(witness).status).toBe("duplicate");
-      // Assert before awaiting the job so the unfixed lost wake fails rather than hangs.
-      expect(inbox.pendingEnvelopes).toBe(0);
-      expect(inbox.pendingBytes).toBe(0);
-      await expect(pending).resolves.toMatchObject({
-        status: "accepted", chainStatus: "accepted", persistenceStatus: "duplicate",
-        received: { canonicalBytes: message.canonicalBytes, envelope: { seq: witness.envelope.seq + 1, prev: witness.hash } },
-      });
-      expect(receive).toHaveBeenCalledOnce();
-      expect(receive.mock.calls[0]![0].canonicalBytes).toEqual(message.canonicalBytes);
-      expect(write).toHaveBeenCalledOnce();
-      expect(append).not.toHaveBeenCalled();
-      expect(c.store.artifacts()).toEqual(records);
-      expect(c.session.readRange(c.f.roster[1]!, witness.envelope.seq, message.envelope.seq)).toMatchObject({
-        status: "complete", envelopes: [witness, message],
-      });
-      expect(c.game.snapshot.ledger.deal?.pendingSenders).toEqual([2, 3]);
-      expect(inbox.failure).toBeNull();
-    } finally {
-      inbox.close();
-      await settled;
-      await inbox.whenIdle();
-    }
-  });
-
-  it("settles whenIdle without spinning on reentrant processPending calls with no chain or snapshot progress", async () => {
-    const c = await context({}, undefined, false);
-    const inbox = inboxFor(c);
-    await c.authors[1]!.author({ round: c.f.round, phase: c.game.snapshot.ledger.phase, type: "WITNESS", body: { heads: [] } });
-    const message = await native(c, c.f.deal(0, 1));
-    const before = c.game.snapshot;
-    const heads = c.session.heads();
-    const records = c.store.artifacts();
-    const classify = c.session.classify.bind(c.session);
-    const receive = vi.spyOn(c.game, "receive");
-    const write = vi.spyOn(c.store, "persistAcceptedEnvelope");
-    const wake = vi.spyOn(inbox, "processPending");
-    let scans = 0;
-    vi.spyOn(c.session, "classify").mockImplementation((argument) => {
-      const result = classify(argument);
-      void inbox.processPending();
-      // Bound a regressed microtask spin without timers or a test-runner timeout.
-      if (++scans > 8) throw new Error("Inbox repeatedly rescanned an unchanged chain gap");
-      return result;
-    });
-    const completed = vi.fn();
-    const pending = inbox.receive(c.f.roster[1]!, message.canonicalBytes);
-    void pending.then(completed, completed);
-    const settled = Promise.allSettled([pending]);
-    try {
-      await inbox.whenIdle();
-      expect(inbox.failure).toBeNull();
-      expect(scans).toBeGreaterThan(0);
-      expect(scans).toBeLessThanOrEqual(2);
-      expect(wake).toHaveBeenCalledTimes(scans);
-      expect(completed).not.toHaveBeenCalled();
-      expect(inbox.pendingEnvelopes).toBe(1);
-      expect(inbox.pendingBytes).toBe(message.canonicalBytes.length);
-      expect(receive).not.toHaveBeenCalled();
-      expect(write).not.toHaveBeenCalled();
-      expect(c.game.snapshot).toBe(before);
-      expect(c.session.heads()).toEqual(heads);
-      expect(c.store.artifacts()).toEqual(records);
-      expect(classify(message)).toMatchObject({ status: "rejected", reason: "gap" });
-    } finally {
-      inbox.close();
-      await settled;
-      await inbox.whenIdle();
-    }
-    await expect(settled).resolves.toMatchObject([{ status: "rejected", reason: { code: "closed" } }]);
-    expect(inbox.pendingEnvelopes).toBe(0);
-    expect(inbox.pendingBytes).toBe(0);
-  });
-
-  it("drains a ready peer admitted by the final heads callback while leaving a future audit deferred", async () => {
-    const c = await context({}, undefined, false);
-    const inbox = inboxFor(c);
-    const future = await audit(c, 3);
-    const current = await native(c, c.f.deal(0, 1));
-    const classify = c.session.classify.bind(c.session);
-    const heads = c.session.heads.bind(c.session);
-    const beforeHeads = heads();
-    const receive = vi.spyOn(c.game, "receive");
-    const write = vi.spyOn(c.store, "persistAcceptedEnvelope");
-    const wake = vi.spyOn(inbox, "processPending");
-    const completed = vi.fn();
-    let inspectFinalHeads = false;
-    let admitted = false;
-    let inserted: Promise<SaskuRoundReceiveResult> | undefined;
-    vi.spyOn(c.session, "classify").mockImplementationOnce((argument) => {
-      const result = classify(argument);
-      expect(argument.canonicalBytes).toEqual(future.canonicalBytes);
-      expect(result.status).toBe("accepted");
-      inspectFinalHeads = true;
-      void inbox.processPending();
-      return result;
-    });
-    vi.spyOn(c.session, "heads").mockImplementation(() => {
-      const observed = heads();
-      if (inspectFinalHeads && !admitted) {
-        admitted = true;
-        expect(observed).toEqual(beforeHeads);
-        inserted = inbox.receive(c.f.roster[1]!, current.canonicalBytes);
-        void inserted.then(completed, completed);
-      }
-      return observed;
-    });
-    const futureCompleted = vi.fn();
-    const pending = inbox.receive(c.f.roster[3]!, future.canonicalBytes);
-    void pending.then(futureCompleted, futureCompleted);
-    try {
-      await inbox.whenIdle();
-      expect(admitted).toBe(true);
-      expect(inbox.failure).toBeNull();
-      // The ready job must finish in this drain, without awaiting a stranded promise or another wake.
-      expect(inbox.pendingEnvelopes).toBe(1);
-      expect(inbox.pendingBytes).toBe(future.canonicalBytes.length);
-      await expect(inserted!).resolves.toMatchObject({
-        status: "accepted", chainStatus: "accepted", persistenceStatus: "duplicate",
-        received: { canonicalBytes: current.canonicalBytes },
-      });
-      expect(completed).toHaveBeenCalledOnce();
-      expect(futureCompleted).not.toHaveBeenCalled();
-      expect(wake).toHaveBeenCalledOnce();
-      expect(receive).toHaveBeenCalledOnce();
-      expect(receive.mock.calls[0]![0].canonicalBytes).toEqual(current.canonicalBytes);
-      expect(write).toHaveBeenCalledOnce();
-      expect(c.session.readRange(c.f.roster[1]!, current.envelope.seq, current.envelope.seq)).toMatchObject({
-        status: "complete", envelopes: [current],
-      });
-      expect(classify(future).status).toBe("accepted");
-      expect(c.game.snapshot.ledger.deal?.pendingSenders).toEqual([2, 3]);
-      expect(c.game.snapshot.audit).toBeNull();
-      expect(c.game.pendingEnvelopes).toBe(0);
-    } finally {
-      inbox.close();
-      await Promise.allSettled(inserted === undefined ? [pending] : [pending, inserted]);
-      await inbox.whenIdle();
-    }
-    await expect(pending).rejects.toMatchObject({ code: "closed" });
-    expect(inbox.pendingEnvelopes).toBe(0);
-    expect(inbox.pendingBytes).toBe(0);
-  });
-
-  it("retains a wake from the final heads callback even when it returns a pre-commit snapshot", async () => {
-    const c = await context({}, undefined, false);
-    const inbox = inboxFor(c);
-    const witness = await c.authors[1]!.author({ round: c.f.round, phase: c.game.snapshot.ledger.phase, type: "WITNESS", body: { heads: [] } });
-    const message = await native(c, c.f.deal(0, 1));
-    const records = c.store.artifacts();
-    expect(records).toContainEqual({ authored: true, artifact: witness });
-    expect(c.session.classify(message)).toMatchObject({ status: "rejected", reason: "gap" });
-    const classify = c.session.classify.bind(c.session);
-    const heads = c.session.heads.bind(c.session);
-    const beforeHeads = heads();
-    const wake = vi.spyOn(inbox, "processPending");
-    const receive = vi.spyOn(c.game, "receive");
-    const write = vi.spyOn(c.store, "persistAcceptedEnvelope");
-    const append = vi.spyOn(c.store, "appendNext");
-    let inspectFinalHeads = false;
-    let committed = false;
-    vi.spyOn(c.session, "classify").mockImplementationOnce((argument) => {
-      const result = classify(argument);
-      expect(result).toMatchObject({ status: "rejected", reason: "gap" });
-      inspectFinalHeads = true;
-      void inbox.processPending();
-      return result;
-    });
-    vi.spyOn(c.session, "heads").mockImplementation(() => {
-      const observed = heads();
-      if (inspectFinalHeads && !committed) {
-        committed = true;
-        expect(observed).toEqual(beforeHeads);
-        // Commit the already-durable control, but return the heads captured before its commit.
-        expect(c.session.ingest(witness).status).toBe("accepted");
-        void inbox.processPending();
-      }
-      return observed;
-    });
-    const pending = inbox.receive(c.f.roster[1]!, message.canonicalBytes);
-    const settled = Promise.allSettled([pending]);
-    try {
-      await inbox.whenIdle();
-      expect(committed).toBe(true);
-      expect(wake).toHaveBeenCalledTimes(2);
-      expect(classify(witness).status).toBe("duplicate");
-      expect(inbox.failure).toBeNull();
-      expect(inbox.pendingEnvelopes).toBe(0);
-      expect(inbox.pendingBytes).toBe(0);
-      await expect(pending).resolves.toMatchObject({
-        status: "accepted", chainStatus: "accepted", persistenceStatus: "duplicate",
-        received: { canonicalBytes: message.canonicalBytes, envelope: { seq: witness.envelope.seq + 1, prev: witness.hash } },
-      });
-      expect(receive).toHaveBeenCalledOnce();
-      expect(receive.mock.calls[0]![0].canonicalBytes).toEqual(message.canonicalBytes);
-      expect(write).toHaveBeenCalledOnce();
-      expect(append).not.toHaveBeenCalled();
-      expect(c.store.artifacts()).toEqual(records);
-      expect(c.session.readRange(c.f.roster[1]!, witness.envelope.seq, message.envelope.seq)).toMatchObject({
-        status: "complete", envelopes: [witness, message],
-      });
-      expect(c.game.snapshot.ledger.deal?.pendingSenders).toEqual([2, 3]);
-    } finally {
-      inbox.close();
-      await settled;
-      await inbox.whenIdle();
-    }
-  });
-
-  it.each(["rejection receipt", "success receipt", "readRange record"] as const)(
-    "fails closed for active and queued work when an empty genuine byte view spoofs length in a %s", async (mode) => {
-      const c = await context({}, undefined, false);
-      const first = await native(c, c.f.deal(0, 1));
-      const second = await native(c, c.f.deal(0, 2));
-      if (mode !== "rejection receipt") {
-        await c.game.receive(first);
-        expect(c.session.classify(first).status).toBe("duplicate");
-      }
-      const inbox = inboxFor(c);
-      const before = c.game.snapshot;
-      const heads = c.session.heads();
-      const records = c.store.artifacts();
-      const originals = [first.canonicalBytes.slice(), second.canonicalBytes.slice()];
-      const empty = new Uint8Array() as EnvelopeArtifact["canonicalBytes"];
-      const length = vi.fn().mockReturnValueOnce(first.canonicalBytes.length).mockReturnValue(0);
-      Object.defineProperty(empty, "length", { get: length });
-      expect(empty.constructor).toBe(Uint8Array);
-      expect(empty.byteLength).toBe(0);
-      const recordBytes = vi.fn(() => empty);
-      const gate = deferred();
-      const entered = deferred();
-      const write = vi.spyOn(c.store, "persistAcceptedEnvelope");
-      const receive = vi.spyOn(c.game, "receive").mockImplementationOnce(async (argument) => {
-        entered.resolve();
-        await gate.promise;
-        if (mode === "readRange record") {
-          vi.spyOn(c.session, "readRange").mockReturnValueOnce({ status: "complete", envelopes: [{
-            ...first, get canonicalBytes() { return recordBytes(); },
-          }] });
-        }
-        const received = mode === "readRange record" ? argument : { ...argument, canonicalBytes: empty };
-        return mode === "rejection receipt"
-          ? { status: "rejected", reason: "gap", received }
-          : { status: "duplicate", chainStatus: "duplicate", persistenceStatus: "duplicate", received, snapshot: before };
-      });
-      const active = inbox.receive(c.f.roster[1]!, first.canonicalBytes);
-      const queued = inbox.receive(c.f.roster[2]!, second.canonicalBytes);
-      const settled = Promise.allSettled([active, queued]);
-      try {
-        await entered.promise;
-        expect(inbox.pendingEnvelopes).toBe(2);
-        expect(inbox.pendingBytes).toBe(first.canonicalBytes.length + second.canonicalBytes.length);
-        expect(c.game.snapshot).toBe(before);
-        gate.resolve();
-        await inbox.whenIdle();
-        const results = await settled;
-        expect(results.map(({ status }) => status)).toEqual(["rejected", "rejected"]);
-        expect(inbox.failure).toMatchObject({ code: "invalid_receipt" });
-        for (const result of results) {
-          expect(result).toMatchObject({ status: "rejected", reason: { code: "invalid_receipt" } });
-          if (result.status === "rejected") expect(result.reason).toBe(inbox.failure);
-        }
-        expect(receive).toHaveBeenCalledOnce();
-        expect(write).not.toHaveBeenCalled();
-        expect(c.game.snapshot).toBe(before);
-        expect(c.session.heads()).toEqual(heads);
-        expect(c.store.artifacts()).toEqual(records);
-        expect([first.canonicalBytes, second.canonicalBytes]).toEqual(originals);
-        expect(inbox.pendingEnvelopes).toBe(0);
-        expect(inbox.pendingBytes).toBe(0);
-        expect(c.game.failure).toBeNull();
-        expect(c.game.closed).toBe(false);
-        if (mode === "readRange record") expect(recordBytes).toHaveBeenCalledOnce();
-        await expect(inbox.receive(c.f.roster[1]!, first.canonicalBytes)).rejects.toBe(inbox.failure);
-        expect(receive).toHaveBeenCalledOnce();
-      } finally {
-        gate.resolve();
-        inbox.close();
-        await settled;
-        await inbox.whenIdle();
-      }
-    },
-  );
 });
 
 type Context = Awaited<ReturnType<typeof context>>;

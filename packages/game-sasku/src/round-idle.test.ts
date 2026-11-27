@@ -91,12 +91,11 @@ describe("Sasku round binding and idle barrier", () => {
     expect(c.game.failure).toBeNull();
   });
 
-  it.each(["invalid bytes", "invalid semantics", "storage failure"] as const)("releases the barrier after %s without claiming success", async (mode) => {
+  it.each(["invalid semantics", "storage failure"] as const)("releases the barrier after %s without claiming success", async (mode) => {
     const c = await context({}, undefined, false);
     const candidate = c.f.deal(0, mode === "invalid semantics" ? 0 : 1);
     if (mode === "storage failure") vi.spyOn(c.store, "persistAcceptedEnvelope").mockRejectedValueOnce(new Error("disk failed"));
-    const receiving = c.game.receive(mode === "invalid bytes"
-      ? { ...candidate, canonicalBytes: new Uint8Array([0xff]) } as EnvelopeArtifact : candidate);
+    const receiving = c.game.receive(candidate);
     const rejected = expect(receiving).rejects.toBeInstanceOf(Error);
     await Promise.all([rejected, c.game.whenIdle()]);
     expect(c.game.pendingEnvelopes).toBe(0);

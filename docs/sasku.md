@@ -105,10 +105,12 @@ commits every player to the exact rules implementation and match parameters:
 
 ### Phase ownership & serialization
 
-On `main`, `LiveRound` coordinates setup and hands off each round to
-`CandidateSaskuRoundOwner` (`@p2pcards/game-sasku`), which keeps the mutable
-shuffle and round receivers private behind one serialized, bounded queue
-(defaults: **32 operations**, **1 MiB** total, **64 KiB** per envelope):
+The browser's `LiveRound` serializes setup, incoming round envelopes, and
+local authoring. It defers up to **256 envelopes** and **4 MiB** of traffic,
+with a **64 KiB** ceiling per envelope. After setup, the
+`CandidateSaskuRoundOwner` (`@p2pcards/game-sasku`) owns shuffle, deal, play,
+and audit state and runs each transition directly under that scheduler.
+Standalone callers can use the owner's own bounded scheduler.
 
 1. **Setup** (`PersistentSetupReceiver`): collects four `KEY_SHARE` proofs and
    builds the aggregate key.
@@ -127,10 +129,10 @@ shuffle and round receivers private behind one serialized, bounded queue
    shares (`readPrivateHand`); they never enter public snapshots, logs, or
    storage.
 
-*(Planned simplification in `#3` & `#5`: consolidate the nested `LiveRound` /
-`CandidateSaskuRoundOwner` / persistent receiver queues into a single-owner
-round coordinator, verify envelopes once at untrusted boundaries, and cache the
-decrypted 9-card private hand per round.)*
+Network ingress authenticates signed envelopes before scheduling. IndexedDB
+loads authenticate stored records, and recovery replays their phase semantics
+and proofs before resuming play. Issue #3 tracks caching each round's decrypted
+private hand.
 
 ### Worker lifecycle
 

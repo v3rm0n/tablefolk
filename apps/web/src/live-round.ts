@@ -1,7 +1,7 @@
 import { bytesEqual, bytesToHex, RistrettoPoint, type RistrettoScalar } from "@p2pcards/crypto";
 import { PersistentSetupReceiver } from "@p2pcards/engine";
 import { CandidateSaskuRoundOwner, type SaskuActionIntent, type SaskuRoundSnapshot } from "@p2pcards/game-sasku";
-import { decodeAndVerifyEnvelope, type EnvelopeArtifact, type IdentityPublicKey, type RosterBody } from "@p2pcards/protocol";
+import { type EnvelopeArtifact, type IdentityPublicKey, type RosterBody } from "@p2pcards/protocol";
 import { captureSessionHistory, PersistentEnvelopeAuthor, PersistentSessionReceiver, type SessionChainRegistry } from "@p2pcards/session";
 import { IndexedDbGameSecretStore, type IndexedDbStoreOptions, type IndexedDbSessionStore } from "@p2pcards/storage";
 import { legalSaskuCards, saskuBidStrength, type SaskuCardId } from "@p2pcards/rules-sasku";
@@ -51,9 +51,9 @@ export class LiveRound {
   constructor(options: Options) {
     this.#options = options;
     this.#keys = new IndexedDbGameSecretStore(options.storage);
-    this.#durable = new PersistentSessionReceiver(options.session, options.stored);
+    this.#durable = new PersistentSessionReceiver(options.session, options.stored, { serializedByCaller: true });
     this.#setup = new PersistentSetupReceiver({ round: 0, self: options.self, session: options.session, sessionReceiver: this.#durable,
-      beaconRequired: false });
+      beaconRequired: false, serializedByCaller: true });
     this.#view = { phase: "setup", match: this.#match, message: "Synchronizing signed histories", seat: options.session.seatOf(options.self)!, connected: false, busy: true, hand: [], strength: null, state: null, error: null };
     this.#kick();
   }
@@ -67,11 +67,10 @@ export class LiveRound {
     const value = round === this.#match.round ? round : 0;
     if (this.#roundReady !== value) { this.#roundReady = value; this.#kick(); }
   }
-  receive(remote: IdentityPublicKey, payload: Uint8Array): void {
+  receive(a: EnvelopeArtifact): void {
     if (this.#closed || this.#error) throw new Error(this.#error ?? "Round is closed");
-    if (payload.length > 64 * 1024) throw new Error("Round envelope exceeds limit");
-    const a = decodeAndVerifyEnvelope(payload), e = a.envelope;
-    if (!bytesEqual(e.from, remote) || !bytesEqual(e.game, this.#options.roster.gameId) || this.#options.session.seatOf(remote) === null) throw new Error("Wrong round sender");
+    const e = a.envelope;
+    if (this.#options.session.seatOf(e.from) === null) throw new Error("Wrong round sender");
     const classification = this.#options.session.classify(a);
     if (classification.status === "duplicate") return;
     if (classification.status === "rejected" && classification.reason !== "gap") throw new Error(`Round chain rejected: ${classification.reason}`);
@@ -79,9 +78,9 @@ export class LiveRound {
     if ((setup ? e.round !== 0 : e.round < FIRST_ROUND || e.round > MAX_SASKU_MATCH_ROUNDS) ||
         !["KEY_SHARE", "RAND_COMMIT", "RAND_REVEAL", "SHUFFLE", "SHARES", "ACTION", "AUDIT_DISCLOSE"].includes(e.type)) throw new Error("Unsupported match traffic");
     if (!setup && (this.#match.winner !== null || e.round < this.#match.round)) throw new Error("Match traffic arrived after its round ended");
-    const key = `${bytesToHex(remote)}:${e.seq}`, prior = this.#pending.get(key);
+    const key = `${bytesToHex(e.from)}:${e.seq}`, prior = this.#pending.get(key);
     if (prior) { if (!bytesEqual(prior.canonicalBytes, a.canonicalBytes)) throw new Error("Conflicting pending envelope"); return; }
-    if (this.#pending.size >= 256 || this.#bytes + payload.length > 4 * 1024 * 1024) throw new Error("Round receive budget exceeded");
+    if (this.#pending.size >= 256 || this.#bytes + a.canonicalBytes.length > 4 * 1024 * 1024) throw new Error("Round receive budget exceeded");
     this.#pending.set(key, a); this.#bytes += a.canonicalBytes.length; this.#kick();
   }
   act(intent: SaskuActionIntent): Promise<void> {
@@ -111,7 +110,6 @@ export class LiveRound {
         this.#pending.delete(key); this.#bytes -= a.canonicalBytes.length; continue;
       }
       if (!this.#owner && this.#setup.snapshot.state === "complete") {
-        await this.#setup.whenIdle();
         this.#secret = await this.#keys.loadGameSecret(this.#options.roster.gameId);
         if (this.#secret === null) throw new Error("The saved private game key is missing; it will not be regenerated");
         if (!RistrettoPoint.base().multiply(this.#secret).equals(this.#setup.getCompletedSetup().publicKeyAt(this.#view.seat)!)) throw new Error("The saved private game key does not match the signed setup");
@@ -173,7 +171,7 @@ export class LiveRound {
     return CandidateSaskuRoundOwner.open({ session: this.#options.session, sessionReceiver: this.#durable,
       roster: this.#options.roster, self: this.#options.self, setupRound: 0, round: this.#match.round,
       dealer: dealerForSaskuRound(this.#match.round), schedule: FIRST_DEAL, verifier: this.#client,
-      beaconRequired: false, batchDeal: true,
+      beaconRequired: false, batchDeal: true, serializedByCaller: true,
       historyLimits: MATCH_HISTORY_LIMITS, roundHistoryLimits: { ...MATCH_HISTORY_LIMITS, allowOtherRounds: true } });
   }
   #validateMatchHistory(): void {
@@ -220,7 +218,7 @@ export class LiveRound {
     const phase = this.#match.winner !== null ? "match_complete" : !s ? "setup" : s.phase === "shuffle" ? "shuffle" : state!.ledger.deal ? "dealing"
       : state!.hand.phase === "complete" ? state!.audit?.result ? "complete" : "audit" : state!.hand.phase;
     let hand: LiveRoundView["hand"] = this.#view.hand, strength: number | null = this.#view.strength;
-    if (!this.#error && !this.#owner?.failure && state && !state.ledger.deal && this.#secret !== null && this.#owner!.pendingEnvelopes === 0) {
+    if (!this.#error && !this.#owner?.failure && state && !state.ledger.deal && this.#secret !== null) {
       const privateHand = this.#owner!.readPrivateHand(this.#secret);
       if (!privateHand) throw new Error("Private hand is unavailable");
       const cards = Object.values(privateHand.remaining);

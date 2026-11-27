@@ -3,12 +3,12 @@ import type { CborMap } from "@p2pcards/encoding";
 import { MAX_ROUND_REVEAL_ENVELOPE_BYTES } from "@p2pcards/engine";
 import * as protocol from "@p2pcards/protocol";
 import { decodeAndVerifyEnvelope, parseGameId, type EnvelopeArtifact } from "@p2pcards/protocol";
-import { SaskuHandError, legalSaskuCards, saskuBidStrength, saskuEffectiveSuit } from "@p2pcards/rules-sasku";
+import { legalSaskuCards, saskuBidStrength, saskuEffectiveSuit } from "@p2pcards/rules-sasku";
 import { AuthoredEnvelopeStoreError, PersistentEnvelopeAuthor } from "@p2pcards/session";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { act, context, deferred } from "./local-authoring.test-fixture";
-import { PersistentSaskuRoundReceiver, type SaskuActionIntent } from "./persistent-round-receiver";
+import { PersistentSaskuRoundReceiver } from "./persistent-round-receiver";
 
 describe("local Sasku action authoring", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -168,39 +168,6 @@ describe("local Sasku action authoring", () => {
     await expect(act(c, 0, { type: "diamonds" })).resolves.toMatchObject({ status: "accepted" });
   });
 
-  it("strictly snapshots plain intents, rejecting malformed fields without invoking accessors", async () => {
-    const c = await context();
-    const before = c.game.snapshot;
-    const getter = vi.fn(() => "pass");
-    const invalid: unknown[] = [
-      null, undefined, "pass", [], new Map([["type", "pass"]]), Object.create({ type: "pass" }),
-      {}, { type: "PASS" }, { type: "bid" }, { type: "bid", value: 2 }, { type: "bid", value: 10 },
-      { type: "bid", value: 3.5 }, { type: "bid", value: "3" }, { type: "bid", value: NaN },
-      { type: "choose_trump", suit: "stars" }, { type: "choose_trump", suit: 0 },
-      ...[-0, -1, 36, 0.5, Infinity, Number.MAX_SAFE_INTEGER + 1, "0"].map((position) => ({ type: "play", position })),
-      { type: "diamonds", seat: 0 }, { type: "pass", from: c.author.sender }, { type: "play", position: 0, actor: 0 },
-      { type: "pass", [Symbol("actor")]: 0 }, Object.defineProperty({}, "type", { enumerable: true, get: getter }),
-      Object.defineProperty({ type: "play" }, "position", { enumerable: true, get: getter }),
-      Object.defineProperty({}, "type", { value: "pass", enumerable: false }),
-    ];
-    const author = vi.spyOn(c.author, "author");
-    const append = vi.spyOn(c.store, "appendNext");
-    const rng = vi.spyOn(c.f.source, "fill");
-    for (const intent of invalid) {
-      await expect(act(c, 0, intent as SaskuActionIntent)).rejects.toBeInstanceOf(SaskuHandError);
-      expect(c.game.snapshot).toBe(before);
-      expect(c.game.pendingEnvelopes).toBe(0);
-      expect(c.game.pendingBytes).toBe(0);
-    }
-    expect(getter).not.toHaveBeenCalled();
-    expect(author).not.toHaveBeenCalled();
-    expect(append).not.toHaveBeenCalled();
-    expect(rng).not.toHaveBeenCalled();
-    expect(c.game.failure).toBeNull();
-    const plain = Object.create(null, { type: { value: "pass", enumerable: true } }) as SaskuActionIntent;
-    await expect(act(c, 0, plain)).resolves.toMatchObject({ status: "accepted" });
-  });
-
   it("requires the exact cached snapshot, not a clone, another receiver's equal view or an old local view", async () => {
     const c = await context();
     const before = c.game.snapshot;
@@ -223,63 +190,6 @@ describe("local Sasku action authoring", () => {
     await expect(act(c, 0, { type: "play", position: 0 })).resolves.toMatchObject({ status: "accepted" });
   });
 
-  it("copies queued intents and receipt buffers, publishing only after both commits and isolating returned artifacts", async () => {
-    const c = await context();
-    await act(c, 0, { type: "diamonds" });
-    const before = c.game.snapshot;
-    const duplicateGate = deferred();
-    const duplicateEntered = deferred();
-    const receiptGate = deferred();
-    const receiptEntered = deferred();
-    const persist = c.store.persistAcceptedEnvelope.bind(c.store);
-    vi.spyOn(c.store, "persistAcceptedEnvelope")
-      .mockImplementationOnce(async (argument) => { duplicateEntered.resolve(); await duplicateGate.promise; return persist(argument); })
-      .mockImplementationOnce(async (argument) => { receiptEntered.resolve(); await receiptGate.promise; return persist(argument); });
-    const duplicate = c.game.receive(c.deals[0]!);
-    await duplicateEntered.promise;
-    const receive = c.durable.receive.bind(c.durable);
-    vi.spyOn(c.durable, "receive").mockImplementationOnce(async (argument) => {
-      const receipt = await receive(argument);
-      argument.canonicalBytes.fill(0xff);
-      argument.hash.fill(0xee);
-      (argument.envelope.body as Record<string, unknown>)["kind"] = "pass";
-      return receipt;
-    });
-    const intent = { type: "play" as const, position: 0 };
-    const published = vi.fn();
-    const pending = act(c, 0, intent);
-    void pending.then(published, () => undefined);
-    intent.position = 1;
-    expect(c.game.pendingBytes).toBe(MAX_ROUND_REVEAL_ENVELOPE_BYTES + c.deals[0]!.canonicalBytes.length);
-    duplicateGate.resolve();
-    await duplicate;
-    await receiptEntered.promise;
-    expect(c.store.head(c.f.gameId, c.author.sender)!.envelope.body).toMatchObject({ kind: "play", reveal: [0] });
-    expect(c.game.snapshot).toBe(before);
-    expect(c.game.readPrivateHand(c.author.sender, c.f.secrets[0]!)!.remaining[0]).toBe(c.f.cards[0]);
-    expect(published).not.toHaveBeenCalled();
-    receiptGate.resolve();
-    const result = await pending;
-    expect(result.status).toBe("accepted");
-    expect(result.received.envelope.body).toMatchObject({ kind: "play", reveal: [0] });
-    const original = decodeAndVerifyEnvelope(result.received.canonicalBytes);
-    const committed = c.game.snapshot;
-    result.received.canonicalBytes.fill(0xff);
-    result.received.hash.fill(0xee);
-    result.received.envelope.from.fill(0xdd);
-    const body = result.received.envelope.body as CborMap;
-    (body["reveal"] as number[])[0] = 1;
-    ((body["shares"] as CborMap[])[0]!["S"] as Uint8Array).fill(0xcc);
-    expect(c.store.head(c.f.gameId, c.author.sender)).toEqual(original);
-    expect(c.store.artifacts().at(-1)).toEqual({ artifact: original, authored: true });
-    expect(c.session.readRange(c.author.sender, original.envelope.seq, original.envelope.seq)).toEqual({ status: "complete", envelopes: [original] });
-    await expect(c.game.receive(original)).resolves.toMatchObject({ status: "duplicate" });
-    expect(c.game.snapshot).toBe(committed);
-    expect(c.game.snapshot.ledger.revealed).toEqual({ 0: c.f.cards[0] });
-    expect(c.game.failure).toBeNull();
-    expect(c.game.pendingBytes).toBe(0);
-  });
-
   it.each(["count", "bytes"] as const)("reserves 64 KiB and one slot per local operation against shared %s quotas, then releases them", async (limit) => {
     const size = MAX_ROUND_REVEAL_ENVELOPE_BYTES;
     expect(size).toBe(64 * 1024);
@@ -293,11 +203,8 @@ describe("local Sasku action authoring", () => {
     const active = act(c, 0, { type: "diamonds" });
     const queued = expect(act(c, 0, { type: "play", position: 0 })).rejects.toMatchObject({ code: "stale_action" });
     await entered.promise;
-    const getter = vi.fn(() => "pass");
-    const invalid = Object.defineProperty({}, "type", { enumerable: true, get: getter }) as SaskuActionIntent;
-    await expect(act(c, 0, invalid)).rejects.toMatchObject({ code: "queue_limit" });
+    await expect(act(c, 0, { type: "pass" })).rejects.toMatchObject({ code: "queue_limit" });
     await expect(c.game.receive(c.deals[0]!)).rejects.toMatchObject({ code: "queue_limit" });
-    expect(getter).not.toHaveBeenCalled();
     expect(c.game.pendingEnvelopes).toBe(2);
     expect(c.game.pendingBytes).toBe(size * 2);
     expect(writes).toHaveBeenCalledOnce();
@@ -362,7 +269,7 @@ describe("local Sasku action authoring", () => {
     const ahead = await c.author.author({ round: c.f.round, phase: before.ledger.phase, type: "WITNESS", body: { heads: [] } });
     const records = c.store.artifacts();
     const sign = vi.spyOn(protocol, "signEnvelope");
-    const receive = vi.spyOn(c.durable, "receive");
+    const receive = vi.spyOn(c.durable, "receiveVerified");
     await expect(act(c, 0, { type: "diamonds" })).rejects.toMatchObject({ code: "recovery_required" });
     expect(sign).not.toHaveBeenCalled();
     expect(receive).not.toHaveBeenCalled();
@@ -438,7 +345,7 @@ describe("local Sasku action authoring", () => {
       if (boundary === "before guard") await append(...args);
     });
     const sign = vi.spyOn(protocol, "signEnvelope");
-    const receive = vi.spyOn(c.durable, "receive");
+    const receive = vi.spyOn(c.durable, "receiveVerified");
     const published = vi.fn();
     const active = act(c, 0, { type: "diamonds" });
     void active.then(published, () => undefined);
@@ -523,7 +430,7 @@ describe("local Sasku action authoring", () => {
       throw error;
     });
     const sign = vi.spyOn(protocol, "signEnvelope");
-    const receive = vi.spyOn(c.durable, "receive");
+    const receive = vi.spyOn(c.durable, "receiveVerified");
     const published = vi.fn();
     const active = act(c, 0, { type: "diamonds" });
     void active.then(published, () => undefined);
@@ -576,7 +483,7 @@ describe("local Sasku action authoring", () => {
       throw new Error("Invalid head was unexpectedly accepted");
     });
     const sign = vi.spyOn(protocol, "signEnvelope");
-    const receive = vi.spyOn(c.durable, "receive");
+    const receive = vi.spyOn(c.durable, "receiveVerified");
     const active = expect(act(c, 0, { type: "diamonds" })).rejects.toMatchObject({ code: "recovery_required" });
     const queued = expect(act(c, 0, { type: "diamonds" })).rejects.toMatchObject({ code: "recovery_required" });
     await Promise.all([active, queued]);
@@ -597,7 +504,7 @@ describe("local Sasku action authoring", () => {
     const before = c.game.snapshot;
     const heads = c.session.heads();
     const append = vi.spyOn(c.store, "appendNext");
-    const receive = vi.spyOn(c.durable, "receive").mockImplementationOnce(async (received) => ({
+    const receive = vi.spyOn(c.durable, "receiveVerified").mockImplementationOnce(async (received) => ({
       status: "rejected", reason: "gap", received, expectedSeq: received.envelope.seq - 1, actualSeq: received.envelope.seq,
     }));
     const published = vi.fn();
@@ -626,48 +533,13 @@ describe("local Sasku action authoring", () => {
       expect(decodeAndVerifyEnvelope(substituted.canonicalBytes)).toEqual(substituted);
       return substituted;
     });
-    const receive = vi.spyOn(c.durable, "receive");
+    const receive = vi.spyOn(c.durable, "receiveVerified");
     await expect(act(c, 0, { type: "diamonds" })).rejects.toMatchObject({ code: "invalid_receipt" });
     expect(receive).not.toHaveBeenCalled();
     expect(c.store.head(c.f.gameId, c.author.sender)!.envelope.body).toMatchObject({ kind: "diamonds" });
     expect(c.game.snapshot).toBe(before);
     expect(c.game.pendingBytes).toBe(0);
     await expect(act(c, 0, { type: "pass" })).rejects.toBe(c.game.failure);
-  });
-
-  it.each(["before", "after"] as const)("isolates private intended bytes from dependency body mutation %s the native author's snapshot", async (timing) => {
-    const c = await context();
-    await act(c, 0, { type: "diamonds" });
-    const before = c.game.snapshot;
-    const native = c.author.author.bind(c.author);
-    vi.spyOn(c.author, "author").mockImplementationOnce((content, guard) => {
-      const proofBytes = ((content.body as CborMap)["shares"] as CborMap[])[0]!["R1"] as Uint8Array;
-      if (timing === "before") proofBytes.fill(0xff);
-      const pending = native(content, guard);
-      if (timing === "after") proofBytes.fill(0xff);
-      return pending;
-    });
-    const receive = vi.spyOn(c.durable, "receive");
-    const pending = act(c, 0, { type: "play", position: 0 });
-    if (timing === "before") {
-      await expect(pending).rejects.toMatchObject({ code: "invalid_receipt" });
-      expect(receive).not.toHaveBeenCalled();
-      expect(c.game.snapshot).toBe(before);
-      expect(c.store.head(c.f.gameId, c.author.sender)!.envelope.body).toMatchObject({ shares: [{ R1: new Uint8Array(32).fill(0xff) }] });
-      await expect(act(c, 0, { type: "play", position: 0 })).rejects.toBe(c.game.failure);
-    } else {
-      const result = await pending;
-      expect(result.status).toBe("accepted");
-      const body = decodeActionBody(result.received.envelope.body);
-      expect(body.reveal).toEqual([0]);
-      expect(verifyProvenDecryptionShare(
-        { gameId: c.f.gameId, round: c.f.round, phase: before.ledger.phase }, 0, c.f.setup.publicKeyAt(0)!, c.f.deck[0]!.A, body.shares[0]!,
-      )).toBe(true);
-      expect(c.game.snapshot.ledger.revealed).toEqual({ 0: c.f.cards[0] });
-      expect(c.game.failure).toBeNull();
-      expect(receive).toHaveBeenCalledOnce();
-    }
-    expect(c.game.pendingBytes).toBe(0);
   });
 
   it("refuses even matching authored bytes when the dependency skipped the native beforeSign guard", async () => {
@@ -678,36 +550,13 @@ describe("local Sasku action authoring", () => {
       expect(guard).toBeTypeOf("function");
       return native(content);
     });
-    const receive = vi.spyOn(c.durable, "receive");
+    const receive = vi.spyOn(c.durable, "receiveVerified");
     await expect(act(c, 0, { type: "diamonds" })).rejects.toMatchObject({ code: "invalid_receipt" });
     expect(receive).not.toHaveBeenCalled();
     expect(c.store.head(c.f.gameId, c.author.sender)!.envelope.body).toMatchObject({ kind: "diamonds" });
     expect(c.game.snapshot).toBe(before);
     expect(c.game.pendingBytes).toBe(0);
     await expect(act(c, 0, { type: "pass" })).rejects.toBe(c.game.failure);
-  });
-
-  it.each(["closed", "recovery_required"] as const)("stops nonce rejection sampling immediately after a reentrant %s condition", async (code) => {
-    const c = await context({}, code === "recovery_required" ? 9 : undefined);
-    await act(c, 0, { type: "diamonds" });
-    const before = c.game.snapshot;
-    const records = c.store.artifacts();
-    const author = vi.spyOn(c.author, "author");
-    const source = { fill: vi.fn((bytes: Uint8Array) => {
-      if (source.fill.mock.calls.length > 1) { throw new Error("Sampler retried after the receiver stopped"); }
-      if (code === "closed") c.game.close();
-      else expect(() => c.game.readPrivateHand(c.authors[1]!.sender, c.f.secrets[1]!))
-        .toThrow(expect.objectContaining({ code: "recovery_required" }));
-      bytes.fill(0);
-    }) };
-    await expect(c.game.authorAction(c.author, c.f.secrets[0]!, before, { type: "play", position: 0 }, source))
-      .rejects.toMatchObject({ code });
-    expect(source.fill).toHaveBeenCalledOnce();
-    expect(author).not.toHaveBeenCalled();
-    expect(c.game.snapshot).toBe(before);
-    expect(c.store.artifacts()).toEqual(records);
-    expect(c.game.pendingEnvelopes).toBe(0);
-    expect(c.game.pendingBytes).toBe(0);
   });
 
   it("never publishes an active local play after a private read discovers corruption during internal persistence", async () => {

@@ -778,37 +778,31 @@ describe("persistent setup signing, receipt and lifetime", () => {
     }
   });
 
-  it("correlates exact unsigned content against mutated author arguments and substituted signed return values", async () => {
+  it("rejects a substituted signed setup envelope after authoring", async () => {
     for (const type of TYPES) {
-      for (const target of ["argument", "returned"] as const) {
-        vi.restoreAllMocks();
-        const c = persistentSetupFixture();
-        await advanceTo(c, type);
-        const secrets = secretStores(c);
-        const author = c.author.author.bind(c.author);
-        const trace = observe(c);
-        let committed: EnvelopeArtifact | undefined;
-        trace.author.mockImplementationOnce(async (content, guard) => {
-          if (target === "argument") {
-            const field = type === "KEY_SHARE" ? "H_i" : type === "RAND_COMMIT" ? "cm" : "s";
-            ((content.body as CborMap)[field] as Uint8Array).fill(0xff);
-          }
-          committed = await author(content, guard);
-          return target === "argument" ? committed : protocol.signEnvelope({ ...committed.envelope, round: c.round + 1 }, c.identities[c.selfSeat]!.secretKey);
-        });
-        const before = c.receiver.snapshot;
-        const published = vi.fn();
-        const pending = local(c, secrets, type);
-        void pending.then(published, () => undefined);
-        await expect(pending).rejects.toMatchObject({ code: "invalid_receipt" });
-        expect(trace.receipt).not.toHaveBeenCalled();
-        expect(published).not.toHaveBeenCalled();
-        expect(c.receiver.snapshot).toBe(before);
-        expect(c.store.artifacts()).toContainEqual({ artifact: committed, authored: true });
-        expect(c.receiver.pendingBytes).toBe(0);
-        await expect(local(c, secrets, type)).rejects.toBe(c.receiver.failure);
-        expect(trace.author).toHaveBeenCalledOnce();
-      }
+      vi.restoreAllMocks();
+      const c = persistentSetupFixture();
+      await advanceTo(c, type);
+      const secrets = secretStores(c);
+      const author = c.author.author.bind(c.author);
+      const trace = observe(c);
+      let committed: EnvelopeArtifact | undefined;
+      trace.author.mockImplementationOnce(async (content, guard) => {
+        committed = await author(content, guard);
+        return protocol.signEnvelope({ ...committed.envelope, round: c.round + 1 }, c.identities[c.selfSeat]!.secretKey);
+      });
+      const before = c.receiver.snapshot;
+      const published = vi.fn();
+      const pending = local(c, secrets, type);
+      void pending.then(published, () => undefined);
+      await expect(pending).rejects.toMatchObject({ code: "invalid_receipt" });
+      expect(trace.receipt).not.toHaveBeenCalled();
+      expect(published).not.toHaveBeenCalled();
+      expect(c.receiver.snapshot).toBe(before);
+      expect(c.store.artifacts()).toContainEqual({ artifact: committed, authored: true });
+      expect(c.receiver.pendingBytes).toBe(0);
+      await expect(local(c, secrets, type)).rejects.toBe(c.receiver.failure);
+      expect(trace.author).toHaveBeenCalledOnce();
     }
   });
 

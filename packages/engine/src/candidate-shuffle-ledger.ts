@@ -3,7 +3,7 @@ import type { CborMap } from "@p2pcards/encoding";
 import { CardPointTable, initialMaskedCard, decodeCandidateShuffleStatement36, encodeCandidateShuffleStatement36,
   decodeCandidateShuffleProof36, type DeckSpec, type MaskedCard } from "@p2pcards/deck";
 import { decodeAndVerifyEnvelope, decodeRosterBody, encodeRosterBody, hashRosterBody,
-  type RosterBody } from "@p2pcards/protocol";
+  type EnvelopeArtifact, type RosterBody } from "@p2pcards/protocol";
 import { SetupEnvelopeCoordinator } from "./setup-envelope-coordinator";
 
 export interface CandidateShuffleVerifier {
@@ -59,19 +59,22 @@ export class CandidateShuffleLedger {
 
   /** Optional owner barrier runs after verification, before any state mutation. */
   async accept(bytes: Uint8Array, beforeCommit?: () => Promise<void>): Promise<"accepted" | "duplicate"> {
-    if (this.#closed) throw new Error("Shuffle ledger is closed");
     if (this.#busy) throw new Error("Shuffle verification is busy");
     if (!(bytes instanceof Uint8Array) || bytes.constructor !== Uint8Array || bytes.length > 16 * 1024) throw new Error("Invalid shuffle envelope size");
-    const captured = bytes.slice();
-    // Reverify canonical bytes; do not trust an externally supplied artifact or sender label.
-    const { envelope } = decodeAndVerifyEnvelope(captured);
-    if (this.#accepted.some(previous => bytesEqual(previous, captured))) {
-      this.#busy = true;
-      try {
-        await beforeCommit?.();
-        if (this.#closed) throw new Error("Shuffle ledger closed during receipt");
-        return "duplicate";
-      } finally { this.#busy = false; }
+    this.#busy = true;
+    try { return await this.acceptVerified(decodeAndVerifyEnvelope(bytes), beforeCommit); }
+    finally { this.#busy = false; }
+  }
+
+  /** The round owner serializes verification and the durable commit barrier. */
+  async acceptVerified(artifact: EnvelopeArtifact, beforeCommit?: () => Promise<void>): Promise<"accepted" | "duplicate"> {
+    if (this.#closed) throw new Error("Shuffle ledger is closed");
+    const { canonicalBytes, envelope } = artifact;
+    if (canonicalBytes.length > 16 * 1024) throw new Error("Invalid shuffle envelope size");
+    if (this.#accepted.some(previous => bytesEqual(previous, canonicalBytes))) {
+      await beforeCommit?.();
+      if (this.#closed) throw new Error("Shuffle ledger closed during receipt");
+      return "duplicate";
     }
     if (this.#seat === 4) throw new Error("Shuffle chain is complete");
     if (envelope.type !== "SHUFFLE" || !bytesEqual(envelope.game, this.#roster.gameId) ||
@@ -87,17 +90,13 @@ export class CandidateShuffleLedger {
     const expected = decodeCandidateShuffleStatement36(this.nextStatement());
     if (!bytesEqual(encodeCandidateShuffleStatement36({ ...statement, outputDeck: expected.outputDeck }),
       encodeCandidateShuffleStatement36(expected))) throw new Error("Shuffle statement does not extend admitted state");
-    this.#busy = true;
-    try {
-      // Backend gets detached copies, so an adapter cannot alter the admitted deck or artifact.
-      if (await this.#options.verifier.verify(statementBytes.slice(), proofBytes.slice()) !== true) throw new Error("Invalid shuffle proof");
-      if (this.#closed) throw new Error("Shuffle ledger closed during verification");
-      await beforeCommit?.();
-      if (this.#closed) throw new Error("Shuffle ledger closed during receipt");
-      this.#deck = statement.outputDeck;
-      this.#accepted.push(captured);
-      this.#seat++;
-      return "accepted";
-    } finally { this.#busy = false; }
+    if (await this.#options.verifier.verify(statementBytes, proofBytes) !== true) throw new Error("Invalid shuffle proof");
+    if (this.#closed) throw new Error("Shuffle ledger closed during verification");
+    await beforeCommit?.();
+    if (this.#closed) throw new Error("Shuffle ledger closed during receipt");
+    this.#deck = statement.outputDeck;
+    this.#accepted.push(canonicalBytes);
+    this.#seat++;
+    return "accepted";
   }
 }

@@ -1,14 +1,14 @@
 import { bytesEqual } from "@p2pcards/crypto";
 import { decodeCandidateShuffleStatement36, decodeCandidateShuffleProof36, encodeCandidateShuffleStatement36,
   type DeckSpec, type MaskedCard } from "@p2pcards/deck";
-import { decodeAndVerifyEnvelope, decodeRosterBody, encodeRosterBody, parseIdentityPublicKey,
-  type EnvelopeArtifact, type IdentityPublicKey, type RosterBody } from "@p2pcards/protocol";
+import type { EnvelopeArtifact, IdentityPublicKey, RosterBody } from "@p2pcards/protocol";
 import { captureSessionHistory, PersistentEnvelopeAuthor, PersistentSessionReceiver, SessionChainRegistry,
-  type CapturedSessionHistory, type SessionHistoryCaptureLimits } from "@p2pcards/session";
+  PersistentSessionReceiverError, type CapturedSessionHistory, type SessionHistoryCaptureLimits } from "@p2pcards/session";
 import { CandidateShuffleLedger, type CandidateShuffleVerifier } from "./candidate-shuffle-ledger";
 import { recoverSetup } from "./setup-recovery";
 
 export interface PersistentCandidateShuffleOptions {
+  readonly serializedByCaller?: boolean;
   readonly session: SessionChainRegistry;
   readonly sessionReceiver: PersistentSessionReceiver;
   readonly roster: RosterBody;
@@ -47,8 +47,7 @@ export class PersistentCandidateShuffleReceiver {
     if (!(input.session instanceof SessionChainRegistry) || !(input.sessionReceiver instanceof PersistentSessionReceiver) ||
       !input.sessionReceiver.isBoundTo(input.session)) throw new Error("Shuffle receiver requires its bound durable session receiver");
     if (!Number.isSafeInteger(input.setupRound) || input.setupRound < 0 || Object.is(input.setupRound, -0)) throw new Error("Invalid setup round");
-    const roster = decodeRosterBody(encodeRosterBody(input.roster));
-    const self = parseIdentityPublicKey(input.self);
+    const { roster, self } = input;
     if (!bytesEqual(roster.gameId, input.session.gameId) || roster.seats.length !== 4 || input.session.roster.length !== 4 ||
       roster.seats.some((id, seat) => !bytesEqual(id, input.session.roster[seat]!)) || !roster.seats.some(id => bytesEqual(id, self))) throw new Error("Shuffle session scope mismatch");
     const options = Object.freeze({ ...input, roster, self, deckSpec: Object.freeze({ id: input.deckSpec.id, cards: Object.freeze([...input.deckSpec.cards]) }),
@@ -65,7 +64,7 @@ export class PersistentCandidateShuffleReceiver {
         const ownSetup = history.envelopes.filter(a => bytesEqual(a.envelope.from, artifact.envelope.from) &&
           ["KEY_SHARE", "RAND_COMMIT", "RAND_REVEAL"].includes(a.envelope.type));
         if (ownSetup.some(a => a.envelope.seq >= artifact.envelope.seq)) throw new Error("Stored shuffle precedes sender setup");
-        await ledger.accept(artifact.canonicalBytes);
+        await ledger.acceptVerified(artifact);
         history.assertUnchanged();
       }
       const later = history.envelopes.filter(a => a.envelope.round === options.round && ["SHARES", "ACTION", "AUDIT_DISCLOSE"].includes(a.envelope.type));
@@ -89,7 +88,7 @@ export class PersistentCandidateShuffleReceiver {
 
   async receive(candidate: EnvelopeArtifact): Promise<PersistentCandidateShuffleResult> {
     this.#begin();
-    try { return await this.#receiveOne(capture(candidate)); }
+    try { return await this.#receiveOne(candidate); }
     finally { this.#busy = false; }
   }
 
@@ -121,7 +120,7 @@ export class PersistentCandidateShuffleReceiver {
       const artifact = await author.author({ type: "SHUFFLE", round: this.#options.round,
         phase: `round.${this.#options.round}.shuffle.${seat}`, body: { statement: statementBytes, proof } }, guard);
       this.#guard();
-      const result = await this.#receiveOne(capture(artifact));
+      const result = await this.#receiveOne(artifact);
       if (result.status === "rejected") throw new Error("Authored shuffle requires durable recovery");
       return result;
     } catch (error) {
@@ -131,7 +130,12 @@ export class PersistentCandidateShuffleReceiver {
     } finally { this.#busy = false; }
   }
 
-  #begin(): void { this.#guard(); if (this.#busy) throw new Error("Shuffle receiver is busy"); this.#busy = true; }
+  #begin(): void {
+    this.#guard();
+    if (this.#options.serializedByCaller) return;
+    if (this.#busy) throw new Error("Shuffle receiver is busy");
+    this.#busy = true;
+  }
   #guard(): void {
     if (this.#failure) throw this.#failure;
     if (this.#closed) throw new Error("Shuffle receiver is closed");
@@ -147,48 +151,27 @@ export class PersistentCandidateShuffleReceiver {
     const recorded = this.#options.session.readRange(sender, expected.seq, expected.seq);
     if (recorded.status !== "complete" || recorded.envelopes.length !== 1 || !bytesEqual(recorded.envelopes[0]!.canonicalBytes, head.canonicalBytes)) throw this.#fail(new Error("Authored predecessor bytes differ"));
   }
-  async #receiveOne(bytes: Uint8Array): Promise<PersistentCandidateShuffleResult> {
+  async #receiveOne(received: EnvelopeArtifact): Promise<PersistentCandidateShuffleResult> {
     this.#guard();
-    const received = decodeAndVerifyEnvelope(bytes);
     // Reject gaps/forks before starting expensive proof work or touching storage.
     const classification = this.#options.session.classify(received);
-    if (classification.status === "rejected") return Object.freeze({ status: "rejected", reason: classification.reason, received });
-    let durableStarted = false;
+    if (classification.status === "rejected") return { status: "rejected", reason: classification.reason, received };
+    let persisted = false;
     try {
-      const status = await this.#ledger.accept(bytes, async () => {
+      const status = await this.#ledger.acceptVerified(received, async () => {
         this.#guard();
-        const before = this.#options.session.heads();
-        durableStarted = true;
-        const receipt = await this.#options.sessionReceiver.receive(decodeAndVerifyEnvelope(bytes));
-        if (!bytesEqual(capture(receipt.received), bytes)) throw this.#fail(new Error("Receipt bytes differ"));
-        if (receipt.status === "rejected") { this.#guard(); throw new ChainRejection(receipt.reason); }
-        if (!["accepted", "duplicate"].includes(receipt.status) || !["stored", "duplicate"].includes(receipt.persistenceStatus)) throw this.#fail(new Error("Invalid durable receipt"));
-        const expected = before.map(h => classification.status !== "duplicate" && bytesEqual(h.from, received.envelope.from)
-          ? { from: h.from, seq: received.envelope.seq, hash: received.hash } : h);
-        const heads = this.#options.session.heads();
-        if (heads.length !== expected.length || heads.some((h, i) => h.seq !== expected[i]!.seq ||
-          !bytesEqual(h.from, expected[i]!.from) || !bytesEqual(h.hash, expected[i]!.hash)) ||
-          this.#options.session.classify(decodeAndVerifyEnvelope(bytes)).status !== "duplicate") throw this.#fail(new Error("Registry changed during shuffle receipt"));
-        const range = this.#options.session.readRange(received.envelope.from, received.envelope.seq, received.envelope.seq);
-        if (range.status !== "complete" || range.envelopes.length !== 1 || !bytesEqual(capture(range.envelopes[0]!), bytes)) throw this.#fail(new Error("Receipt absent from registry"));
+        const receipt = await this.#options.sessionReceiver.receiveVerified(received);
+        if (receipt.status === "rejected") throw new ChainRejection(receipt.reason);
+        persisted = true;
         this.#checkpoint = captureSessionHistory(this.#options.session, this.#options.historyLimits);
-        this.#guard();
       });
       this.#guard();
       if (status === "accepted") this.#snapshot = Object.freeze({ nextSeat: this.#ledger.nextSeat, complete: this.#ledger.complete });
-      return Object.freeze({ status, received: decodeAndVerifyEnvelope(bytes), snapshot: this.#snapshot });
+      return Object.freeze({ status, received, snapshot: this.#snapshot });
     } catch (error) {
-      if (error instanceof ChainRejection) return Object.freeze({ status: "rejected", reason: error.reason, received: decodeAndVerifyEnvelope(bytes) });
-      if (durableStarted) {
-        // Storage may have committed even when close or a dependency interrupted acknowledgement.
-        try { this.#guard(); } catch { throw this.#fail(error); }
-      }
+      if (error instanceof ChainRejection) return { status: "rejected", reason: error.reason, received };
+      if (persisted || error instanceof PersistentSessionReceiverError) throw this.#fail(error);
       throw error;
     }
   }
-}
-function capture(candidate: EnvelopeArtifact): Uint8Array {
-  const bytes = candidate?.canonicalBytes;
-  if (!(bytes instanceof Uint8Array) || bytes.constructor !== Uint8Array || bytes.length === 0 || bytes.length > 16 * 1024) throw new Error("Invalid shuffle envelope size");
-  return decodeAndVerifyEnvelope(bytes.slice()).canonicalBytes;
 }

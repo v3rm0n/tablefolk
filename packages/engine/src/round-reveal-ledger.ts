@@ -1,11 +1,11 @@
-import { bytesEqual, bytesToHex, randomBytes, RistrettoPoint, type RandomSource, type RistrettoScalar } from "@p2pcards/crypto";
+import { bytesEqual, bytesToHex, RistrettoPoint, type RandomSource, type RistrettoScalar } from "@p2pcards/crypto";
 import {
   CardPointTable, createProvenDecryptionShare, decodeActionBody, decodeSharesBody, decryptionShare, removeDecryptionShares, verifyProvenDecryptionShare,
   type ActionBody, type DeckSpec, type MaskedCard, type PositionShare, type SharesBody,
 } from "@p2pcards/deck";
-import { decodeAndVerifyEnvelope, type EnvelopeArtifact, type GameId, type IdentityPublicKey } from "@p2pcards/protocol";
+import { type EnvelopeArtifact, type GameId, type IdentityPublicKey } from "@p2pcards/protocol";
 
-import { ActionEnvelopeError, decodeActionEnvelope, MAX_ACTION_ENVELOPE_BYTES, type ActionEnvelopeErrorCode } from "./action-envelope";
+import { MAX_ACTION_ENVELOPE_BYTES, type ActionEnvelopeErrorCode } from "./action-envelope";
 import { SetupEnvelopeCoordinator } from "./setup-envelope-coordinator";
 
 export const MAX_ROUND_REVEAL_ENVELOPE_BYTES = MAX_ACTION_ENVELOPE_BYTES;
@@ -205,23 +205,12 @@ export class RoundRevealLedger {
     const step = this.#schedule[this.#dealIndex];
     if (step === undefined) { throw new RoundRevealError("wrong_phase"); }
     if (!this.#batchDeal && seat === step.to) { throw new RoundRevealError("unexpected_sender"); }
-    const requirePending = (): void => {
-      if (this.#schedule[this.#dealIndex] !== step) { throw new RoundRevealError("wrong_phase"); }
-      if (this.#contributors.has(seat)) { throw new RoundRevealError("conflicting_contribution"); }
-    };
-    requirePending();
+    if (this.#contributors.has(seat)) { throw new RoundRevealError("conflicting_contribution"); }
     const context = { gameId: this.#gameId, round: this.#round, phase: this.#phase() };
-    const guardedSource: RandomSource = { fill: (bytes) => {
-      requirePending();
-      bytes.set(randomBytes(bytes.length, source));
-      // Check every draw, including nonces rejected by the scalar sampler.
-      requirePending();
-    } };
     const items: PositionShare[] = [];
     const positions = this.#batchDeal ? this.#owners.flatMap((owner, pos) => owner !== seat ? [pos] : []) : step.positions;
     for (const pos of positions) {
-      const share = createProvenDecryptionShare(context, pos, secretKey, this.#deck[pos]!.A, guardedSource);
-      requirePending();
+      const share = createProvenDecryptionShare(context, pos, secretKey, this.#deck[pos]!.A, source);
       items.push(Object.freeze({ pos, ...share }));
     }
     return Object.freeze({ to: this.#batchDeal ? 4 : step.to, items: Object.freeze(items) });
@@ -237,13 +226,7 @@ export class RoundRevealLedger {
     if (!Object.hasOwn(hand.remaining, position)) { throw new RoundRevealError("already_revealed"); }
     if (this.#actionIndex >= this.#maxActions) { throw new RoundRevealError("action_limit"); }
     const phase = this.#phase();
-    const guardedSource: RandomSource = { fill: (bytes) => {
-      if (phase !== this.#phase()) { throw new RoundRevealError("wrong_phase"); }
-      bytes.set(randomBytes(bytes.length, source));
-      if (phase !== this.#phase()) { throw new RoundRevealError("wrong_phase"); }
-    } };
-    const share = createProvenDecryptionShare({ gameId: this.#gameId, round: this.#round, phase }, position, secretKey, this.#deck[position]!.A, guardedSource);
-    if (phase !== this.#phase()) { throw new RoundRevealError("wrong_phase"); }
+    const share = createProvenDecryptionShare({ gameId: this.#gameId, round: this.#round, phase }, position, secretKey, this.#deck[position]!.A, source);
     return Object.freeze({ pos: position, ...share });
   }
 
@@ -272,15 +255,8 @@ export class RoundRevealLedger {
       : `round.${this.#round}.deal.${this.#dealIndex}`;
   }
 
-  #process(candidate: EnvelopeArtifact, expectedSeat: number | undefined, commit: boolean): RoundRevealTransition {
-    let received: EnvelopeArtifact;
-    try {
-      const bytes = candidate.canonicalBytes;
-      if (!(bytes instanceof Uint8Array) || bytes.constructor !== Uint8Array || bytes.length > MAX_ROUND_REVEAL_ENVELOPE_BYTES) {
-        throw new TypeError("Round reveal envelope exceeds its byte boundary");
-      }
-      received = decodeAndVerifyEnvelope(bytes);
-    } catch (cause) { throw new RoundRevealError("invalid_envelope", { cause }); }
+  #process(received: EnvelopeArtifact, expectedSeat: number | undefined, commit: boolean): RoundRevealTransition {
+    if (received.canonicalBytes.length > MAX_ROUND_REVEAL_ENVELOPE_BYTES) throw new RoundRevealError("invalid_envelope");
     const envelope = received.envelope;
     if (!bytesEqual(envelope.game, this.#gameId)) { throw new RoundRevealError("wrong_game"); }
     const seat = this.#seats.get(bytesToHex(envelope.from));
@@ -328,16 +304,12 @@ export class RoundRevealLedger {
     }
     if (this.#schedule[this.#dealIndex] !== undefined) { throw new RoundRevealError("deal_incomplete"); }
     if (this.#actionIndex >= this.#maxActions) { throw new RoundRevealError("action_limit"); }
+    if (expectedSeat === undefined) throw new RangeError("An expected action seat is required");
+    if (envelope.phase !== this.#phase()) throw new RoundRevealError("wrong_phase");
+    if (seat !== expectedSeat) throw new RoundRevealError("unexpected_sender");
     let body: ActionBody;
-    try {
-      body = decodeActionEnvelope(received.canonicalBytes, {
-        gameId: this.#gameId, round: this.#round, actionIndex: this.#actionIndex, roster: this.#roster,
-        expectedSeats: expectedSeat === undefined ? [] : [expectedSeat],
-      }).action;
-    } catch (cause) {
-      if (cause instanceof ActionEnvelopeError) { throw new RoundRevealError(cause.code, { cause }); }
-      throw cause;
-    }
+    try { body = decodeActionBody(envelope.body); }
+    catch (cause) { throw new RoundRevealError("malformed_body", { cause }); }
     // Check all ownership/freshness constraints before attempting any card opening.
     for (const position of body.reveal) {
       const owner = this.#owners[position];
