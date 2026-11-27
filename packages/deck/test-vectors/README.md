@@ -6,11 +6,11 @@ them with `python3 packages/deck/test-vectors/generate-shuffle-transcript.py` fr
 the repository root. The script uses Python's standard library and its own small
 CBOR encoder; it does not import application or Rust code. These test challenge
 framing and reduction, not independent proof equations. See
-`docs/shuffle-transcript.md` for the exact candidate profile.
+`docs/shuffle.md` for the exact candidate profile.
 
 `shuffle-crs-36.json` records eleven public candidate bases in derivation order.
 Each entry contains the role/index, full SHA-512 input, digest, and compressed
-Ristretto point. See `docs/shuffle-crs-profile.md` at the repository root.
+Ristretto point. See `docs/shuffle.md` at the repository root.
 
 The following Node command reproduces the fixture from the repository root. Its
 CBOR framing is deliberately independent of the application's encoder. The group
