@@ -1,15 +1,14 @@
 import { bytesEqual, bytesToHex, RistrettoPoint, type RistrettoScalar } from "@p2pcards/crypto";
 import { PersistentSetupReceiver } from "@p2pcards/engine";
 import { CandidateSaskuRoundOwner, type SaskuActionIntent, type SaskuRoundSnapshot } from "@p2pcards/game-sasku";
-import { decodeAndVerifyEnvelope, type EnvelopeArtifact, type IdentityPublicKey, type RosterBody } from "@p2pcards/protocol";
+import type { EnvelopeArtifact, IdentityPublicKey, RosterBody } from "@p2pcards/protocol";
 import { captureSessionHistory, PersistentEnvelopeAuthor, PersistentSessionReceiver, type SessionChainRegistry } from "@p2pcards/session";
 import { IndexedDbGameSecretStore, type IndexedDbStoreOptions, type IndexedDbSessionStore } from "@p2pcards/storage";
 import { legalSaskuCards, saskuBidStrength, type SaskuCardId } from "@p2pcards/rules-sasku";
 import { CandidateShuffleClient } from "./candidate-shuffle-client";
-import { FIRST_DEAL, FIRST_ROUND } from "./live-profile";
+import { FIRST_ROUND, liveRoundPolicy, MATCH_HISTORY_LIMITS } from "./live-profile";
+import { decodeMatchEnvelope } from "./match-envelope";
 import { dealerForSaskuRound, INITIAL_SASKU_MATCH, MAX_SASKU_MATCH_ROUNDS, recordSaskuRound, type SaskuMatchState } from "./sasku-match";
-
-const MATCH_HISTORY_LIMITS = Object.freeze({ maxEnvelopes: 4096, maxBytes: 64 * 1024 * 1024 });
 
 export interface LiveRoundView {
   readonly phase: "setup" | "shuffle" | "dealing" | "bidding" | "choosing_trump" | "playing" | "audit" | "complete" | "match_complete";
@@ -69,8 +68,7 @@ export class LiveRound {
   }
   receive(remote: IdentityPublicKey, payload: Uint8Array): void {
     if (this.#closed || this.#error) throw new Error(this.#error ?? "Round is closed");
-    if (payload.length > 64 * 1024) throw new Error("Round envelope exceeds limit");
-    const a = decodeAndVerifyEnvelope(payload), e = a.envelope;
+    const a = decodeMatchEnvelope(payload), e = a.envelope;
     if (!bytesEqual(e.from, remote) || !bytesEqual(e.game, this.#options.roster.gameId) || this.#options.session.seatOf(remote) === null) throw new Error("Wrong round sender");
     const classification = this.#options.session.classify(a);
     if (classification.status === "duplicate") return;
@@ -171,10 +169,7 @@ export class LiveRound {
   }
   #openRound(): Promise<CandidateSaskuRoundOwner> {
     return CandidateSaskuRoundOwner.open({ session: this.#options.session, sessionReceiver: this.#durable,
-      roster: this.#options.roster, self: this.#options.self, setupRound: 0, round: this.#match.round,
-      dealer: dealerForSaskuRound(this.#match.round), schedule: FIRST_DEAL, verifier: this.#client,
-      beaconRequired: false, batchDeal: true,
-      historyLimits: MATCH_HISTORY_LIMITS, roundHistoryLimits: { ...MATCH_HISTORY_LIMITS, allowOtherRounds: true } });
+      roster: this.#options.roster, self: this.#options.self, verifier: this.#client, ...liveRoundPolicy(this.#match.round) });
   }
   #validateMatchHistory(): void {
     const history = captureSessionHistory(this.#options.session, MATCH_HISTORY_LIMITS);

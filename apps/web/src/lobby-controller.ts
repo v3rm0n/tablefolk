@@ -16,6 +16,8 @@ import { createLobbyInvitation, identityFingerprint, parseLobbyInvitation, type 
 import { LobbyTransport, type LobbyTransportLike, type LobbyTransportOptions } from "./lobby-transport";
 import { parseRoundCompletionMarker, roundCompletionMarker, sameRoundCompletion } from "./round-completion-marker";
 import type { BrowserLobbyActions, BrowserLobbySnapshot } from "./lobby-types";
+import { decodeMatchEnvelope, isLobbyEnvelope } from "./match-envelope";
+import { exportTranscript } from "./transcript";
 
 interface Room {
   readonly invitation: LobbyInvitation;
@@ -287,9 +289,8 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       room.roundCompletions.set(key, byRound);
       this.#refresh(room); return;
     }
-    if (payload.length > 65536) throw new LobbyProtocolError("Envelope exceeds 64 KiB");
-    const candidate = decodeAndVerifyEnvelope(payload);
-    if (!["JOIN", "ROSTER", "READY"].includes(candidate.envelope.type)) {
+    const candidate = decodeMatchEnvelope(payload);
+    if (!isLobbyEnvelope(candidate)) {
       if (!bytesEqual(candidate.envelope.from, remote) || !bytesEqual(candidate.envelope.game, room.invitation.gameId)) throw new LobbyProtocolError("Wrong authenticated round sender");
       return this.#enqueue(room, async () => {
         if (room.game) room.game.receive(remote, payload);
@@ -303,12 +304,10 @@ export class BrowserLobbyController implements BrowserLobbyActions {
         }
       });
     }
-    if (payload.length > 4096) { throw new LobbyProtocolError("Lobby envelope exceeds 4 KiB"); }
-    let artifact: EnvelopeArtifact;
+    const artifact = candidate;
     try {
-      artifact = decodeAndVerifyEnvelope(payload);
       if (!bytesEqual(artifact.envelope.game, room.invitation.gameId) || !bytesEqual(artifact.envelope.from, remote) ||
-          artifact.envelope.round !== 0 || artifact.envelope.phase !== "lobby" || !["JOIN", "ROSTER", "READY"].includes(artifact.envelope.type)) {
+          artifact.envelope.round !== 0 || artifact.envelope.phase !== "lobby") {
         throw new Error("Only this authenticated author's lobby messages are accepted");
       }
       if (artifact.envelope.type === "JOIN") { decodeJoinBody(artifact.envelope.body); }
@@ -504,6 +503,12 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       if (this.#room === room) this.#set({ error: `Ready status delivery failed: ${message(cause)}` });
       throw cause;
     }
+  }
+
+  exportTranscript(): Uint8Array {
+    const lobby = this.#room?.lobby;
+    if (!lobby?.finalizedRegistry || !lobby.rosterArtifact) throw new Error("The table needs four ready players before export");
+    return exportTranscript(lobby.finalizedRegistry, lobby.rosterArtifact);
   }
 
   async playAction(intent: SaskuActionIntent): Promise<void> {

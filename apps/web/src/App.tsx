@@ -1,3 +1,4 @@
+import { TranscriptControls } from "./TranscriptControls";
 import { LiveSaskuRound } from "./LiveSaskuRound";
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 
@@ -154,7 +155,8 @@ export function App({ controller, demo = false }: { readonly controller: Browser
         </section>
         </details>
       )}
-
+      <TranscriptControls key={room?.gameId ?? "welcome"}
+        exportBytes={state.game && controller.exportTranscript ? () => controller.exportTranscript!() : undefined} />
     </main>
   );
 }

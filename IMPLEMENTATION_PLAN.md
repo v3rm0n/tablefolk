@@ -87,14 +87,14 @@ connectivity, and simplicity.
 
 ### 3. In-Browser Transcript Export & CSP (`#8`)
 
-- [ ] **#8 — Minimal CBOR transcript & in-browser verifier:** freeze the
+- [x] **#8 — Minimal CBOR transcript & in-browser verifier:** freeze the
       self-contained CBOR transcript container
       `{version, rules_hash, roster, envelopes}` in canonical order (omitting
       non-verifiable `HELLO` transport bindings), implement shared
       `verifyTranscript(bytes)` (rejecting unknown `rules_hash` values), and
       expose lightweight "Export transcript (.cbor)" / "Verify transcript" UI
       directly in `apps/web` (no separate Node CLI).
-- [ ] **#8 — Strict CSP & boundary fuzzing:** enforce a strict static
+- [x] **#8 — Strict CSP & boundary fuzzing:** enforce a strict static
       Content-Security-Policy (protecting the raw Ed25519 identity seed and
       `x_i` in IndexedDB) and add property/fuzz tests for malformed CBOR,
       invalid envelopes, and chain gaps at the network boundary.

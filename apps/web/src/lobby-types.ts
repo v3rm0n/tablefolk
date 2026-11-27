@@ -46,6 +46,7 @@ export interface BrowserLobbyActions {
   join(invitation: string, relayText?: string): Promise<void>;
   markReady(): Promise<void>;
   setReady(ready: boolean): Promise<void>;
+  exportTranscript?(): Uint8Array;
   playAction?(intent: SaskuActionIntent): Promise<void>;
   retryPeer(publicKey: string): Promise<void>;
   leave(): Promise<void>;

@@ -29,9 +29,9 @@ export function parseRelayText(text: string): readonly string[] | undefined {
   const urls = lines.map((line) => {
     if (line.length > 2048) { throw new Error("Relay URL is too long"); }
     const url = new URL(line);
-    const local = url.protocol === "ws:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    const local = url.protocol === "ws:" && ["localhost", "127.0.0.1"].includes(url.hostname);
     if ((url.protocol !== "wss:" && !local) || url.username || url.password || url.search || url.hash) {
-      throw new Error("Use wss relay URLs without credentials, query or fragment; ws is allowed only on localhost");
+      throw new Error("Use wss relay URLs without credentials, query or fragment; ws is allowed only on localhost or 127.0.0.1");
     }
     return url.toString();
   });
