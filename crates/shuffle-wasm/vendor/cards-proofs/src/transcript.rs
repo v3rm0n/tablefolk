@@ -4,7 +4,10 @@ use ark_serialize::CanonicalSerialize;
 use ark_std::{borrow::BorrowMut, vec::Vec};
 use sha2::{Digest, Sha512};
 
-pub const PROFILE: &[u8] = b"bg-ristretto255-36-4x9-fs-candidate-v1";
+pub const PROFILE: &[u8] = b"bg-ristretto255-fs-candidate-v2";
+// Arkworks prefixes the outer vector and each of up to 64 matrix rows.
+pub const MAX_PUBLIC_BYTES: usize = 128 * 64 + (64 + 1) * 8;
+pub const MAX_EVENT_BYTES: usize = 64 * 1024;
 const DOMAIN: &[u8] = b"p2pcards/v1/shuffle";
 
 pub fn bytes(value: &[u8]) -> Vec<u8> {
@@ -51,7 +54,7 @@ impl Transcript {
         Self { context, root: root.to_vec(), events: Vec::new(), event_bytes: 0, records: Vec::new() }
     }
     fn push(&mut self, event: Vec<u8>) {
-        assert!(self.events.len() < 128 && self.event_bytes + event.len() <= 32768,
+        assert!(self.events.len() < 128 && self.event_bytes + event.len() <= MAX_EVENT_BYTES,
             "Candidate transcript event bound");
         self.event_bytes += event.len(); self.events.push(event);
     }
@@ -60,13 +63,13 @@ impl Transcript {
         self.push(array(&[vec![0], bytes(label)]));
     }
     pub fn append<T: CanonicalSerialize + ?Sized>(&mut self, value: &T) {
-        assert!(value.compressed_size() <= 8192, "Candidate append bound");
+        assert!(value.compressed_size() <= MAX_PUBLIC_BYTES, "Candidate append bound");
         let mut encoded = Vec::new();
         value.serialize_compressed(&mut encoded).expect("Serialize public transcript value");
         self.append_public_bytes(&encoded);
     }
     pub fn append_public_bytes(&mut self, encoded: &[u8]) {
-        assert!(encoded.len() <= 8192, "Candidate append bound");
+        assert!(encoded.len() <= MAX_PUBLIC_BYTES, "Candidate append bound");
         self.push(array(&[vec![1], bytes(encoded)]));
     }
     pub fn challenge<'a>(&'a mut self, label: &[u8]) -> Challenge<'a> {

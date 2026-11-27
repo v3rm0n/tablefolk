@@ -1,10 +1,18 @@
 import { bytesEqual } from "@p2pcards/crypto";
 import type { CborMap } from "@p2pcards/encoding";
-import { CardPointTable, initialMaskedCard, decodeCandidateShuffleStatement36, encodeCandidateShuffleStatement36,
-  decodeCandidateShuffleProof36, type DeckSpec, type MaskedCard } from "@p2pcards/deck";
+import { CardPointTable, initialMaskedCard, encodeCandidateShuffleStatement, unpackShuffleDeck,
+  decodeCandidateShuffleProof, shuffleCardCount, type DeckSpec, type MaskedCard } from "@p2pcards/deck";
 import { decodeAndVerifyEnvelope, decodeRosterBody, encodeRosterBody, hashRosterBody,
   type RosterBody } from "@p2pcards/protocol";
 import { SetupEnvelopeCoordinator } from "./setup-envelope-coordinator";
+
+const DIMENSIONS = Object.freeze({ rows: 4, columns: 9 });
+const CARD_COUNT = shuffleCardCount(DIMENSIONS);
+
+export interface CandidateShuffleBody {
+  readonly outputDeck: Uint8Array;
+  readonly proof: Uint8Array;
+}
 
 export interface CandidateShuffleVerifier {
   verify(statement: Uint8Array, proof: Uint8Array): Promise<boolean>;
@@ -36,21 +44,35 @@ export class CandidateShuffleLedger {
       roster.seats.some((id, i) => !bytesEqual(id, options.setup.roster[i]!))) throw new Error("Shuffle roster differs from setup");
     if (!Number.isSafeInteger(options.round) || options.round < options.setup.round || Object.is(options.round, -0)) throw new Error("Invalid shuffle round");
     const table = new CardPointTable(options.deckSpec);
-    if (table.size !== 36) throw new Error("Candidate shuffle requires 36 cards");
+    if (table.size !== CARD_COUNT) throw new Error("Candidate shuffle requires 36 cards");
     this.#options = Object.freeze({ ...options, round: options.round });
     this.#roster = roster;
-    this.#deck = Object.freeze(Array.from({ length: 36 }, (_, i) => initialMaskedCard(table.pointAt(i))));
+    this.#deck = Object.freeze(Array.from({ length: CARD_COUNT }, (_, i) => initialMaskedCard(table.pointAt(i))));
   }
 
   get nextSeat(): number | null { return this.#seat === 4 ? null : this.#seat; }
   get complete(): boolean { return !this.#closed && this.#seat === 4; }
   /** Captured public preparation request; both decks initially equal the preceding verified deck. */
-  nextStatement(): Uint8Array {
+  nextStatement(): Uint8Array { return this.#statement(this.#deck); }
+
+  #statement(outputDeck: readonly MaskedCard[]): Uint8Array {
     if (this.#closed || this.#seat === 4) throw new Error("Shuffle ledger is closed or complete");
-    return encodeCandidateShuffleStatement36({ gameId: this.#roster.gameId, round: this.#options.round,
-      seat: this.#seat, rosterHash: hashRosterBody(this.#roster), aggregateKey: this.#options.setup.aggregateKey!,
-      inputDeck: this.#deck, outputDeck: this.#deck });
+    return encodeCandidateShuffleStatement({ ...DIMENSIONS, gameId: this.#roster.gameId,
+      round: this.#options.round, seat: this.#seat, rosterHash: hashRosterBody(this.#roster),
+      aggregateKey: this.#options.setup.aggregateKey!, inputDeck: this.#deck, outputDeck });
   }
+
+  #prepare({ outputDeck, proof }: CandidateShuffleBody) {
+    decodeCandidateShuffleProof(proof, DIMENSIONS);
+    const deck = unpackShuffleDeck(outputDeck, CARD_COUNT);
+    return { statement: this.#statement(deck), deck };
+  }
+
+  async verifyPrepared(body: CandidateShuffleBody): Promise<boolean> {
+    const { statement } = this.#prepare(body);
+    return this.#options.verifier.verify(statement, body.proof.slice());
+  }
+
   get finalDeck(): readonly MaskedCard[] {
     if (!this.complete) throw new Error("Shuffle chain is incomplete");
     return this.#deck;
@@ -79,22 +101,18 @@ export class CandidateShuffleLedger {
       !bytesEqual(envelope.from, this.#roster.seats[this.#seat]!)) throw new Error("Wrong shuffle envelope scope or sender");
     const body = envelope.body;
     if (typeof body !== "object" || body === null || Array.isArray(body) || body instanceof Uint8Array ||
-      Object.keys(body).sort().join(",") !== "proof,statement") throw new Error("Invalid candidate shuffle body");
-    const statementBytes = (body as CborMap)["statement"], proofBytes = (body as CborMap)["proof"];
-    if (!(statementBytes instanceof Uint8Array) || !(proofBytes instanceof Uint8Array)) throw new Error("Invalid candidate shuffle body bytes");
-    const statement = decodeCandidateShuffleStatement36(statementBytes);
-    decodeCandidateShuffleProof36(proofBytes);
-    const expected = decodeCandidateShuffleStatement36(this.nextStatement());
-    if (!bytesEqual(encodeCandidateShuffleStatement36({ ...statement, outputDeck: expected.outputDeck }),
-      encodeCandidateShuffleStatement36(expected))) throw new Error("Shuffle statement does not extend admitted state");
+      Object.keys(body).sort().join(",") !== "outputDeck,proof") throw new Error("Invalid candidate shuffle body");
+    const { outputDeck, proof } = body as CborMap;
+    if (!(outputDeck instanceof Uint8Array) || !(proof instanceof Uint8Array)) throw new Error("Invalid candidate shuffle body bytes");
+    const { statement, deck } = this.#prepare({ outputDeck, proof });
     this.#busy = true;
     try {
       // Backend gets detached copies, so an adapter cannot alter the admitted deck or artifact.
-      if (await this.#options.verifier.verify(statementBytes.slice(), proofBytes.slice()) !== true) throw new Error("Invalid shuffle proof");
+      if (await this.#options.verifier.verify(statement, proof.slice()) !== true) throw new Error("Invalid shuffle proof");
       if (this.#closed) throw new Error("Shuffle ledger closed during verification");
       await beforeCommit?.();
       if (this.#closed) throw new Error("Shuffle ledger closed during receipt");
-      this.#deck = statement.outputDeck;
+      this.#deck = deck;
       this.#accepted.push(captured);
       this.#seat++;
       return "accepted";

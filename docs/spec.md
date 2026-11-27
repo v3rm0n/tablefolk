@@ -6,7 +6,7 @@ Version 0.1 (draft) · 2026-09-03
 > Concrete byte-level encodings, storage invariants, and Nostr signaling live in
 > [protocol.md](protocol.md). The candidate 36-card Bayer–Groth shuffle profile
 > lives in [shuffle.md](shuffle.md), and the active Sasku match profile
-> (`sasku-match-candidate@3`, which uses key-only setup and four-donor deal
+> (`sasku-match-candidate@4`, which uses key-only setup and four-donor deal
 > batches) lives in [sasku.md](sasku.md). See [decisions.md](decisions.md) for
 > accepted scope changes (including the 2026-11-27 pragmatic card-game scope
 > revision).

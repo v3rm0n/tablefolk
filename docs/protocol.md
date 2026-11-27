@@ -8,7 +8,7 @@ outside development fixtures.
 
 For the candidate 36-card Bayer–Groth shuffle proof format, see
 [shuffle.md](shuffle.md). For the active Sasku match profile
-(`sasku-match-candidate@3`), see [sasku.md](sasku.md).
+(`sasku-match-candidate@4`), see [sasku.md](sasku.md).
 
 ---
 
@@ -162,17 +162,19 @@ ten fields (no extensions):
   Accepted only after aggregate-key completion.
 - **`RAND_REVEAL`** (`phase: "setup.rand"`): `{s}` (32-byte preimage). Accepted
   only after all seats commit; `seed = SHA-256(s_0 || ... || s_{N-1})`.
-  *(Note: `sasku-match-candidate@3` uses key-only setup and omits `setup.rand`.)*
-- **`SHUFFLE`** (`phase: "round.<r>.shuffle.<i>"`): on `main`, the candidate
-  integration body is `{statement, proof}` (two byte strings); see
-  [shuffle.md](shuffle.md). *(Planned in `#6`: shrink to `{outputDeck, proof}`
-  and reconstruct the parameterized `(m, n)` statement locally.)*
+  *(Note: `sasku-match-candidate@4` uses key-only setup and omits `setup.rand`.)*
+- **`SHUFFLE`** (`phase: "round.<r>.shuffle.<i>"`): `{outputDeck, proof}`.
+  `outputDeck` is one byte string of `m*n` ordered 64-byte `A || B` point pairs.
+  `proof` is a v2 Bayer–Groth proof for the agreed matrix. The prover and
+  verifier reconstruct the statement from the envelope scope, finalized
+  roster, setup key, and preceding verified deck. Sasku uses 4×9.
+  See [shuffle.md](shuffle.md).
 - **`SHARES`** (`phase: "round.<r>.deal.<k>"`): `{to, items}` where `to` is
   `0..7` and `items` contains 1–128 unique-position `{pos, S, R1, R2, z}` items
   (`pos` in `0..127`). Each item's Chaum–Pedersen DLEQ statement is
   `{pos, H, A, S, R1, R2}` under `p2pcards/v1/dleq` bound to the carrying
   `{gameId, round, phase}`, verifying `z*G = R1 + c*H` and `z*A = R2 + c*S`.
-  In `sasku-match-candidate@3`, `to: 4` denotes the four-seat all-other-positions
+  In `sasku-match-candidate@4`, `to: 4` denotes the four-seat all-other-positions
   donor batch in `round.<r>.deal.0` (27 ascending positions).
 - **`ACTION`** (`phase: "round.<r>.play.<t>"`): `{kind, data, reveal, shares}`.
   `kind` is non-empty text (`<= 64` bytes); `reveal` has 0–128 unique positions
@@ -234,7 +236,7 @@ credentials):
 https://<host>/<path>#g=<game_id_hex32>&h=<host_pk_hex64>&r=<rules_id>@<ver>&s=trystero-nostr
 ```
 
-The current browser profile requires `r=sasku-match-candidate@3` and
+The current browser profile requires `r=sasku-match-candidate@4` and
 `s=trystero-nostr`. Fragment parameters never leave the browser in HTTP requests.
 
 ### Signaling messages & Nostr adapter

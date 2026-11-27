@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 
-PROFILE = b"bg-ristretto255-36-4x9-fs-candidate-v1"
+PROFILE = b"bg-ristretto255-fs-candidate-v2"
 DOMAIN = b"p2pcards/v1/shuffle"
 ORDER = 2**252 + 27742317777372353535851937790883648493
 

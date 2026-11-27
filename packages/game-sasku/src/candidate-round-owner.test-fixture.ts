@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import { createUnprovenDeckShuffle, decodeCandidateShuffleStatement36, encodeCandidateShuffleStatement36, encodeCandidateShuffleProof36 } from "@p2pcards/deck";
+import { createUnprovenDeckShuffle, decodeCandidateShuffleStatement, packShuffleDeck, encodeCandidateShuffleProof } from "@p2pcards/deck";
 import { PersistentCandidateShuffleReceiver } from "@p2pcards/engine";
 import { parseHash256, type EnvelopeArtifact } from "@p2pcards/protocol";
 import { PersistentEnvelopeAuthor, PersistentSessionReceiver, SessionChainRegistry } from "@p2pcards/session";
@@ -21,10 +21,10 @@ export async function fixture(withDeals = false, maxPendingEnvelopes = 32) {
   const shuffle = await PersistentCandidateShuffleReceiver.open({ ...context, session: source, sessionReceiver: sourceDurable, deckSpec: SASKU_DECK_SPEC });
   const shuffles: EnvelopeArtifact[] = [], deals: EnvelopeArtifact[] = [];
   for (let seat = 0; seat < 4; seat++) {
-    const s = decodeCandidateShuffleStatement36(shuffle.nextStatement());
+    const s = decodeCandidateShuffleStatement(shuffle.nextStatement());
     const shuffled = createUnprovenDeckShuffle(s.inputDeck, s.aggregateKey, f.source);
     const artifact = await authors[seat]!.author({ round: f.round, phase: `round.${f.round}.shuffle.${seat}`, type: "SHUFFLE", body: {
-      statement: encodeCandidateShuffleStatement36({ ...s, outputDeck: shuffled.outputDeck }), proof: encodeCandidateShuffleProof36(Array.from({ length: 106 }, () => new Uint8Array(32))),
+      outputDeck: packShuffleDeck(shuffled.outputDeck, s.inputDeck.length), proof: encodeCandidateShuffleProof(Array.from({ length: 106 }, () => new Uint8Array(32)), { rows: 4, columns: 9 }),
     } });
     await shuffle.receive(artifact); shuffles.push(artifact);
   }

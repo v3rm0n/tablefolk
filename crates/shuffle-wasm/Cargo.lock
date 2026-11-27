@@ -123,17 +123,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ark-secp256k1"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8bd211c48debd3037b48873a7aa22c3aba034e83388aa4124795c9f220b88c7"
-dependencies = [
- "ark-ec",
- "ark-ff",
- "ark-std",
-]
-
-[[package]]
 name = "ark-serialize"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -165,19 +154,6 @@ checksum = "246a225cc6131e9ee4f24619af0f19d67761fff15d7ccc22e42b80846e69449a"
 dependencies = [
  "num-traits",
  "rand",
-]
-
-[[package]]
-name = "ark-transcript"
-version = "0.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "540d081364f61c214d50a144339ae538fc8e7eb1f63739ce5675679add96aaaa"
-dependencies = [
- "ark-ff",
- "ark-serialize",
- "ark-std",
- "digest",
- "sha3",
 ]
 
 [[package]]
@@ -216,19 +192,6 @@ dependencies = [
  "ark-serialize",
  "ark-std",
  "sha2",
- "thiserror",
-]
-
-[[package]]
-name = "cards-proofs"
-version = "0.1.0"
-source = "git+https://github.com/paritytech/mental-poker?rev=ac4fb67b612aa89f37f6be72ea74a3c13eff66ca#ac4fb67b612aa89f37f6be72ea74a3c13eff66ca"
-dependencies = [
- "ark-ec",
- "ark-ff",
- "ark-serialize",
- "ark-std",
- "ark-transcript",
  "thiserror",
 ]
 
@@ -398,15 +361,6 @@ checksum = "1cfaf33c695fc6e08064efbc1f72ec937429614f25eef83af942d0e227c3a28f"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "keccak"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb26cec98cce3a3d96cbb7bced3c4b16e3d13f27ec56dbd62cbc8f39cfb9d653"
-dependencies = [
- "cpufeatures",
 ]
 
 [[package]]
@@ -600,26 +554,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "sha3"
-version = "0.10.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77fd7028345d415a4034cf8777cd4f8ab1851274233b45f84e3d955502d93874"
+name = "shuffle-wasm"
+version = "0.2.0"
 dependencies = [
- "digest",
- "keccak",
-]
-
-[[package]]
-name = "shuffle-backend-evaluation"
-version = "0.0.0"
-dependencies = [
- "ark-ec",
  "ark-ed25519",
  "ark-ff",
- "ark-secp256k1",
  "ark-serialize",
- "cards-proofs 0.1.0",
- "cards-proofs 0.1.0 (git+https://github.com/paritytech/mental-poker?rev=ac4fb67b612aa89f37f6be72ea74a3c13eff66ca)",
+ "cards-proofs",
  "curve25519-dalek",
  "getrandom",
  "rand",

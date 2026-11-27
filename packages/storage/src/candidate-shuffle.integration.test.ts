@@ -1,6 +1,6 @@
 import { IDBFactory } from "fake-indexeddb";
 import { expect, it, vi } from "vitest";
-import { decodeCandidateShuffleStatement36, createUnprovenDeckShuffle, encodeCandidateShuffleStatement36, encodeCandidateShuffleProof36 } from "@p2pcards/deck";
+import { decodeCandidateShuffleStatement, createUnprovenDeckShuffle, packShuffleDeck, encodeCandidateShuffleProof } from "@p2pcards/deck";
 import { PersistentCandidateShuffleReceiver } from "@p2pcards/engine";
 import { parseHash256 } from "@p2pcards/protocol";
 import { PersistentSessionReceiver, SessionChainRegistry, recoverSessionChains } from "@p2pcards/session";
@@ -22,11 +22,11 @@ it("rebuilds every verified shuffle prefix from fresh IndexedDB connections", as
     for (const artifact of f.setupEnvelopes) await durable.receive(artifact);
     receiver = await PersistentCandidateShuffleReceiver.open({ ...options, session, sessionReceiver: durable });
     for (let seat = 0; seat < 4; seat++) {
-      const template = decodeCandidateShuffleStatement36(receiver.nextStatement());
+      const template = decodeCandidateShuffleStatement(receiver.nextStatement());
       const shuffled = createUnprovenDeckShuffle(template.inputDeck, template.aggregateKey, f.source);
       const artifact = f.sign(seat, "SHUFFLE", `round.${f.round}.shuffle.${seat}`, {
-        statement: encodeCandidateShuffleStatement36({ ...template, outputDeck: shuffled.outputDeck }),
-        proof: encodeCandidateShuffleProof36(Array.from({ length: 106 }, () => new Uint8Array(32))),
+        outputDeck: packShuffleDeck(shuffled.outputDeck, template.inputDeck.length),
+        proof: encodeCandidateShuffleProof(Array.from({ length: 106 }, () => new Uint8Array(32)), { rows: 4, columns: 9 }),
       });
       expect((await receiver.receive(artifact)).status).toBe("accepted");
       const expected = receiver.snapshot;

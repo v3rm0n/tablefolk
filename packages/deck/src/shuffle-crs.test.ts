@@ -5,21 +5,25 @@ import { readFileSync } from "node:fs";
 import { bytesToHex, hexToBytes, RistrettoPoint } from "@p2pcards/crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { deriveShuffleCrs36, SHUFFLE_CRS_36_PROFILE } from "./shuffle-crs";
+import { deriveShuffleCrs, SHUFFLE_CRS_PROFILE } from "./shuffle-crs";
 
-const vectors = JSON.parse(readFileSync(
-  new URL("../test-vectors/shuffle-crs-36.json", import.meta.url), "utf8",
-)) as { role: string; index: number; input: string; digest: string; point: string }[];
+const dimensions = { rows: 4, columns: 9 };
+function fixture(cards: number) {
+  return JSON.parse(readFileSync(
+    new URL(`../test-vectors/shuffle-crs-${cards}.json`, import.meta.url), "utf8",
+  )) as { role: string; index: number; input: string; digest: string; point: string }[];
+}
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("candidate 36-card shuffle CRS", () => {
-  it("matches every framed hash and compressed-point regression vector", () => {
+describe("candidate shuffle CRS", () => {
+  it.each([9, 13])("matches the framed hashes and points for %i columns", columns => {
     const map = vi.spyOn(RistrettoPoint, "fromUniformBytes");
-    const crs = deriveShuffleCrs36();
+    const vectors = fixture(4 * columns);
+    const crs = deriveShuffleCrs({ rows: 4, columns });
     const points = [crs.proofGenerator, crs.blindingGenerator, ...crs.messageGenerators];
-    expect(points).toHaveLength(11);
-    expect(map).toHaveBeenCalledTimes(11);
+    expect(points).toHaveLength(columns + 2);
+    expect(map).toHaveBeenCalledTimes(columns + 2);
     vectors.forEach((vector, i) => {
       // Node's SHA-512 independently checks the stored framing/digest pair.
       expect(createHash("sha512").update(hexToBytes(vector.input)).digest("hex"))
@@ -27,14 +31,14 @@ describe("candidate 36-card shuffle CRS", () => {
       expect(bytesToHex(map.mock.calls[i]![0])).toBe(vector.digest);
       expect(bytesToHex(points[i]!.toBytes())).toBe(vector.point);
     });
-    expect(crs.profile).toBe(SHUFFLE_CRS_36_PROFILE);
-    expect([crs.rows, crs.columns]).toEqual([4, 9]);
+    expect(crs.profile).toBe(SHUFFLE_CRS_PROFILE);
+    expect([crs.rows, crs.columns]).toEqual([4, columns]);
     expect(crs.encryptionGenerator.equals(RistrettoPoint.base())).toBe(true);
   });
 
   it("returns detached immutable parameters and distinct nonidentity bases", () => {
-    const first = deriveShuffleCrs36();
-    const second = deriveShuffleCrs36();
+    const first = deriveShuffleCrs(dimensions);
+    const second = deriveShuffleCrs(dimensions);
     expect(first).not.toBe(second);
     expect(first.messageGenerators).not.toBe(second.messageGenerators);
     expect(Object.isFrozen(first)).toBe(true);
@@ -55,7 +59,7 @@ describe("candidate 36-card shuffle CRS", () => {
   it.each(["identity", "base", "negative base", "repeated", "negative repeated"])(
     "fails closed on a %s derived point without retries", (kind) => {
       const original = RistrettoPoint.fromUniformBytes;
-      const valid = original(hexToBytes(vectors[0]!.digest));
+      const valid = original(hexToBytes(fixture(36)[0]!.digest));
       const map = vi.spyOn(RistrettoPoint, "fromUniformBytes");
       if (kind === "repeated" || kind === "negative repeated") {
         map.mockReturnValueOnce(valid).mockReturnValueOnce(
@@ -65,7 +69,7 @@ describe("candidate 36-card shuffle CRS", () => {
         map.mockReturnValueOnce(kind === "identity" ? RistrettoPoint.identity()
           : kind === "base" ? RistrettoPoint.base() : RistrettoPoint.base().negate());
       }
-      expect(() => deriveShuffleCrs36()).toThrow(/profile revision required/);
+      expect(() => deriveShuffleCrs(dimensions)).toThrow(/profile revision required/);
       expect(map).toHaveBeenCalledTimes(kind.includes("repeated") ? 2 : 1);
     },
   );
@@ -74,6 +78,6 @@ describe("candidate 36-card shuffle CRS", () => {
     vi.spyOn(RistrettoPoint, "fromUniformBytes").mockImplementation(() => {
       throw new Error("mapping unavailable");
     });
-    expect(() => deriveShuffleCrs36()).toThrow("mapping unavailable");
+    expect(() => deriveShuffleCrs(dimensions)).toThrow("mapping unavailable");
   });
 });

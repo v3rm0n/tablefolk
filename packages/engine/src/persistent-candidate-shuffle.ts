@@ -1,11 +1,10 @@
 import { bytesEqual } from "@p2pcards/crypto";
-import { decodeCandidateShuffleStatement36, decodeCandidateShuffleProof36, encodeCandidateShuffleStatement36,
-  type DeckSpec, type MaskedCard } from "@p2pcards/deck";
+import type { DeckSpec, MaskedCard } from "@p2pcards/deck";
 import { decodeAndVerifyEnvelope, decodeRosterBody, encodeRosterBody, parseIdentityPublicKey,
   type EnvelopeArtifact, type IdentityPublicKey, type RosterBody } from "@p2pcards/protocol";
 import { captureSessionHistory, PersistentEnvelopeAuthor, PersistentSessionReceiver, SessionChainRegistry,
   type CapturedSessionHistory, type SessionHistoryCaptureLimits } from "@p2pcards/session";
-import { CandidateShuffleLedger, type CandidateShuffleVerifier } from "./candidate-shuffle-ledger";
+import { CandidateShuffleLedger, type CandidateShuffleBody, type CandidateShuffleVerifier } from "./candidate-shuffle-ledger";
 import { recoverSetup } from "./setup-recovery";
 
 export interface PersistentCandidateShuffleOptions {
@@ -94,7 +93,7 @@ export class PersistentCandidateShuffleReceiver {
   }
 
   /** Prepared proof is public; private shuffle witnesses never enter the author or durable stores. */
-  async author(author: PersistentEnvelopeAuthor, prepared: { readonly statement: Uint8Array; readonly proof: Uint8Array },
+  async author(author: PersistentEnvelopeAuthor, prepared: CandidateShuffleBody,
     expected: CandidateShuffleSnapshot): Promise<PersistentCandidateShuffleResult> {
     this.#begin();
     let signing = false;
@@ -103,11 +102,7 @@ export class PersistentCandidateShuffleReceiver {
       if (expected !== this.#snapshot || seat === null) throw new Error("Stale shuffle preparation");
       if (!(author instanceof PersistentEnvelopeAuthor) || !bytesEqual(author.gameId, this.#options.roster.gameId) ||
         !bytesEqual(author.sender, this.#options.self) || !bytesEqual(author.sender, this.#options.roster.seats[seat]!)) throw new Error("Unexpected shuffle author");
-      const template = decodeCandidateShuffleStatement36(this.#ledger.nextStatement());
-      const statement = decodeCandidateShuffleStatement36(prepared.statement);
-      decodeCandidateShuffleProof36(prepared.proof);
-      const statementBytes = encodeCandidateShuffleStatement36(statement), proof = prepared.proof.slice();
-      if (!bytesEqual(encodeCandidateShuffleStatement36({ ...statement, outputDeck: template.outputDeck }), encodeCandidateShuffleStatement36(template))) throw new Error("Prepared shuffle differs from admitted state");
+      const body = { outputDeck: prepared.outputDeck.slice(), proof: prepared.proof.slice() };
       const guard = (head?: EnvelopeArtifact | null): undefined => {
         this.#guard();
         if (expected !== this.#snapshot) throw new Error("Stale shuffle preparation");
@@ -115,11 +110,11 @@ export class PersistentCandidateShuffleReceiver {
         return undefined;
       };
       guard(await author.readHead());
-      if (await this.#options.verifier.verify(statementBytes.slice(), proof.slice()) !== true) throw new Error("Invalid prepared shuffle proof");
+      if (await this.#ledger.verifyPrepared(body) !== true) throw new Error("Invalid prepared shuffle proof");
       guard();
       signing = true;
       const artifact = await author.author({ type: "SHUFFLE", round: this.#options.round,
-        phase: `round.${this.#options.round}.shuffle.${seat}`, body: { statement: statementBytes, proof } }, guard);
+        phase: `round.${this.#options.round}.shuffle.${seat}`, body }, guard);
       this.#guard();
       const result = await this.#receiveOne(capture(artifact));
       if (result.status === "rejected") throw new Error("Authored shuffle requires durable recovery");

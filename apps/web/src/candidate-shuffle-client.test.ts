@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RistrettoPoint } from "@p2pcards/crypto";
-import { encodeCandidateShuffleStatement36, encodeCandidateShuffleProof36 } from "@p2pcards/deck";
+import { encodeCandidateShuffleStatement, encodeCandidateShuffleProof, packShuffleDeck } from "@p2pcards/deck";
 import { parseGameId, parseHash256 } from "@p2pcards/protocol";
 import { CandidateShuffleClient } from "./candidate-shuffle-client";
 const deck = Array.from({ length: 36 }, () => ({ A: RistrettoPoint.identity(), B: RistrettoPoint.base() }));
-const statement = encodeCandidateShuffleStatement36({ gameId: parseGameId(new Uint8Array(16)), round: 0, seat: 0,
+const dimensions = { rows: 4, columns: 9 };
+const statement = encodeCandidateShuffleStatement({ ...dimensions, gameId: parseGameId(new Uint8Array(16)), round: 0, seat: 0,
   rosterHash: parseHash256(new Uint8Array(32)), aggregateKey: RistrettoPoint.base(), inputDeck: deck, outputDeck: deck });
-const proof = encodeCandidateShuffleProof36(Array.from({ length: 106 }, () => new Uint8Array(32)));
+const proof = encodeCandidateShuffleProof(Array.from({ length: 106 }, () => new Uint8Array(32)), dimensions);
 function fixture() {
   const workers: Array<{ onmessage: ((event: { data: unknown }) => void) | null; onerror: (() => void) | null; onmessageerror: (() => void) | null; postMessage: ReturnType<typeof vi.fn>; terminate: ReturnType<typeof vi.fn> }> = [];
   const make = vi.fn(() => {
@@ -59,6 +60,7 @@ describe("candidate shuffle worker lifecycle", () => {
     const captured = statement.slice(), pending = f.client.prove(captured), w = f.workers[0]!;
     captured.fill(0);
     expect(w.postMessage.mock.calls[0]![0]).toEqual({ operation: "prove", statement });
-    w.onmessage!({ data: { statement, proof } }); expect(await pending).toEqual({ statement, proof });
+    const outputDeck = packShuffleDeck(deck, deck.length);
+    w.onmessage!({ data: { outputDeck, proof } }); expect(await pending).toEqual({ outputDeck, proof });
   });
 });

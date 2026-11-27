@@ -1,7 +1,7 @@
 # Sasku Match Profile & Live Architecture
 
 This document defines how Tablefolk implements and runs four-player Sasku in
-the browser under the active **`sasku-match-candidate@3`** profile.
+the browser under the active **`sasku-match-candidate@4`** profile.
 
 - **Game rules & scoring tables:** [RULES.md](../RULES.md)
 - **Wire & storage formats:** [protocol.md](protocol.md)
@@ -71,20 +71,23 @@ discloser.
 
 ---
 
-## 3. Match Profile (`sasku-match-candidate@3`)
+## 3. Match Profile (`sasku-match-candidate@4`)
 
 The signed roster's `rules_hash` ([apps/web/src/live-profile.ts](../apps/web/src/live-profile.ts))
 commits every player to the exact rules implementation and match parameters:
 
-- **Invitation profile:** `r=sasku-match-candidate@3`, `s=trystero-nostr`
-  (older `@1` / `@2` invitations and transcripts are incompatible).
+- **Invitation profile:** `r=sasku-match-candidate@4`, `s=trystero-nostr`
+- **Shuffle wire profile:** the v2 proof and packed output deck are signed.
+  Peers derive the 4×9 statement from the finalized roster, setup, and prior
+  verified deck. Invitations and shuffle transcripts from earlier match
+  profiles require the corresponding earlier client.
 - **Match progression:** initial dealer is seat 4 (index `3`), opening bidder
   is seat 1 (index `0`), dealer rotates by `+1 mod 4` each audited round until
   a partnership reaches **12 P** (hard cap of **32 hands** per table; an
   invalid audit stops without awarding points or starting a new hand).
 - **Key-only setup (`round: 0`, `phase: "setup.keys"`):** requires four signed,
   proof-checked `KEY_SHARE` envelopes and a non-identity aggregate key. The
-  unused commit/reveal randomness beacon is omitted in `@3` because dealer and
+  unused commit/reveal randomness beacon is omitted in `@4` because dealer and
   deal order are fixed while each player independently shuffles with a verified
   proof. (The beacon-capable setup engine remains available for future
   profiles.)
@@ -181,9 +184,8 @@ on timeout or error.)*
 
 ## 5. Known Limitations & Remaining Work
 
-- **Performance (`#2`, `#3`, `#5`, `#6`):** shuffle remasking and DLEQ still run
-  in JS, envelopes are re-verified across internal layers and on reload, and
-  `SHUFFLE` still transmits the full statement alongside the proof.
+- **Performance (`#2`, `#3`, `#5`):** shuffle remasking and DLEQ still run
+  in JS. Envelopes are re-verified across internal layers and on reload.
 - **Connectivity & reconnect (`#4`, `#7`):** STUN is configured without TURN,
   so strict NATs/firewalls can block direct WebRTC links; all four original
   authors must currently stay online because ephemeral `HEADS`/`SYNC_*`
@@ -191,8 +193,7 @@ on timeout or error.)*
 - **Offline verification & CSP (`#8`):** in-browser CBOR transcript export and
   verification (omitting `HELLO`) and strict static CSP headers are not yet
   implemented.
-- **Cryptographic assurance & cross-browser validation (`#6`, `#7`):** freezing
-  the parameterized `(m, n)` shuffle profile, expanding cross-runtime/mutation/
+- **Cryptographic assurance & cross-browser validation (`#7`):** expanding cross-runtime/mutation/
   soundness vectors, completing a focused self-audit (with a transparent
   no-external-audit disclaimer), and validating Chrome/Firefox/Safari/mobile
   remain tracked in [IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md).

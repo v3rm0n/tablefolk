@@ -21,12 +21,12 @@ try {
     assert.deepEqual(result, { cancelled: true, invalidRejected: true, accepted: ["accepted", "accepted", "accepted", "accepted"], complete: true, deckSize: 36, durable: { recoveredSeats: [1, 2, 3, null], complete: true, deckSize: 36, authoredSequence: 3, hand: { privateHandSizes: [9, 9, 9, 9], plays: 36, audit: "valid", recovered: true }, coordinated: { reverseHistoryEnvelopes: 57, audit: "valid", pending: 0, sync: "range_received" } } });
     return result;
   };
-  const development = await check(`${server.resolvedUrls.local[0]}experiments/shuffle-backend/web-shuffle-harness.html`);
+  const development = await check(`${server.resolvedUrls.local[0]}crates/shuffle-wasm/web-shuffle-harness.html`);
   // The dev server sets NODE_ENV; explicitly build the second harness as production.
   const previousNodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = "production";
   await build({ ...config, base: "./", logLevel: "error", build: { outDir, emptyOutDir: true,
-    rolldownOptions: { input: resolve(root, "experiments/shuffle-backend/web-shuffle-harness.html") } } });
+    rolldownOptions: { input: resolve(root, "crates/shuffle-wasm/web-shuffle-harness.html") } } });
   if (previousNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previousNodeEnv;
   builtServer = httpServer(async (request, response) => {
     try {
@@ -40,7 +40,7 @@ try {
     } catch { console.error(`Missing harness asset: ${request.url}`); response.writeHead(404); response.end(); }
   });
   await new Promise(resolve => builtServer.listen(0, "127.0.0.1", resolve));
-  const production = await check(`http://127.0.0.1:${builtServer.address().port}/nested/experiments/shuffle-backend/web-shuffle-harness.html`);
+  const production = await check(`http://127.0.0.1:${builtServer.address().port}/nested/crates/shuffle-wasm/web-shuffle-harness.html`);
   console.log(JSON.stringify({ development, production }));
 } finally {
   await browser?.close(); await server.close();

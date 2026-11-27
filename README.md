@@ -7,7 +7,7 @@ multiplayer card games with no game server, starting with four-player
 [Play Tablefolk](https://cards.maido.io/) · [GitHub](https://github.com/v3rm0n/tablefolk)
 
 > **Status:** Plays complete four-player Sasku matches to 12 game points
-> (`sasku-match-candidate@3`) with DTLS-authenticated WebRTC, Rust/WASM
+> (`sasku-match-candidate@4`) with DTLS-authenticated WebRTC, Rust/WASM
 > Bayer–Groth shuffle proofs, private dealing, audited scoring, dealer
 > rotation, and reload recovery. **Disclaimer: the cryptography is self-audited
 > and has not undergone an independent external audit.** WASM crypto
@@ -30,10 +30,10 @@ multiplayer card games with no game server, starting with four-player
 npm install
 
 # Fresh checkout: build the candidate Rust/WASM shuffle backend once
-# (see experiments/shuffle-backend/README.md for details)
-cd experiments/shuffle-backend
-cargo build --release --locked --features candidate-transcript --lib --target wasm32-unknown-unknown
-wasm-bindgen target/wasm32-unknown-unknown/release/shuffle_backend_evaluation.wasm --target web --out-dir pkg-transcript
+# (see crates/shuffle-wasm/README.md for details)
+cd crates/shuffle-wasm
+cargo build --release --locked --lib --target wasm32-unknown-unknown
+wasm-bindgen target/wasm32-unknown-unknown/release/shuffle_wasm.wasm --target web --out-dir pkg
 cd ../..
 
 npm run dev    # stages WASM and starts the Vite dev server
@@ -91,9 +91,9 @@ real WebRTC and a local Nostr-compatible relay (not public relays).
 | [docs/decisions.md](docs/decisions.md) | Accepted architecture and scope decisions (ADRs) |
 | [docs/protocol.md](docs/protocol.md) | Normative CBOR, envelope, signaling, transport, and storage profile |
 | [docs/shuffle.md](docs/shuffle.md) | Candidate 36-card Bayer–Groth CRS, proof codec, transcript, and API |
-| [docs/sasku.md](docs/sasku.md) | Active `sasku-match-candidate@3` profile, ownership, and recovery |
+| [docs/sasku.md](docs/sasku.md) | Active `sasku-match-candidate@4` profile, ownership, and recovery |
 | [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | Remaining milestones and release gates |
-| [experiments/shuffle-backend/README.md](experiments/shuffle-backend/README.md) | Building, staging, and testing the Rust/WASM shuffle backend |
+| [crates/shuffle-wasm/README.md](crates/shuffle-wasm/README.md) | Building, staging, and testing the Rust/WASM shuffle backend |
 
 ## Workspaces
 

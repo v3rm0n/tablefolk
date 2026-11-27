@@ -36,7 +36,7 @@ it("keeps future traffic queued while a local author fills its prerequisite", as
   const future = c.owner.receive(c.f.roster[1]!, c.shuffles[1]!.canonicalBytes);
   await c.owner.whenIdle(); const before = c.owner.snapshot;
   if (before.phase !== "shuffle") throw new Error("Wrong phase");
-  const body = c.shuffles[0]!.envelope.body as { statement: Uint8Array; proof: Uint8Array };
+  const body = c.shuffles[0]!.envelope.body as { outputDeck: Uint8Array; proof: Uint8Array };
   expect((await c.owner.authorShuffle(c.local, body, before.state)).status).toBe("accepted");
   expect((await future).status).toBe("accepted"); expect(c.owner.pendingBytes).toBe(0); c.owner.close();
 }, 30_000);

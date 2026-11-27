@@ -1,5 +1,4 @@
-//! Experimental arithmetic adapters for the upstream scheme traits.
-//! The upstream proof equations/transcript remain unchanged.
+//! Ristretto255 arithmetic adapters for the upstream scheme traits.
 use std::{iter::Sum, ops::{Add, Mul, Neg}};
 use ark_ff::{UniformRand, Zero};
 use ark_serialize::{
@@ -21,7 +20,6 @@ use rand::{Rng, distributions::{Distribution, Standard}};
 
 // Only the scalar field is reused: no Edwards point representation or encoding.
 pub type Scalar = ark_ed25519::Fr;
-pub const CURVE_NAME: &str = "ristretto255";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Point(pub RistrettoPoint);
@@ -141,7 +139,7 @@ impl HomomorphicEncryptionScheme<Scalar> for Enc {
     fn setup<R: Rng>(_: &mut R) -> Parameters { Parameters { generator: Point::base() } }
     fn generator<R: Rng>(rng: &mut R) -> Point { nonidentity_point(rng) }
     fn keygen<R: Rng>(pp: &Parameters, rng: &mut R) -> (Point, Scalar) {
-        let secret = super::nonzero_scalar(rng);
+        let secret = nonzero_scalar(rng);
         (pp.generator * secret, secret)
     }
     // This is the algebra used inside proofs. Zero scalars/plaintexts are valid;
@@ -174,7 +172,7 @@ impl HomomorphicCommitmentScheme<Scalar> for Comm {
             let point = nonidentity_point(rng);
             if point != h && !g.contains(&point) { g.push(point); }
         }
-        // Local evaluation parameters only; no production CRS derivation is implied.
+        // The profiled prover and verifier derive their commitment key in crs.rs.
         CommitKey { h, g }
     }
     fn commit(key: &CommitKey, values: &[Scalar], randomness: Scalar) -> CryptoResult<Point> {
@@ -182,6 +180,15 @@ impl HomomorphicCommitmentScheme<Scalar> for Comm {
             return Err(CryptoError::CommitmentLengthError("Ristretto Pedersen", values.len(), key.g.len()));
         }
         Ok(key.h * randomness + key.g.iter().zip(values).map(|(g, x)| *g * *x).sum())
+    }
+}
+
+fn nonzero_scalar<R: Rng>(rng: &mut R) -> Scalar {
+    loop {
+        let scalar = Scalar::rand(rng);
+        if !scalar.is_zero() {
+            return scalar;
+        }
     }
 }
 
