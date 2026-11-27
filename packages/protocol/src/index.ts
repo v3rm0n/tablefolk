@@ -15,6 +15,8 @@ export {
   ENVELOPE_VERSION,
   EnvelopeValidationError,
   signEnvelope,
+  verifyEnvelopeArtifact,
+  verifiedEnvelopeByteLength,
   type EnvelopeArtifact,
   type EnvelopeMessageType,
   type EnvelopeValidationErrorCode,

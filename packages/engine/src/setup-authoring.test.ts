@@ -658,8 +658,9 @@ describe("persistent setup signing, receipt and lifetime", () => {
       expect(verifyGameKeyShare(context, shareA)).toBe(true);
       expect(shareA.H.toBytes()).toEqual(c.shares[0]!.H.toBytes());
       expect(shareA.H.equals(shareB.H)).toBe(false);
-      Object.assign(candidate.envelope.body as CborMap, replacement.envelope.body);
-      expect(decodeGameKeyShareBody(candidate.envelope.body).H.toBytes()).toEqual(shareB.H.toBytes());
+      const detached = Object.assign(candidate.envelope.body as CborMap, replacement.envelope.body);
+      expect(decodeGameKeyShareBody(detached).H.toBytes()).toEqual(shareB.H.toBytes());
+      expect(decodeGameKeyShareBody(candidate.envelope.body).H.toBytes()).toEqual(shareA.H.toBytes());
       expect(verifyGameKeyShare(context, decodeGameKeyShareBody(candidate.envelope.body))).toBe(true);
       expect(candidate.canonicalBytes).toEqual(original.canonicalBytes);
       return ingest.call(this, candidate);
@@ -695,8 +696,9 @@ describe("persistent setup signing, receipt and lifetime", () => {
     const classify = SetupEnvelopeCoordinator.prototype.classify;
     const wrapper = vi.spyOn(SetupEnvelopeCoordinator.prototype, "classify").mockImplementationOnce(function (this: SetupEnvelopeCoordinator, candidate) {
       expect(candidate).toEqual(original);
-      Object.assign(candidate.envelope.body as CborMap, encodeGameKeyShareBody(c.shares[1]!));
-      expect(verifyGameKeyShare(context, decodeGameKeyShareBody(candidate.envelope.body))).toBe(true);
+      const detached = Object.assign(candidate.envelope.body as CborMap, encodeGameKeyShareBody(c.shares[1]!));
+      expect(verifyGameKeyShare(context, decodeGameKeyShareBody(detached))).toBe(true);
+      expect(verifyGameKeyShare(context, decodeGameKeyShareBody(candidate.envelope.body))).toBe(false);
       expect(candidate.canonicalBytes).toEqual(original.canonicalBytes);
       return classify.call(this, candidate);
     });

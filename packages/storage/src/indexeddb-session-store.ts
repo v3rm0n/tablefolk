@@ -4,7 +4,7 @@ import {
   importEd25519PublicKey,
 } from "@p2pcards/crypto";
 import {
-  decodeAndVerifyEnvelope,
+  verifyEnvelopeArtifact,
   decodeRosterBody,
   hashRosterBody,
   parseGameId,
@@ -16,7 +16,7 @@ import {
   type IdentityPublicKey,
   type RosterBody,
 } from "@p2pcards/protocol";
-import { orderEnvelopeTranscript } from "@p2pcards/session";
+import { orderEnvelopeTranscript, type ChainHead } from "@p2pcards/session";
 
 import {
   GAMES_STORE,
@@ -28,6 +28,7 @@ import {
 } from "./database";
 
 const LOBBY_ROSTER_FIELD = "lobbyRoster";
+const MATCH_CHECKPOINT_FIELD = "saskuMatchCheckpoint";
 
 interface StoredTranscriptEnvelope {
   readonly arrival?: number;
@@ -113,7 +114,7 @@ export class IndexedDbSessionStore {
       request.onsuccess = () => {
         try {
           if (request.result !== undefined) {
-            const existing = decodeStoredTranscript(request.result);
+            const existing = decodeStoredTranscript(request.result, received);
             result = sameArtifact(existing.artifact, received)
               ? Object.freeze({ status: "duplicate", record: existing })
               : Object.freeze({ status: "conflict", existing, received });
@@ -211,7 +212,7 @@ export class IndexedDbSessionStore {
               authored: false,
             } satisfies StoredTranscriptEnvelope);
           } else {
-            storedTranscript = decodeStoredTranscript(transcriptRequest.result);
+            storedTranscript = decodeStoredTranscript(transcriptRequest.result, received);
             if (!sameArtifact(storedTranscript.artifact, received)) {
               result = Object.freeze({
                 status: "conflict",
@@ -357,15 +358,53 @@ export class IndexedDbSessionStore {
       : null;
   }
 
+  /** Local derived cache. The caller supplies heads from the verified, contiguous transcript. */
+  async loadMatchCheckpoint(gameId: GameId, self: IdentityPublicKey, heads: readonly ChainHead[]): Promise<unknown> {
+    const game = bytesToHex(parseGameId(gameId));
+    const key = matchCheckpointKey(self, heads);
+    if (key === null) return undefined;
+    const database = await this.#database;
+    const transaction = database.transaction(GAMES_STORE, "readonly");
+    const value = await requestResult<unknown>(transaction.objectStore(GAMES_STORE).get(game));
+    await transactionComplete(transaction);
+    const checkpoint = readGameRecord(value, game)[MATCH_CHECKPOINT_FIELD] as { key?: string; state?: unknown } | undefined;
+    return checkpoint?.key === key ? checkpoint.state : undefined;
+  }
+
+  async saveMatchCheckpoint(gameId: GameId, self: IdentityPublicKey, heads: readonly ChainHead[], state: unknown): Promise<void> {
+    const game = bytesToHex(parseGameId(gameId));
+    const key = matchCheckpointKey(self, heads);
+    if (key === null) throw new SessionStoreError("Match checkpoint requires four sender heads");
+    const database = await this.#database;
+    const transaction = database.transaction(GAMES_STORE, "readwrite");
+    const done = transactionComplete(transaction);
+    const games = transaction.objectStore(GAMES_STORE);
+    const request = games.get(game);
+    request.onsuccess = () => {
+      try {
+        games.put({ ...readGameRecord(request.result, game), [MATCH_CHECKPOINT_FIELD]: { key, state } });
+      } catch {
+        transaction.abort();
+      }
+    };
+    await done;
+  }
+
   async close(): Promise<void> {
     const database = await this.#database;
     database.close();
   }
 }
 
+function matchCheckpointKey(self: IdentityPublicKey, heads: readonly ChainHead[]): string | null {
+  return heads.length === 4
+    ? JSON.stringify([bytesToHex(self), ...heads.map(({ from, seq, hash }) => [bytesToHex(from), seq, bytesToHex(hash)])])
+    : null;
+}
+
 function snapshotArtifact(candidate: EnvelopeArtifact, message: string): EnvelopeArtifact {
   try {
-    return decodeAndVerifyEnvelope(candidate.canonicalBytes);
+    return verifyEnvelopeArtifact(candidate);
   } catch (cause) {
     throw new SessionStoreError(message, { cause });
   }
@@ -412,7 +451,7 @@ function decodeRosterArtifact(
   });
 }
 
-function decodeStoredTranscript(value: unknown): PersistedTranscriptEnvelope {
+function decodeStoredTranscript(value: unknown, verified?: EnvelopeArtifact): PersistedTranscriptEnvelope {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new SessionStoreError("IndexedDB contains a malformed transcript record");
   }
@@ -435,7 +474,7 @@ function decodeStoredTranscript(value: unknown): PersistedTranscriptEnvelope {
   ) {
     throw new SessionStoreError("IndexedDB transcript record fields are malformed");
   }
-  const artifact = snapshotArtifact(
+  const artifact = verified && bytesEqual(verified.canonicalBytes, bytes) ? verified : snapshotArtifact(
     { canonicalBytes: bytes } as EnvelopeArtifact,
     "IndexedDB transcript contains an invalid envelope",
   );

@@ -26,9 +26,17 @@ describe("private-round reveal ledger", () => {
     const first = f.dealAll(0);
     expect(first.envelope.body).toMatchObject({ to: 4 });
     expect((first.envelope.body as unknown as { items: unknown[] }).items).toHaveLength(27);
-    expect(f.ledger.classify(first).status).toBe("accepted");
-    expect(f.ledger.snapshot.deal?.pendingSenders).toEqual([0, 1, 2, 3]);
-    f.ledger.commit(first);
+    const verify = vi.spyOn(deckCrypto, "verifyProvenDecryptionShare");
+    try {
+      const transition = f.ledger.classify(first);
+      expect(transition.status).toBe("accepted");
+      expect(verify).toHaveBeenCalledTimes(27);
+      expect(f.ledger.snapshot.deal?.pendingSenders).toEqual([0, 1, 2, 3]);
+      expect(() => f.ledger.commit({ ...transition })).toThrow(expect.objectContaining({ code: "wrong_phase" }));
+      f.ledger.commit(transition);
+      expect(verify).toHaveBeenCalledTimes(27);
+      expect(() => f.ledger.commit(transition)).toThrow(expect.objectContaining({ code: "wrong_phase" }));
+    } finally { verify.mockRestore(); }
     expect(f.ledger.commit(first).status).toBe("duplicate");
     for (const seat of [1, 2, 3]) f.ledger.commit(f.dealAll(seat));
     expect(f.ledger.snapshot.deal).toBeNull();
@@ -525,7 +533,7 @@ describe("private-round local hand reads", () => {
         for (let seat = 0; seat < f.roster.length; seat += 1) f.ledger.readPrivateHand(seat, f.secrets[seat]!);
       }
       expect(decrypt.mock.calls.map(([key, point]) => [key, bytesToHex(point.toBytes())])).toEqual(
-        [0, 1].flatMap(() => [0, 1, 2].map((pos) => [f.secrets[pos === 2 ? 1 : 0], bytesToHex(f.deck[pos]!.A.toBytes())])),
+        [0, 1, 2].map((pos) => [f.secrets[pos === 2 ? 1 : 0], bytesToHex(f.deck[pos]!.A.toBytes())]),
       );
       expect(prove).not.toHaveBeenCalled();
       expect(verify).not.toHaveBeenCalled();

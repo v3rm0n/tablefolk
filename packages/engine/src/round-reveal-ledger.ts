@@ -3,7 +3,7 @@ import {
   CardPointTable, createProvenDecryptionShare, decodeActionBody, decodeSharesBody, decryptionShare, removeDecryptionShares, verifyProvenDecryptionShare,
   type ActionBody, type DeckSpec, type MaskedCard, type PositionShare, type SharesBody,
 } from "@p2pcards/deck";
-import { decodeAndVerifyEnvelope, type EnvelopeArtifact, type GameId, type IdentityPublicKey } from "@p2pcards/protocol";
+import { verifyEnvelopeArtifact, type EnvelopeArtifact, type GameId, type IdentityPublicKey } from "@p2pcards/protocol";
 
 import { ActionEnvelopeError, decodeActionEnvelope, MAX_ACTION_ENVELOPE_BYTES, type ActionEnvelopeErrorCode } from "./action-envelope";
 import { SetupEnvelopeCoordinator } from "./setup-envelope-coordinator";
@@ -35,6 +35,16 @@ export interface RoundRevealSnapshot {
     readonly pendingSenders: readonly number[];
   } | null;
   readonly revealed: Readonly<Record<number, string>>;
+}
+
+/** Local derived data. Contains only public transcript results, never hand cards or local keys. */
+export interface RoundRevealCheckpoint {
+  readonly dealIndex: number;
+  readonly actionIndex: number;
+  readonly contributors: readonly number[];
+  readonly shares: readonly (readonly [position: number, donor: number, point: Uint8Array])[];
+  readonly revealed: readonly (readonly [number, string])[];
+  readonly accepted: readonly (readonly [string, Readonly<Record<number, string>>])[];
 }
 
 export interface RoundPrivateHand {
@@ -87,6 +97,10 @@ export class RoundRevealLedger {
   readonly #contributors = new Set<number>();
   readonly #revealed = new Map<number, string>();
   readonly #accepted = new Map<string, Readonly<Record<number, string>>>();
+  readonly #transitions = new WeakMap<RoundRevealTransition, () => void>();
+  readonly #privateHands = new Map<number, { secret: RistrettoScalar; dealt: Readonly<Record<number, string>> }>();
+  #encodedShares: RoundRevealCheckpoint["shares"] | null = null;
+  #revision = 0;
   #dealIndex = 0;
   #actionIndex = 0;
 
@@ -149,6 +163,33 @@ export class RoundRevealLedger {
     this.#maxActions = options.maxActions;
   }
 
+  exportCheckpoint(): RoundRevealCheckpoint {
+    this.#encodedShares ??= this.#shares.flatMap((points, pos) =>
+      [...points].map(([seat, point]) => [pos, seat, point.toBytes()] as const));
+    return {
+      dealIndex: this.#dealIndex, actionIndex: this.#actionIndex,
+      contributors: [...this.#contributors], revealed: [...this.#revealed], accepted: [...this.#accepted],
+      shares: this.#encodedShares.map(([pos, seat, point]) => [pos, seat, point.slice()]),
+    };
+  }
+
+  /** Restore a local checkpoint after the caller matches all transcript heads. */
+  restoreTrustedCheckpoint(state: RoundRevealCheckpoint): void {
+    if (this.#revision !== 0 || this.#accepted.size !== 0 ||
+        !Number.isInteger(state.dealIndex) || state.dealIndex < 0 || state.dealIndex > this.#schedule.length ||
+        !Number.isInteger(state.actionIndex) || state.actionIndex < 0 || state.actionIndex > this.#maxActions) {
+      throw new Error("Invalid reveal checkpoint");
+    }
+    for (const [pos, seat, point] of state.shares) this.#shares[pos]!.set(seat, RistrettoPoint.fromBytes(point));
+    this.#encodedShares = state.shares.map(([pos, seat, point]) => [pos, seat, point.slice()]);
+    for (const seat of state.contributors) this.#contributors.add(seat);
+    for (const [pos, card] of state.revealed) this.#revealed.set(pos, card);
+    for (const [hash, revealed] of state.accepted) this.#accepted.set(hash, Object.freeze({ ...revealed }));
+    this.#dealIndex = state.dealIndex;
+    this.#actionIndex = state.actionIndex;
+    this.#revision++;
+  }
+
   get dealCount(): number { return this.#schedule.length; }
 
   get snapshot(): RoundRevealSnapshot {
@@ -174,11 +215,29 @@ export class RoundRevealLedger {
 
   /** Local secret-bearing read, never part of a public snapshot. Null until the entire initial deal is committed. */
   readPrivateHand(seat: number, secretKey: RistrettoScalar): RoundPrivateHand | null {
-    this.#requireLocalKey(seat, secretKey);
-    if (this.#dealIndex < this.#schedule.length) { return null; }
-    const dealt: Record<number, string> = {};
+    const cached = this.#privateHands.get(seat);
+    if (cached === undefined || cached.secret !== secretKey) this.#requireLocalKey(seat, secretKey);
+    if (this.#dealIndex < this.#schedule.length) return null;
+    const dealt = cached?.dealt ?? this.#decryptHand(seat, secretKey);
+    const revealedPositions = new Map([...this.#revealed].map(([pos, card]) => [card, pos]));
     const remaining: Record<number, string> = {};
-    const cardPositions = new Map([...this.#revealed].map(([pos, card]) => [card, pos]));
+    for (const [key, card] of Object.entries(dealt)) {
+      const pos = Number(key);
+      const known = this.#revealed.get(pos);
+      if ((known !== undefined && known !== card) || (revealedPositions.has(card) && revealedPositions.get(card) !== pos)) {
+        throw new RoundRevealError("inconsistent_deck");
+      }
+      if (known === undefined) remaining[pos] = card;
+    }
+    this.#privateHands.set(seat, { secret: secretKey, dealt });
+    return Object.freeze({ dealt, remaining: Object.freeze(remaining) });
+  }
+
+  clearPrivateHands(): void { this.#privateHands.clear(); }
+
+  #decryptHand(seat: number, secretKey: RistrettoScalar): Readonly<Record<number, string>> {
+    const dealt: Record<number, string> = {};
+    const cardPositions = new Set<string>();
     for (let pos = 0; pos < this.#deck.length; pos += 1) {
       if (this.#owners[pos] !== seat) continue;
       const ciphertext = this.#deck[pos]!;
@@ -188,15 +247,11 @@ export class RoundRevealLedger {
         return share;
       });
       const card = this.#table.identify(removeDecryptionShares(ciphertext, shares));
-      const known = this.#revealed.get(pos);
-      if (card === null || (cardPositions.has(card) && cardPositions.get(card) !== pos) || (known !== undefined && known !== card)) {
-        throw new RoundRevealError("inconsistent_deck");
-      }
-      cardPositions.set(card, pos);
+      if (card === null || cardPositions.has(card)) throw new RoundRevealError("inconsistent_deck");
+      cardPositions.add(card);
       dealt[pos] = card;
-      if (known === undefined) remaining[pos] = card;
     }
-    return Object.freeze({ dealt: Object.freeze(dealt), remaining: Object.freeze(remaining) });
+    return Object.freeze(dealt);
   }
 
   /** Prepares only this pending nonrecipient's exact current batch, never caller-selected positions. */
@@ -248,12 +303,30 @@ export class RoundRevealLedger {
   }
 
   classify(candidate: EnvelopeArtifact, expectedSeat?: number): RoundRevealTransition {
-    return this.#process(candidate, expectedSeat, false);
+    return this.#classify(candidate, expectedSeat);
   }
 
-  /** The caller must validate rules and durably accept the envelope before this mutation. */
-  commit(candidate: EnvelopeArtifact, expectedSeat?: number): RoundRevealTransition {
-    return this.#process(candidate, expectedSeat, true);
+  /** Apply an opaque transition issued by this ledger at its current revision. */
+  commit(candidate: RoundRevealTransition | EnvelopeArtifact, expectedSeat?: number): RoundRevealTransition {
+    const transition = "canonicalBytes" in candidate ? this.classify(candidate, expectedSeat) : candidate;
+    const apply = this.#transitions.get(transition);
+    if (!apply) throw new RoundRevealError("wrong_phase");
+    apply();
+    this.#transitions.delete(transition);
+    return transition;
+  }
+
+  #validated(transition: RoundRevealTransition, apply?: () => void): RoundRevealTransition {
+    const revision = this.#revision;
+    Object.freeze(transition);
+    this.#transitions.set(transition, () => {
+      if (this.#revision !== revision) throw new RoundRevealError("wrong_phase");
+      if (apply) {
+        apply();
+        this.#revision += 1;
+      }
+    });
+    return transition;
   }
 
   #requireLocalKey(seat: number, secretKey: RistrettoScalar): void {
@@ -272,14 +345,14 @@ export class RoundRevealLedger {
       : `round.${this.#round}.deal.${this.#dealIndex}`;
   }
 
-  #process(candidate: EnvelopeArtifact, expectedSeat: number | undefined, commit: boolean): RoundRevealTransition {
+  #classify(candidate: EnvelopeArtifact, expectedSeat: number | undefined): RoundRevealTransition {
     let received: EnvelopeArtifact;
     try {
       const bytes = candidate.canonicalBytes;
       if (!(bytes instanceof Uint8Array) || bytes.constructor !== Uint8Array || bytes.length > MAX_ROUND_REVEAL_ENVELOPE_BYTES) {
         throw new TypeError("Round reveal envelope exceeds its byte boundary");
       }
-      received = decodeAndVerifyEnvelope(bytes);
+      received = verifyEnvelopeArtifact(candidate, bytes);
     } catch (cause) { throw new RoundRevealError("invalid_envelope", { cause }); }
     const envelope = received.envelope;
     if (!bytesEqual(envelope.game, this.#gameId)) { throw new RoundRevealError("wrong_game"); }
@@ -294,7 +367,7 @@ export class RoundRevealLedger {
       try { body = decodeSharesBody(envelope.body); }
       catch (cause) { throw new RoundRevealError("malformed_body", { cause }); }
       if (duplicate !== undefined) {
-        return Object.freeze({ status: "duplicate", type: "SHARES", received, seat, body });
+        return this.#validated({ status: "duplicate", type: "SHARES", received, seat, body });
       }
       const step = this.#schedule[this.#dealIndex];
       if (step === undefined || envelope.phase !== this.#phase()) { throw new RoundRevealError("wrong_phase"); }
@@ -311,26 +384,27 @@ export class RoundRevealLedger {
           throw new RoundRevealError("invalid_share_proof");
         }
       }
-      if (commit) {
-        for (const item of body.items) this.#shares[item.pos]!.set(seat, item.S);
+      const shares = body.items.map(({ pos, S }) => ({ pos, point: Object.freeze(S) as RistrettoPoint }));
+      return this.#validated({ status: "accepted", type: "SHARES", received, seat, body }, () => {
+        for (const { pos, point } of shares) this.#shares[pos]!.set(seat, point);
+        this.#encodedShares = null;
         this.#contributors.add(seat);
         this.#accepted.set(hash, Object.freeze({}));
         if (this.#contributors.size === (this.#batchDeal ? this.#roster.length : this.#roster.length - 1)) {
           this.#dealIndex += this.#batchDeal ? this.#schedule.length : 1;
           this.#contributors.clear();
         }
-      }
-      return Object.freeze({ status: "accepted", type: "SHARES", received, seat, body });
+      });
     }
     if (envelope.type !== "ACTION") { throw new RoundRevealError("wrong_type"); }
     if (duplicate !== undefined) {
-      return Object.freeze({ status: "duplicate", type: "ACTION", received, seat, body: decodeActionBody(envelope.body), revealed: duplicate });
+      return this.#validated({ status: "duplicate", type: "ACTION", received, seat, body: decodeActionBody(envelope.body), revealed: duplicate });
     }
     if (this.#schedule[this.#dealIndex] !== undefined) { throw new RoundRevealError("deal_incomplete"); }
     if (this.#actionIndex >= this.#maxActions) { throw new RoundRevealError("action_limit"); }
     let body: ActionBody;
     try {
-      body = decodeActionEnvelope(received.canonicalBytes, {
+      body = decodeActionEnvelope(received, {
         gameId: this.#gameId, round: this.#round, actionIndex: this.#actionIndex, roster: this.#roster,
         expectedSeats: expectedSeat === undefined ? [] : [expectedSeat],
       }).action;
@@ -364,11 +438,10 @@ export class RoundRevealLedger {
       revealed[item.pos] = card;
     }
     Object.freeze(revealed);
-    if (commit) {
+    return this.#validated({ status: "accepted", type: "ACTION", received, seat, body, revealed }, () => {
       for (const position of body.reveal) this.#revealed.set(position, revealed[position]!);
       this.#accepted.set(hash, revealed);
       this.#actionIndex += 1;
-    }
-    return Object.freeze({ status: "accepted", type: "ACTION", received, seat, body, revealed });
+    });
   }
 }

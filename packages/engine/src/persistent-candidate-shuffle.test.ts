@@ -122,7 +122,9 @@ describe("durable candidate shuffle receiver", () => {
     const append = vi.spyOn(authored, "appendNext"), expected = f.receiver.snapshot, body = f.prepare();
     f.verifier.verify.mockResolvedValueOnce(false);
     await expect(f.receiver.author(author, body, expected)).rejects.toThrow(/Invalid prepared/); expect(append).not.toHaveBeenCalled();
+    f.verifier.verify.mockClear();
     const result = await f.receiver.author(author, body, expected);
+    expect(f.verifier.verify).toHaveBeenCalledOnce();
     expect(result.status).toBe("accepted"); expect(result.received.envelope.seq).toBe(3);
     expect(append).toHaveBeenCalledOnce();
     await expect(f.receiver.author(author, body, expected)).rejects.toThrow(/Stale/);

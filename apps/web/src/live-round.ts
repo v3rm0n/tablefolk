@@ -1,7 +1,7 @@
 import { bytesEqual, bytesToHex, RistrettoPoint, type RistrettoScalar } from "@p2pcards/crypto";
 import { PersistentSetupReceiver } from "@p2pcards/engine";
-import { CandidateSaskuRoundOwner, type SaskuActionIntent, type SaskuRoundSnapshot } from "@p2pcards/game-sasku";
-import { decodeAndVerifyEnvelope, type EnvelopeArtifact, type IdentityPublicKey, type RosterBody } from "@p2pcards/protocol";
+import { CandidateSaskuRoundOwner, type CandidateRoundCheckpoint, type SaskuActionIntent, type SaskuRoundSnapshot } from "@p2pcards/game-sasku";
+import { verifyEnvelopeArtifact, type EnvelopeArtifact, type IdentityPublicKey, type RosterBody } from "@p2pcards/protocol";
 import { captureSessionHistory, PersistentEnvelopeAuthor, PersistentSessionReceiver, type SessionChainRegistry } from "@p2pcards/session";
 import { IndexedDbGameSecretStore, type IndexedDbStoreOptions, type IndexedDbSessionStore } from "@p2pcards/storage";
 import { legalSaskuCards, saskuBidStrength, type SaskuCardId } from "@p2pcards/rules-sasku";
@@ -10,6 +10,12 @@ import { FIRST_DEAL, FIRST_ROUND } from "./live-profile";
 import { dealerForSaskuRound, INITIAL_SASKU_MATCH, MAX_SASKU_MATCH_ROUNDS, recordSaskuRound, type SaskuMatchState } from "./sasku-match";
 
 const MATCH_HISTORY_LIMITS = Object.freeze({ maxEnvelopes: 4096, maxBytes: 64 * 1024 * 1024 });
+
+interface MatchCheckpoint {
+  readonly version: 1;
+  readonly match: SaskuMatchState;
+  readonly owner: CandidateRoundCheckpoint;
+}
 
 export interface LiveRoundView {
   readonly phase: "setup" | "shuffle" | "dealing" | "bidding" | "choosing_trump" | "playing" | "audit" | "complete" | "match_complete";
@@ -40,6 +46,8 @@ export class LiveRound {
   #owner: CandidateSaskuRoundOwner | null = null;
   #match: SaskuMatchState = INITIAL_SASKU_MATCH;
   #roundReady = 0;
+  #highestStoredRound = 0;
+  #handState: SaskuRoundSnapshot | null = null;
   #secret: RistrettoScalar | null = null;
   #connected = false;
   #running: Promise<void> | null = null;
@@ -50,10 +58,11 @@ export class LiveRound {
   #view: LiveRoundView;
   constructor(options: Options) {
     this.#options = options;
+    this.#highestStoredRound = this.#validateMatchHistory(false);
     this.#keys = new IndexedDbGameSecretStore(options.storage);
     this.#durable = new PersistentSessionReceiver(options.session, options.stored);
     this.#setup = new PersistentSetupReceiver({ round: 0, self: options.self, session: options.session, sessionReceiver: this.#durable,
-      beaconRequired: false });
+      beaconRequired: false, historyLimits: MATCH_HISTORY_LIMITS });
     this.#view = { phase: "setup", match: this.#match, message: "Synchronizing signed histories", seat: options.session.seatOf(options.self)!, connected: false, busy: true, hand: [], strength: null, state: null, error: null };
     this.#kick();
   }
@@ -67,10 +76,12 @@ export class LiveRound {
     const value = round === this.#match.round ? round : 0;
     if (this.#roundReady !== value) { this.#roundReady = value; this.#kick(); }
   }
-  receive(remote: IdentityPublicKey, payload: Uint8Array): void {
+  receive(remote: IdentityPublicKey, candidate: EnvelopeArtifact): void {
     if (this.#closed || this.#error) throw new Error(this.#error ?? "Round is closed");
-    if (payload.length > 64 * 1024) throw new Error("Round envelope exceeds limit");
-    const a = decodeAndVerifyEnvelope(payload), e = a.envelope;
+    const bytes = candidate.canonicalBytes;
+    const size = bytes.length;
+    if (size > 64 * 1024) throw new Error("Round envelope exceeds limit");
+    const a = verifyEnvelopeArtifact(candidate, bytes), e = a.envelope;
     if (!bytesEqual(e.from, remote) || !bytesEqual(e.game, this.#options.roster.gameId) || this.#options.session.seatOf(remote) === null) throw new Error("Wrong round sender");
     const classification = this.#options.session.classify(a);
     if (classification.status === "duplicate") return;
@@ -81,7 +92,7 @@ export class LiveRound {
     if (!setup && (this.#match.winner !== null || e.round < this.#match.round)) throw new Error("Match traffic arrived after its round ended");
     const key = `${bytesToHex(remote)}:${e.seq}`, prior = this.#pending.get(key);
     if (prior) { if (!bytesEqual(prior.canonicalBytes, a.canonicalBytes)) throw new Error("Conflicting pending envelope"); return; }
-    if (this.#pending.size >= 256 || this.#bytes + payload.length > 4 * 1024 * 1024) throw new Error("Round receive budget exceeded");
+    if (this.#pending.size >= 256 || this.#bytes + size > 4 * 1024 * 1024) throw new Error("Round receive budget exceeded");
     this.#pending.set(key, a); this.#bytes += a.canonicalBytes.length; this.#kick();
   }
   act(intent: SaskuActionIntent): Promise<void> {
@@ -107,6 +118,7 @@ export class LiveRound {
         if (this.#options.session.classify(a).status !== "duplicate") {
           const result = this.#owner ? await this.#owner.receiveHistory(a) : await this.#setup.receive(a);
           if (result.status !== "accepted" && result.status !== "duplicate") throw new Error(`Round receipt failed: ${result.status}`);
+          if (this.#owner && result.status === "accepted") await this.#saveCheckpoint();
         }
         this.#pending.delete(key); this.#bytes -= a.canonicalBytes.length; continue;
       }
@@ -115,8 +127,9 @@ export class LiveRound {
         this.#secret = await this.#keys.loadGameSecret(this.#options.roster.gameId);
         if (this.#secret === null) throw new Error("The saved private game key is missing; it will not be regenerated");
         if (!RistrettoPoint.base().multiply(this.#secret).equals(this.#setup.getCompletedSetup().publicKeyAt(this.#view.seat)!)) throw new Error("The saved private game key does not match the signed setup");
-        this.#owner = await this.#openRound();
+        const restored = await this.#restoreOrOpenRound();
         this.#validateMatchHistory();
+        if (!restored) await this.#saveCheckpoint();
         this.#setup.close(); continue;
       }
       if (this.#owner?.snapshot.phase === "round") {
@@ -126,10 +139,12 @@ export class LiveRound {
           if (this.#roundReady !== this.#match.round) break;
           this.#match = recordSaskuRound(this.#match, dealerForSaskuRound(this.#match.round), audit.score);
           this.#roundReady = 0;
-          if (this.#match.winner !== null) { this.#validateMatchHistory(); break; }
+          if (this.#match.winner !== null) { this.#validateMatchHistory(); await this.#saveCheckpoint(); break; }
           this.#owner.close();
+          this.#handState = null;
           this.#owner = await this.#openRound();
           this.#validateMatchHistory();
+          await this.#saveCheckpoint();
           continue;
         }
       }
@@ -151,32 +166,77 @@ export class LiveRound {
         if (this.#closed) break;
         const result = await this.#owner.authorShuffle(this.#options.author, prepared, snapshot.state);
         if (result.status !== "accepted") throw new Error("Local shuffle failed");
-        this.#options.published(); continue;
+        this.#options.published();
+        await this.#saveCheckpoint();
+        continue;
       }
       const state = snapshot.state;
       if (state.ledger.deal?.pendingSenders.includes(seat)) {
-        accepted(await this.#owner.authorDealShares(this.#options.author, this.#secret!, state)); this.#options.published(); continue;
+        accepted(await this.#owner.authorDealShares(this.#options.author, this.#secret!, state)); this.#options.published();
+        await this.#saveCheckpoint();
+        continue;
       }
       if (this.#action) {
         const action = this.#action; this.#action = null;
-        try { accepted(await this.#owner.authorAction(this.#options.author, this.#secret!, action.expected, action.intent)); action.resolve(); this.#options.published(); }
-        catch (e) { action.reject(e); if (this.#owner.failure) throw e; }
+        try {
+          accepted(await this.#owner.authorAction(this.#options.author, this.#secret!, action.expected, action.intent));
+          action.resolve();
+          this.#options.published();
+          await this.#saveCheckpoint();
+        } catch (e) { action.reject(e); if (this.#owner.failure) throw e; }
         continue;
       }
       if (state.hand.phase === "complete" && state.audit?.pendingSenders.some(sender => sender === seat)) {
-        accepted(await this.#owner.authorAuditDisclose(this.#options.author, state)); this.#options.published(); continue;
+        accepted(await this.#owner.authorAuditDisclose(this.#options.author, state)); this.#options.published();
+        await this.#saveCheckpoint();
+        continue;
       }
       break;
     }
   }
-  #openRound(): Promise<CandidateSaskuRoundOwner> {
-    return CandidateSaskuRoundOwner.open({ session: this.#options.session, sessionReceiver: this.#durable,
-      roster: this.#options.roster, self: this.#options.self, setupRound: 0, round: this.#match.round,
-      dealer: dealerForSaskuRound(this.#match.round), schedule: FIRST_DEAL, verifier: this.#client,
-      beaconRequired: false, batchDeal: true,
-      historyLimits: MATCH_HISTORY_LIMITS, roundHistoryLimits: { ...MATCH_HISTORY_LIMITS, allowOtherRounds: true } });
+  async #restoreOrOpenRound(): Promise<boolean> {
+    try {
+      const { stored, roster, self, session } = this.#options;
+      const checkpoint = await stored.loadMatchCheckpoint(roster.gameId, self, session.heads()) as MatchCheckpoint | undefined;
+      if (checkpoint?.version === 1) {
+        let match = INITIAL_SASKU_MATCH;
+        for (const { round, dealer, score } of checkpoint.match.completed) {
+          if (round !== match.round) throw new Error("Invalid checkpoint match history");
+          const [first, second] = score.gamePoints;
+          if ([first, second].some(points => !Number.isSafeInteger(points) || points < 0 || points > 12)) {
+            throw new Error("Invalid checkpoint score");
+          }
+          match = recordSaskuRound(match, dealer, Object.freeze({
+            ...score, gamePoints: Object.freeze([first, second] as const),
+          }));
+        }
+        if (match.round !== checkpoint.owner.round || this.#highestStoredRound > match.round) throw new Error("Invalid checkpoint match round");
+        this.#owner = await this.#openRound(match.round, checkpoint.owner);
+        this.#match = match;
+        return true;
+      }
+    } catch { /* Missing, stale, or unreadable derived state falls back to verified replay. */ }
+    this.#owner = await this.#openRound();
+    return false;
   }
-  #validateMatchHistory(): void {
+
+  async #saveCheckpoint(): Promise<void> {
+    if (this.#closed || !this.#owner || this.#match.round < this.#highestStoredRound) return;
+    const { stored, roster, self } = this.#options;
+    try {
+      const state: MatchCheckpoint = { version: 1, match: this.#match, owner: this.#owner.exportCheckpoint() };
+      await stored.saveMatchCheckpoint(roster.gameId, self, state.owner.heads, state);
+    } catch { /* The signed transcript is already durable and remains sufficient for recovery. */ }
+  }
+
+  #openRound(round = this.#match.round, checkpoint?: CandidateRoundCheckpoint): Promise<CandidateSaskuRoundOwner> {
+    return CandidateSaskuRoundOwner.open({ session: this.#options.session, sessionReceiver: this.#durable,
+      roster: this.#options.roster, self: this.#options.self, setupRound: 0, round,
+      dealer: dealerForSaskuRound(round), schedule: FIRST_DEAL, verifier: this.#client,
+      beaconRequired: false, batchDeal: true,
+      historyLimits: MATCH_HISTORY_LIMITS, roundHistoryLimits: { ...MATCH_HISTORY_LIMITS, allowOtherRounds: true } }, checkpoint);
+  }
+  #validateMatchHistory(requireCurrent = true): number {
     const history = captureSessionHistory(this.#options.session, MATCH_HISTORY_LIMITS);
     let highest = 0;
     for (const chain of history.bySeat) {
@@ -192,10 +252,11 @@ export class LiveRound {
     }
     const current = this.#owner?.snapshot;
     const complete = current?.phase === "round" && current.state.audit?.result?.status === "valid";
-    if (highest > this.#match.round && (this.#match.winner !== null || !complete)) {
+    if (requireCurrent && highest > this.#match.round && (this.#match.winner !== null || !complete)) {
       throw new Error("Saved match advances before the current round is verified");
     }
     history.assertUnchanged();
+    return highest;
   }
   #eligible(a: EnvelopeArtifact): boolean {
     const c = this.#options.session.classify(a);
@@ -219,8 +280,11 @@ export class LiveRound {
     const state = s?.phase === "round" ? s.state : null;
     const phase = this.#match.winner !== null ? "match_complete" : !s ? "setup" : s.phase === "shuffle" ? "shuffle" : state!.ledger.deal ? "dealing"
       : state!.hand.phase === "complete" ? state!.audit?.result ? "complete" : "audit" : state!.hand.phase;
-    let hand: LiveRoundView["hand"] = this.#view.hand, strength: number | null = this.#view.strength;
-    if (!this.#error && !this.#owner?.failure && state && !state.ledger.deal && this.#secret !== null && this.#owner!.pendingEnvelopes === 0) {
+    const sameRound = this.#view.match.round === this.#match.round;
+    let hand: LiveRoundView["hand"] = sameRound ? this.#view.hand : [];
+    let strength = sameRound ? this.#view.strength : null;
+    if (state?.hand.phase === "complete") hand = [];
+    if (!this.#error && !this.#owner?.failure && state && state !== this.#handState && state.hand.phase !== "complete" && !state.ledger.deal && this.#secret !== null && this.#owner!.pendingEnvelopes === 0) {
       const privateHand = this.#owner!.readPrivateHand(this.#secret);
       if (!privateHand) throw new Error("Private hand is unavailable");
       const cards = Object.values(privateHand.remaining);
@@ -228,6 +292,7 @@ export class LiveRound {
       const legal = state.hand.phase === "playing" && state.hand.turn === this.#view.seat ? legalSaskuCards(cards, state.hand.trick, trump!) : [];
       hand = Object.entries(privateHand.remaining).map(([position, card]) => ({ position: Number(position), card, playable: legal.includes(card) }));
       strength = saskuBidStrength(Object.values(privateHand.dealt));
+      this.#handState = state;
     }
     this.#view = Object.freeze({ ...this.#view, phase, match: this.#match, state, hand, strength, connected: this.#connected, busy: this.#running !== null,
       error: this.#error, message: !this.#connected ? "Waiting for all four signed histories and connections" : phase === "setup" ? `Preparing ${this.#setup.snapshot.state.replaceAll("_", " ")}`
@@ -237,6 +302,9 @@ export class LiveRound {
   async close(): Promise<void> {
     this.#closed = true; this.#client.close();
     await this.#running; this.#setup.close(); this.#owner?.close();
+    this.#handState = null;
+    this.#secret = null;
+    this.#view = Object.freeze({ ...this.#view, hand: [], strength: null });
     this.#action?.reject(new Error("Round closed")); this.#action = null;
     await this.#keys.close();
   }

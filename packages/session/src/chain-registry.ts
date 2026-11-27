@@ -5,6 +5,7 @@ import {
 } from "@p2pcards/crypto";
 import {
   parseGameId,
+  verifyEnvelopeArtifact,
   parseIdentityPublicKey,
   type EnvelopeArtifact,
   type GameId,
@@ -110,7 +111,8 @@ export class SessionChainRegistry {
     return this.#bySender.get(bytesToHex(sender))?.seat ?? null;
   }
 
-  classify(received: EnvelopeArtifact): SessionIngestResult {
+  classify(candidate: EnvelopeArtifact): SessionIngestResult {
+    const received = verifyEnvelopeArtifact(candidate);
     if (!bytesEqual(received.envelope.game, this.#gameId)) {
       return {
         status: "rejected",
@@ -133,8 +135,9 @@ export class SessionChainRegistry {
     return entry.chain.classify(received);
   }
 
-  ingest(received: EnvelopeArtifact): SessionIngestResult {
-    const result = this.classify(received);
+  ingest(candidate: EnvelopeArtifact): SessionIngestResult {
+    const result = this.classify(candidate);
+    const received = result.received;
     if (result.status !== "accepted") {
       return result;
     }

@@ -1,6 +1,6 @@
 import { bytesEqual } from "@p2pcards/crypto";
 import {
-  decodeAndVerifyEnvelope,
+  verifyEnvelopeArtifact,
   type EnvelopeArtifact,
   type IdentityPublicKey,
 } from "@p2pcards/protocol";
@@ -318,7 +318,7 @@ function snapshotRecord(record: DurableEnvelopeRecord, message: string): Envelop
 
 function snapshotArtifact(candidate: EnvelopeArtifact, message: string): EnvelopeArtifact {
   try {
-    return decodeAndVerifyEnvelope(candidate.canonicalBytes);
+    return verifyEnvelopeArtifact(candidate);
   } catch (cause) {
     throw new PersistentLobbyReceiverError(message, { cause });
   }

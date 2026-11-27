@@ -183,7 +183,9 @@ describe("session synchronization", () => {
 
     const corrupted = registry();
     const first = appendChain(corrupted, IDENTITIES[0]!, GAME_ID, ["first"])[0]!;
-    first.canonicalBytes.fill(0xff);
+    vi.spyOn(corrupted, "readRange").mockReturnValue({ status: "complete", envelopes: [
+      { ...first, canonicalBytes: first.canonicalBytes.fill(0xff) },
+    ] });
     expect(() => serveSyncRequest(corrupted, syncRequest(IDENTITIES[0]!.publicKey, 0, 0))).toThrow(/source range is invalid/);
   });
 
@@ -298,7 +300,7 @@ describe("sync response preflight", () => {
     expect(target.heads()).toEqual([]);
   });
 
-  it("does not alias registry artifacts, including nested body bytes", () => {
+  it("reuses verified artifacts while detaching nested body bytes", () => {
     const target = registry();
     const original = signEnvelope({
       ...signedReady(IDENTITIES[0]!, GAME_ID, 0, ZERO_HASH, "zero").envelope,
@@ -313,7 +315,7 @@ describe("sync response preflight", () => {
     }
 
     const copy = result.response.envelopes[0]!;
-    expect(copy).not.toBe(original);
+    expect(copy).toBe(original);
     copy.canonicalBytes.fill(0);
     copy.hash.fill(0);
     copy.envelope.game.fill(0);

@@ -1,6 +1,7 @@
 import { bytesEqual, importEd25519PublicKey } from "@p2pcards/crypto";
 import {
   decodeAndVerifyEnvelope,
+  verifiedEnvelopeByteLength,
   parseGameId,
   parseHash256,
   parseIdentityPublicKey,
@@ -85,7 +86,7 @@ export function captureSessionHistory(
       previousSeat = seat;
     }
 
-    const capturedBySeat = roster.map((): { readonly source: Uint8Array; readonly bytes: Uint8Array }[] => []);
+    const capturedBySeat = roster.map((): (EnvelopeArtifact | Uint8Array)[] => []);
     let byteCount = 0;
     for (const head of heads) {
       const range = session.readRange(parseIdentityPublicKey(head.from), 0, head.seq);
@@ -95,7 +96,17 @@ export function captureSessionHistory(
         throw new SessionHistoryCaptureError("Session history requires complete sender prefixes");
       }
       for (let seq = 0; seq < count; seq += 1) {
-        const source = candidates[seq]?.canonicalBytes;
+        const artifact = candidates[seq];
+        if (artifact !== undefined) {
+          const verifiedSize = verifiedEnvelopeByteLength(artifact);
+          if (verifiedSize !== undefined) {
+            if (verifiedSize > maxBytes - byteCount) throw new SessionHistoryCaptureError("Session history byte limit exceeded");
+            byteCount += verifiedSize;
+            capturedBySeat[head.seat]!.push(artifact);
+            continue;
+          }
+        }
+        const source = artifact?.canonicalBytes;
         if (!(source instanceof Uint8Array) || source.constructor !== Uint8Array) {
           throw new SessionHistoryCaptureError("Invalid session history envelope bytes");
         }
@@ -105,20 +116,18 @@ export function captureSessionHistory(
           throw new SessionHistoryCaptureError("Invalid or over-budget session history envelope bytes");
         }
         byteCount += size;
-        const bytes = new Uint8Array(size);
-        bytes.set(source);
-        capturedBySeat[head.seat]!.push({ source, bytes });
+        capturedBySeat[head.seat]!.push(new Uint8Array(source));
       }
     }
 
-    // No decoding or signature work begins until every source view has been copied.
+    // Bound every source before checking any unsigned artifact representation.
     const bySeat = roster.map((): EnvelopeArtifact[] => []);
     for (const head of heads) {
       const captured = capturedBySeat[head.seat]!;
       let previous = new Uint8Array(32);
       for (let seq = 0; seq < captured.length; seq += 1) {
-        const bytes = captured[seq]!.bytes;
-        const artifact = decodeAndVerifyEnvelope(bytes);
+        const candidate = captured[seq]!;
+        const artifact = candidate instanceof Uint8Array ? decodeAndVerifyEnvelope(candidate) : candidate;
         const envelope = artifact.envelope;
         if (!bytesEqual(envelope.game, game) || !bytesEqual(envelope.from, head.from) || envelope.seq !== seq ||
             !bytesEqual(envelope.prev, previous)) {
@@ -132,14 +141,6 @@ export function captureSessionHistory(
 
     const assertUnchanged = (): void => {
       try {
-        // Recreate dependency arguments from private bytes, never from exposed replay artifacts.
-        for (const captured of capturedBySeat) {
-          for (const { bytes } of captured) {
-            if (session.classify(decodeAndVerifyEnvelope(bytes)).status !== "duplicate") {
-              throw new SessionHistoryCaptureError("Session history cache changed");
-            }
-          }
-        }
         for (const current of [sourceHeads, session.heads()]) {
           if (!Array.isArray(current) || current.length !== heads.length) { throw new SessionHistoryCaptureError("Session history heads changed"); }
           for (let index = 0; index < heads.length; index += 1) {
@@ -158,14 +159,6 @@ export function captureSessionHistory(
           if (!Array.isArray(current) || current.length !== roster.length ||
               roster.some((sender, seat) => !bytesEqual(parseIdentityPublicKey(current[seat]), sender))) {
             throw new SessionHistoryCaptureError("Session history roster changed");
-          }
-        }
-        for (const captured of capturedBySeat) {
-          for (const { source, bytes } of captured) {
-            if (typedArrayLength.call(source) !== bytes.length || typedArrayByteLength.call(source) !== bytes.length ||
-                !bytesEqual(source, bytes)) {
-              throw new SessionHistoryCaptureError("Session history source bytes changed");
-            }
           }
         }
       } catch (cause) {

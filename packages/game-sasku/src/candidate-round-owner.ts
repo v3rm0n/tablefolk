@@ -1,18 +1,25 @@
 import { bytesEqual, type RistrettoScalar } from "@p2pcards/crypto";
-import { PersistentCandidateShuffleReceiver, recoverSetup, type CandidateShuffleSnapshot } from "@p2pcards/engine";
-import { decodeAndVerifyEnvelope, decodeRosterBody, encodeRosterBody, parseIdentityPublicKey,
+import { PersistentCandidateShuffleReceiver, type CandidateShuffleSnapshot, type CandidateShuffleCheckpoint } from "@p2pcards/engine";
+import { decodeAndVerifyEnvelope, verifyEnvelopeArtifact, decodeRosterBody, encodeRosterBody, parseIdentityPublicKey,
   decodeSyncRequestBody, encodeSyncRequestBody, decodeSyncResponseBody, encodeSyncResponseBody, encodeUnsignedEnvelope, expectExactMap, expectArray,
-  type EnvelopeArtifact, type IdentityPublicKey, type SyncRequestBody, type UnsignedEnvelope } from "@p2pcards/protocol";
+  type EnvelopeArtifact, type IdentityPublicKey, type SyncRequestBody, type SyncResponseBody, type UnsignedEnvelope } from "@p2pcards/protocol";
 import { SASKU_DECK_SPEC, MAX_SASKU_HAND_ACTIONS } from "@p2pcards/rules-sasku";
 import { PersistentEnvelopeAuthor, preflightSyncResponse, captureSessionHistory,
-  type PersistentSyncReceiveResult, type SyncCancellationSignal } from "@p2pcards/session";
+  type ChainHead, type PersistentSyncReceiveResult, type SyncCancellationSignal } from "@p2pcards/session";
 import { captureCandidateSaskuPolicy, type CandidateShuffledSaskuRoundOptions } from "./candidate-shuffled-round";
-import { PersistentSaskuRoundReceiver, type SaskuActionIntent, type SaskuRoundSnapshot } from "./persistent-round-receiver";
+import { PersistentSaskuRoundReceiver, type SaskuActionIntent, type SaskuRoundCheckpoint, type SaskuRoundSnapshot } from "./persistent-round-receiver";
 
 export interface CandidateRoundOwnerOptions extends CandidateShuffledSaskuRoundOptions {
   readonly maxPendingEnvelopes?: number;
   readonly maxPendingBytes?: number;
 }
+export interface CandidateRoundCheckpoint {
+  readonly round: number;
+  readonly heads: readonly ChainHead[];
+  readonly shuffle: CandidateShuffleCheckpoint;
+  readonly reveal: SaskuRoundCheckpoint | null;
+}
+
 export type CandidateRoundOwnerSnapshot =
   | { readonly phase: "shuffle"; readonly state: CandidateShuffleSnapshot }
   | { readonly phase: "round"; readonly state: SaskuRoundSnapshot };
@@ -20,7 +27,8 @@ export type CandidateRoundReceipt = { readonly received: EnvelopeArtifact } &
   ({ readonly status: "accepted" | "duplicate" } | { readonly status: "rejected"; readonly reason: string });
 interface Job {
   readonly size: number;
-  readonly bytes?: Uint8Array;
+  readonly artifact?: EnvelopeArtifact;
+  readonly syncResponse?: SyncResponseBody;
   readonly stage: number;
   readonly index: number;
   readonly run: () => Promise<CandidateRoundReceipt>;
@@ -49,7 +57,8 @@ export class CandidateSaskuRoundOwner {
     this.#maxCount = options.maxPendingEnvelopes ?? 32;
     this.#maxBytes = options.maxPendingBytes ?? 1024 * 1024;
   }
-  static async open(input: CandidateRoundOwnerOptions): Promise<CandidateSaskuRoundOwner> {
+  /** Replays signed history by default. A local checkpoint must match all four sender heads. */
+  static async open(input: CandidateRoundOwnerOptions, trustedCheckpoint?: CandidateRoundCheckpoint): Promise<CandidateSaskuRoundOwner> {
     for (const value of [input.maxPendingEnvelopes ?? 32, input.maxPendingBytes ?? 1024 * 1024]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error("Invalid owner queue limit");
     }
@@ -57,9 +66,28 @@ export class CandidateSaskuRoundOwner {
       roster: decodeRosterBody(encodeRosterBody(input.roster)), self: parseIdentityPublicKey(input.self),
       ...(input.historyLimits === undefined ? {} : { historyLimits: Object.freeze({ ...input.historyLimits }) }),
       ...(input.roundHistoryLimits === undefined ? {} : { roundHistoryLimits: Object.freeze({ ...input.roundHistoryLimits }) }) });
-    const shuffle = await PersistentCandidateShuffleReceiver.open({ ...options, deckSpec: SASKU_DECK_SPEC });
+    if (trustedCheckpoint !== undefined) {
+      const heads = options.session.heads();
+      if (trustedCheckpoint.round !== options.round || heads.length !== 4 || trustedCheckpoint.heads.length !== 4 ||
+          heads.some(({ from, seq, hash }, seat) => {
+            const expected = trustedCheckpoint.heads[seat]!;
+            return seq !== expected.seq || !bytesEqual(from, expected.from) || !bytesEqual(hash, expected.hash);
+          })) throw new Error("Round checkpoint does not match the session heads");
+    }
+    const shuffle = await PersistentCandidateShuffleReceiver.open({ ...options, deckSpec: SASKU_DECK_SPEC }, trustedCheckpoint?.shuffle);
     const owner = new CandidateSaskuRoundOwner(options, shuffle);
-    try { await owner.#promote(); return owner; } catch (error) { owner.close(); throw error; }
+    try {
+      if (trustedCheckpoint !== undefined && shuffle.snapshot.complete !== (trustedCheckpoint.reveal !== null)) {
+        throw new Error("Inconsistent checkpoint phase");
+      }
+      await owner.#promote(trustedCheckpoint?.reveal ?? undefined);
+      return owner;
+    } catch (error) { owner.close(); throw error; }
+  }
+  exportCheckpoint(): CandidateRoundCheckpoint {
+    this.#guard();
+    if (this.pendingEnvelopes !== 0) throw new Error("Cannot checkpoint a busy round");
+    return { round: this.#options.round, heads: this.#options.session.heads(), shuffle: this.#shuffle.exportCheckpoint(), reveal: this.#round?.exportCheckpoint() ?? null };
   }
   get snapshot(): CandidateRoundOwnerSnapshot {
     return this.#round === null ? Object.freeze({ phase: "shuffle", state: this.#shuffle.snapshot })
@@ -89,14 +117,14 @@ export class CandidateSaskuRoundOwner {
   }
   /** For originals from separately preflighted sync history. Does not admit a SYNC_RESP wrapper or execute controls. */
   receiveHistory(candidate: EnvelopeArtifact): Promise<CandidateRoundReceipt> {
-    try { return this.#admit(candidate.canonicalBytes); } catch (error) { return Promise.reject(error); }
+    try { return this.#admit(candidate); } catch (error) { return Promise.reject(error); }
   }
   /** Authenticated sync peer, which need not yet be application-ready. No response is sent by this method. */
   receiveSyncRequest(remote: IdentityPublicKey, payload: Uint8Array): Promise<CandidateRoundReceipt> {
     try {
       const peer = this.#syncPeer(remote), job = this.#prepare(payload, peer, true);
-      if (decodeAndVerifyEnvelope(job.bytes!).envelope.type !== "SYNC_REQ") throw new Error("Expected sync request");
-      return this.#enqueue(job.size, -1, 0, job.run, job.bytes); // Controls cannot defer on a nested repair of their own chain.
+      if (job.artifact!.envelope.type !== "SYNC_REQ") throw new Error("Expected sync request");
+      return this.#enqueue(job.size, -1, 0, job.run, job.artifact); // Controls cannot defer on a nested repair of their own chain.
     } catch (error) { return Promise.reject(error); }
   }
   /** A bounded range runs inside one ownership lease; unmet semantic prerequisites stop the range, never deadlock it. */
@@ -115,13 +143,13 @@ export class CandidateSaskuRoundOwner {
       // Charge outer bytes and the complete retained originals before copying or decoding.
       if (!(payload instanceof Uint8Array) || payload.constructor !== Uint8Array || payload.length > 64 * 1024) throw new Error("Invalid sync response bytes");
       this.#capacity(payload.length * 2);
-      const outerJob = this.#prepare(payload, peer, true), outer = decodeAndVerifyEnvelope(outerJob.bytes!);
+      const outerJob = this.#prepare(payload, peer, true), outer = outerJob.artifact!;
       if (outer.envelope.type !== "SYNC_RESP") throw new Error("Expected sync response");
       const normalized = decodeSyncRequestBody(encodeSyncRequestBody(request));
-      const preflight = preflightSyncResponse(this.#options.session, normalized, decodeSyncResponseBody(outer.envelope.body), { maxEnvelopes: 32, maxBytes: 64 * 1024 });
+      const preflight = preflightSyncResponse(this.#options.session, normalized, outerJob.syncResponse!, { maxEnvelopes: 32, maxBytes: 64 * 1024 });
       if (preflight.status === "rejected") return { status: "stopped", stage, index: "index" in preflight ? preflight.index : null, reason: preflight.reason, ...progress() };
       // Validate original scope and control schemas before persistence; game semantics run at eligibility.
-      const jobs = preflight.response.envelopes.map(a => this.#prepare(a.canonicalBytes, undefined,
+      const jobs = preflight.response.envelopes.map(a => this.#prepare(a, undefined,
         a.envelope.type === "SYNC_REQ" || a.envelope.type === "SYNC_RESP", true));
       await this.#enqueue(payload.length * 2, -1, 0, async () => {
         const stop = (reason: string) => { outcome = { status: "stopped", stage, index, reason, ...progress() }; };
@@ -143,7 +171,7 @@ export class CandidateSaskuRoundOwner {
         }
         outcome = signal?.aborted ? cancelled() : { status: "range_received", ...progress() };
         return control;
-      }, outerJob.bytes, signal);
+      }, outerJob.artifact, signal);
       return outcome!;
     } catch (cause) {
       if (signal?.aborted) return cancelled();
@@ -161,8 +189,8 @@ export class CandidateSaskuRoundOwner {
   authorSyncResponse(author: PersistentEnvelopeAuthor, remote: IdentityPublicKey, request: EnvelopeArtifact): Promise<CandidateRoundReceipt> {
     try {
       const peer = this.#syncPeer(remote);
-      const job = this.#prepare(request.canonicalBytes, peer, true);
-      const captured = decodeAndVerifyEnvelope(job.bytes!);
+      const job = this.#prepare(request, peer, true);
+      const captured = job.artifact!;
       if (captured.envelope.type !== "SYNC_REQ") throw new Error("Expected sync request");
       const range = this.#syncRequest(decodeSyncRequestBody(captured.envelope.body));
       return this.#local(author, async () => {
@@ -172,7 +200,7 @@ export class CandidateSaskuRoundOwner {
         const checked = preflightSyncResponse(this.#options.session, range, { envelopes: source.envelopes }, { maxEnvelopes: 32, maxBytes: 64 * 1024 });
         if (checked.status !== "valid") throw new Error(`Cannot serve sync range: ${checked.reason}`);
         // This candidate owner can replay only controls and semantics from its current round.
-        for (const original of checked.response.envelopes) this.#prepare(original.canonicalBytes, undefined,
+        for (const original of checked.response.envelopes) this.#prepare(original, undefined,
           original.envelope.type === "SYNC_REQ" || original.envelope.type === "SYNC_RESP", true);
         return this.#authorControl(author, "SYNC_RESP", encodeSyncResponseBody(checked.response));
       });
@@ -203,7 +231,7 @@ export class CandidateSaskuRoundOwner {
       guard(await author.readHead());
       signing = true;
       const artifact = await author.author({ round: this.#options.round, phase: "control.sync", type, body }, guard);
-      const receipt = await this.#control(artifact.canonicalBytes);
+      const receipt = await this.#control(artifact);
       if (receipt.status === "rejected") throw new Error("Authored control was not admitted");
       return receipt;
     } catch (error) {
@@ -216,19 +244,20 @@ export class CandidateSaskuRoundOwner {
     if (bytesEqual(peer, this.#options.self) || !this.#options.roster.seats.some(id => bytesEqual(id, peer))) throw new Error("Wrong sync peer");
     return peer;
   }
-  async #control(bytes: Uint8Array): Promise<CandidateRoundReceipt> {
+  async #control(received: EnvelopeArtifact): Promise<CandidateRoundReceipt> {
     const before = captureSessionHistory(this.#options.session, this.#options.historyLimits);
     let committed = false;
     try {
-      const received = decodeAndVerifyEnvelope(bytes);
+      const bytes = received.canonicalBytes;
       const receipt = await this.#options.sessionReceiver.receive(received);
       if (receipt.status === "rejected") { before.assertUnchanged(); return receipt; }
       committed = true;
       if (!bytesEqual(receipt.received.canonicalBytes, bytes) || this.#options.session.classify(received).status !== "duplicate") throw new Error("Invalid control receipt");
       // A control changes the captured shuffle prefix. Reconstruct under the same lease before accepting more proofs.
       if (!this.#round) {
+        const checkpoint = this.#shuffle.exportCheckpoint();
         this.#shuffle.close();
-        this.#shuffle = await PersistentCandidateShuffleReceiver.open({ ...this.#options, deckSpec: SASKU_DECK_SPEC });
+        this.#shuffle = await PersistentCandidateShuffleReceiver.open({ ...this.#options, deckSpec: SASKU_DECK_SPEC }, checkpoint);
       }
       return receipt;
     } catch (error) {
@@ -278,24 +307,27 @@ export class CandidateSaskuRoundOwner {
   #requireRound(): PersistentSaskuRoundReceiver {
     if (!this.#round) throw new Error("Round phase has not started"); return this.#round;
   }
-  #admit(payload: Uint8Array, peer?: IdentityPublicKey): Promise<CandidateRoundReceipt> {
+  #admit(payload: Uint8Array | EnvelopeArtifact, peer?: IdentityPublicKey): Promise<CandidateRoundReceipt> {
     const job = this.#prepare(payload, peer);
-    return this.#enqueue(job.size, job.stage, job.index, job.run, job.bytes);
+    return this.#enqueue(job.size, job.stage, job.index, job.run, job.artifact);
   }
-  #prepare(payload: Uint8Array, peer?: IdentityPublicKey, control = false, reserved = false): Omit<Job, "resolve" | "reject"> {
+  #prepare(payload: Uint8Array | EnvelopeArtifact, peer?: IdentityPublicKey, control = false, reserved = false): Omit<Job, "resolve" | "reject"> {
     this.#guard();
-    if (!(payload instanceof Uint8Array) || payload.constructor !== Uint8Array || payload.length < 1 || payload.length > 64 * 1024) throw new Error("Invalid semantic envelope size");
-    if (!reserved) this.#capacity(payload.length);
-    const bytes = payload.slice(), { envelope: e } = decodeAndVerifyEnvelope(bytes);
+    const bytes = payload instanceof Uint8Array ? payload : payload.canonicalBytes;
+    if (!(bytes instanceof Uint8Array) || bytes.constructor !== Uint8Array || bytes.length < 1 || bytes.length > 64 * 1024) throw new Error("Invalid semantic envelope size");
+    if (!reserved) this.#capacity(bytes.length);
+    const artifact = payload instanceof Uint8Array ? decodeAndVerifyEnvelope(bytes) : verifyEnvelopeArtifact(payload, bytes);
+    const e = artifact.envelope;
     if (peer && !bytesEqual(peer, e.from)) throw new Error("Direct sender differs from authenticated peer");
     if (!bytesEqual(e.game, this.#options.roster.gameId) || e.round !== this.#options.round ||
       !this.#options.roster.seats.some(id => bytesEqual(id, e.from))) throw new Error("Wrong round scope");
     for (const job of [...this.#queue, ...(this.#active ? [this.#active] : [])]) {
-      if (!job.bytes) continue;
-      const prior = decodeAndVerifyEnvelope(job.bytes).envelope;
-      if (prior.seq === e.seq && bytesEqual(prior.from, e.from) && !bytesEqual(job.bytes, bytes)) throw new Error("Conflicting queued sender sequence");
+      if (!job.artifact) continue;
+      const prior = job.artifact.envelope;
+      if (prior.seq === e.seq && bytesEqual(prior.from, e.from) && !bytesEqual(job.artifact.canonicalBytes, artifact.canonicalBytes)) throw new Error("Conflicting queued sender sequence");
     }
     if (control) {
+      let syncResponse: SyncResponseBody | undefined;
       if (e.phase !== "control.sync") throw new Error("Invalid sync control phase");
       if (e.type === "SYNC_REQ") {
         const request = decodeSyncRequestBody(e.body);
@@ -303,9 +335,9 @@ export class CandidateSaskuRoundOwner {
       } else if (e.type === "SYNC_RESP") {
         const values = expectArray(expectExactMap(e.body, ["envelopes"], "SYNC_RESP.body")["envelopes"], "SYNC_RESP.body.envelopes");
         if (values.length > 32) throw new Error("Sync response range limit");
-        decodeSyncResponseBody(e.body);
+        syncResponse = decodeSyncResponseBody(e.body);
       } else throw new Error("Unsupported control type");
-      return { size: bytes.length, stage: -1, index: 0, bytes, run: () => this.#control(bytes) };
+      return { size: bytes.length, stage: -1, index: 0, artifact, ...(syncResponse && { syncResponse }), run: () => this.#control(artifact) };
     }
     const stage = ["SHUFFLE", "SHARES", "ACTION", "AUDIT_DISCLOSE"].indexOf(e.type);
     if (stage < 0) throw new Error("Unsupported semantic traffic; controls require a coordinated adapter");
@@ -313,8 +345,7 @@ export class CandidateSaskuRoundOwner {
     const index = stage === 3 ? 0 : Number(e.phase.slice(prefix.length + 1));
     const limit = [4, this.#options.schedule.length, MAX_SASKU_HAND_ACTIONS, 1][stage]!;
     if (!Number.isSafeInteger(index) || index < 0 || index >= limit || e.phase !== (stage === 3 ? prefix : `${prefix}.${index}`)) throw new Error("Invalid semantic phase");
-    return { size: bytes.length, stage, index, bytes, run: async () => {
-      const artifact = decodeAndVerifyEnvelope(bytes);
+    return { size: bytes.length, stage, index, artifact, run: async () => {
       if (stage === 0) {
         if (!this.#round) return this.#shuffle.receive(artifact);
         // Round opening already verified every stored shuffle; only exact recorded replays are admissible here.
@@ -328,7 +359,7 @@ export class CandidateSaskuRoundOwner {
     this.#guard();
     if (!Number.isSafeInteger(size) || size < 1 || this.pendingEnvelopes >= this.#maxCount || size > this.#maxBytes - this.#pendingBytes) throw new Error("Round owner queue limit");
   }
-  #enqueue(size: number, stage: number, index: number, run: Job["run"], bytes?: Uint8Array, signal?: SyncCancellationSignal): Promise<CandidateRoundReceipt> {
+  #enqueue(size: number, stage: number, index: number, run: Job["run"], artifact?: EnvelopeArtifact, signal?: SyncCancellationSignal): Promise<CandidateRoundReceipt> {
     this.#capacity(size);
     if (signal?.aborted) return Promise.reject(new Error("Sync cancelled"));
     this.#pendingBytes += size;
@@ -339,7 +370,7 @@ export class CandidateSaskuRoundOwner {
         this.#queue.splice(position, 1); this.#pendingBytes -= size; job.cleanup?.(); reject(new Error("Sync cancelled"));
       };
       const job: Job = { size, stage, index, run, resolve, reject,
-        cleanup: () => { try { signal?.removeEventListener("abort", cancel); } catch { /* Release owner budgets even if an external signal is broken. */ } }, ...(bytes === undefined ? {} : { bytes }) };
+        cleanup: () => { try { signal?.removeEventListener("abort", cancel); } catch { /* Release owner budgets even if an external signal is broken. */ } }, ...(artifact === undefined ? {} : { artifact }) };
       this.#queue.push(job);
       try { signal?.addEventListener("abort", cancel, { once: true }); } catch (error) {
         const position = this.#queue.indexOf(job);
@@ -350,9 +381,9 @@ export class CandidateSaskuRoundOwner {
     });
     this.#start(); return result;
   }
-  #eligible(job: Pick<Job, "bytes" | "stage" | "index">): boolean {
-    if (!job.bytes || job.stage === -1) return true;
-    const chain = this.#options.session.classify(decodeAndVerifyEnvelope(job.bytes));
+  #eligible(job: Pick<Job, "artifact" | "stage" | "index">): boolean {
+    if (!job.artifact || job.stage === -1) return true;
+    const chain = this.#options.session.classify(job.artifact);
     if (chain.status === "rejected") return chain.reason !== "gap";
     const stage = this.#round === null ? 0 : this.#round.snapshot.audit !== null ? 3 : this.#round.snapshot.ledger.deal !== null ? 1 : 2;
     const index = this.#round === null ? this.#shuffle.snapshot.nextSeat ?? 4 : stage === 1 ? this.#round.snapshot.ledger.dealIndex : stage === 2 ? this.#round.snapshot.ledger.actionIndex : 0;
@@ -386,24 +417,20 @@ export class CandidateSaskuRoundOwner {
       const resolve = this.#resolveIdle; this.#resolveIdle = null; resolve?.();
     }
   }
-  async #promote(): Promise<void> {
+  async #promote(checkpoint?: SaskuRoundCheckpoint): Promise<void> {
     if (this.#closed || this.#round || !this.#shuffle.snapshot.complete) return;
     let round: PersistentSaskuRoundReceiver | undefined;
     try {
-      // The live shuffle owner has already verified each original before its
-      // durable receipt and is checkpoint-bound to the same session. Reuse its
-      // verified final deck; reopening after a restart still re-verifies all
-      // stored proofs in PersistentCandidateShuffleReceiver.open.
-      const history = captureSessionHistory(this.#options.session, this.#options.historyLimits);
-      const setup = recoverSetup(this.#options.roster.gameId, this.#options.setupRound,
-        this.#options.roster.seats, history.envelopes, this.#options.beaconRequired).coordinator;
+      // The shuffle owner derived setup and the final deck from this session's signed history.
+      const setup = this.#shuffle.completedSetup;
       const deck = this.#shuffle.finalDeck;
-      history.assertUnchanged();
-      round = PersistentSaskuRoundReceiver.recover({ setup, round: this.#options.round, deck,
+      const options = { setup, round: this.#options.round, deck,
         dealer: this.#options.dealer, schedule: this.#options.schedule,
         ...(this.#options.batchDeal === undefined ? {} : { batchDeal: this.#options.batchDeal }), session: this.#options.session,
-        sessionReceiver: this.#options.sessionReceiver }, this.#options.roundHistoryLimits);
-      history.assertUnchanged();
+        sessionReceiver: this.#options.sessionReceiver };
+      round = checkpoint === undefined
+        ? PersistentSaskuRoundReceiver.recover(options, this.#options.roundHistoryLimits)
+        : PersistentSaskuRoundReceiver.restoreTrustedCheckpoint(options, checkpoint);
       if (this.#closed) { round.close(); return; }
       this.#round = round; this.#shuffle.close();
     } catch (error) {

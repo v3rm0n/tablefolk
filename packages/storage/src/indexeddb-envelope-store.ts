@@ -1,6 +1,7 @@
 import { bytesEqual, bytesToHex } from "@p2pcards/crypto";
 import {
   decodeAndVerifyEnvelope,
+  verifyEnvelopeArtifact,
   parseGameId,
   parseHash256,
   parseIdentityPublicKey,
@@ -65,7 +66,7 @@ export class IndexedDbAuthoredEnvelopeStore implements AuthoredEnvelopeStore, Au
     const game = parseGameId(gameId);
     const author = parseIdentityPublicKey(sender);
     await this.#withCheckpoint<void>(game, author, "readwrite", (transaction, head, finish) => {
-      const candidate = create(head === null ? null : decodeAndVerifyEnvelope(head.canonicalBytes));
+      const candidate = create(head);
       const artifact = validateNextArtifact(candidate, game, author, head);
       const record: StoredTranscriptEnvelope = {
         game: bytesToHex(game), sender: bytesToHex(author), seq: artifact.envelope.seq,
@@ -301,7 +302,7 @@ function validateNextArtifact(
     if (bytes.length > MAX_AUTHORED_HISTORY_PAGE_BYTES) {
       throw new AuthoredEnvelopeStoreError("Authored envelope exceeds the byte limit");
     }
-    artifact = decodeAndVerifyEnvelope(bytes);
+    artifact = verifyEnvelopeArtifact(candidate, bytes);
   } catch (cause) {
     throw new AuthoredEnvelopeStoreError("Author callback returned an invalid envelope", { cause });
   }

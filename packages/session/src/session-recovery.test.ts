@@ -95,7 +95,8 @@ describe("established session chain recovery", () => {
   });
 
   it("rejects corrupted stored artifacts", () => {
-    const artifact = envelope(ALICE, 0, ZERO_HASH, "corrupt");
+    const signed = envelope(ALICE, 0, ZERO_HASH, "corrupt");
+    const artifact = { ...signed, canonicalBytes: signed.canonicalBytes };
     const lastIndex = artifact.canonicalBytes.length - 1;
     artifact.canonicalBytes[lastIndex] = artifact.canonicalBytes[lastIndex]! ^ 1;
 

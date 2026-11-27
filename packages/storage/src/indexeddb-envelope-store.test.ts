@@ -214,8 +214,8 @@ describe("IndexedDB authored envelope store", () => {
     const store = new IndexedDbAuthoredEnvelopeStore({ factory, keyRange: IDBKeyRange, databaseName: "callback-head-mutation" });
     const first = await new PersistentEnvelopeAuthor(GAME_ID, SECRET_KEY, store).author(content("zero"));
     await expect(store.appendNext(GAME_ID, PUBLIC_KEY, (head) => {
-      head!.hash.fill(0);
-      return signedEnvelope(1, head!.hash, "broken link");
+      const changed = head!.hash.fill(0);
+      return signedEnvelope(1, changed, "broken link");
     })).rejects.toThrow(/predecessor/);
     await store.appendNext(GAME_ID, PUBLIC_KEY, (head) => {
       head!.hash.fill(0);

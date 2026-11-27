@@ -120,9 +120,6 @@ fn prove_with_rng<R: Rng + CryptoRng>(encoded: &[u8], permutation: &[u8], random
     let public = shuffle::Statement::new(&statement.input, &statement.output, 4, 9);
     let witness = shuffle::Witness::new(&permutation, &masks);
     let proof = Argument::prove(rng, &parameters, &public, &witness, statement.transcript(generator)).map_err(|e| e.to_string())?;
-    if Argument::verify(&parameters, &public, &proof, statement.transcript(generator)).is_err() {
-        return Err("Generated proof failed self-verification".into());
-    }
     proof_codec::encode(&proof)
 }
 

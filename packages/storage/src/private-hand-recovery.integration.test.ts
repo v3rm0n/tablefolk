@@ -187,11 +187,10 @@ describe("private Sasku hand recovery with IndexedDB", () => {
   it("rejects private reads after a terminal durable-receipt failure without deleting the saved key", async () => {
     const round = await durableRound();
     const { fixture: f, game, store, secrets, identity, key } = round;
-    const persist = store.persistAcceptedEnvelope.bind(store);
-    const fault = vi.spyOn(store, "persistAcceptedEnvelope").mockImplementationOnce(async (received) => {
-      const receipt = await persist(received);
-      received.hash.fill(0xff);
-      return receipt;
+    const receive = round.receiver.receive.bind(round.receiver);
+    const fault = vi.spyOn(round.receiver, "receive").mockImplementationOnce(async (received) => {
+      const receipt = await receive(received);
+      return { ...receipt, received: { ...received, canonicalBytes: received.canonicalBytes.fill(0xff) } };
     });
     try {
       expect(game.readPrivateHand(identity, key)).toBeNull();
@@ -246,7 +245,7 @@ async function durableRound() {
       setup, round: fixture.round, deck: fixture.deck, schedule: fixture.options.schedule, dealer: 3,
       session: chains, sessionReceiver: receiver,
     });
-    return { fixture, options, store, secrets, chains, game, identity, key, messages: [...fixture.setupEnvelopes] };
+    return { fixture, options, store, secrets, chains, receiver, game, identity, key, messages: [...fixture.setupEnvelopes] };
   } catch (cause) {
     await Promise.all([store.close(), secrets.close()]);
     throw cause;

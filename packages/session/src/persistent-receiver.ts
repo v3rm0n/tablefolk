@@ -1,6 +1,6 @@
 import { bytesEqual } from "@p2pcards/crypto";
 import {
-  decodeAndVerifyEnvelope,
+  verifyEnvelopeArtifact,
   type EnvelopeArtifact,
 } from "@p2pcards/protocol";
 
@@ -79,7 +79,7 @@ export class PersistentSessionReceiver {
   receive(candidate: EnvelopeArtifact): Promise<PersistentSessionReceiveResult> {
     let received: EnvelopeArtifact;
     try {
-      received = decodeAndVerifyEnvelope(candidate.canonicalBytes);
+      received = verifyEnvelopeArtifact(candidate);
     } catch (cause) {
       return Promise.reject(
         new PersistentSessionReceiverError("Received envelope artifact is invalid", { cause }),
@@ -158,7 +158,7 @@ function snapshotStoredArtifact(record: DurableEnvelopeRecord): EnvelopeArtifact
 
 function snapshotArtifact(candidate: EnvelopeArtifact, message: string): EnvelopeArtifact {
   try {
-    return decodeAndVerifyEnvelope(candidate.canonicalBytes);
+    return verifyEnvelopeArtifact(candidate);
   } catch (cause) {
     throw new PersistentSessionReceiverError(message, { cause });
   }

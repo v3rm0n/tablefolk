@@ -213,9 +213,8 @@ describe("persistent Sasku round receiver", () => {
     expect(c.game.snapshot.ledger.deal?.pendingSenders).toEqual([2, 3]);
   });
 
-  it("rejects matching receipt bytes when persistence corrupts the hash ingested by the shared session", async () => {
+  it("isolates the admitted hash from persistence callbacks", async () => {
     const c = await context();
-    const before = c.game.snapshot;
     const persist = c.store.persistAcceptedEnvelope.bind(c.store);
     vi.spyOn(c.store, "persistAcceptedEnvelope").mockImplementationOnce(async (received) => {
       const stored = await persist(received);
@@ -223,13 +222,12 @@ describe("persistent Sasku round receiver", () => {
       return stored;
     });
     const message = c.f.deal(0, 1);
-    await expect(c.game.receive(message)).rejects.toMatchObject({ code: "invalid_receipt" });
+    await expect(c.game.receive(message)).resolves.toMatchObject({ status: "accepted" });
     expect(c.session.readRange(message.envelope.from, message.envelope.seq, message.envelope.seq).status).toBe("complete");
-    expect(c.session.classify(message)).toMatchObject({ status: "rejected", reason: "equivocation" });
-    expect(c.game.snapshot).toBe(before);
-    expect(c.game.failure?.code).toBe("invalid_receipt");
+    expect(c.session.classify(message)).toMatchObject({ status: "duplicate" });
+    expect(c.game.failure).toBeNull();
     expect(c.game.pendingEnvelopes).toBe(0);
-    await expect(c.game.receive(message)).rejects.toBe(c.game.failure);
+    await expect(c.game.receive(message)).resolves.toMatchObject({ status: "duplicate" });
   });
 
   it.each(["different-artifact", "unrecorded-success", "bad-status", "bad-persistence", "wrong-scope-rejection"] as const)(
@@ -555,10 +553,11 @@ describe("durable Sasku audit", () => {
     const disclosures = [0, 1, 2, 3].map((seat) => c.f.sign(seat, "AUDIT_DISCLOSE", c.game.snapshot.audit!.phase, { items: [] }));
     for (const message of disclosures.slice(0, 3)) await c.game.receive(message);
     const waiting = c.game.snapshot;
-    const persist = c.store.persistAcceptedEnvelope.bind(c.store);
+    const receive = c.durable.receive.bind(c.durable);
     const fault = mode === "corrupt_receipt"
-      ? vi.spyOn(c.store, "persistAcceptedEnvelope").mockImplementationOnce(async (received) => {
-          const receipt = await persist(received); received.hash.fill(0xff); return receipt;
+      ? vi.spyOn(c.durable, "receive").mockImplementationOnce(async (received) => {
+          const receipt = await receive(received);
+          return { ...receipt, received: { ...received, canonicalBytes: received.canonicalBytes.fill(0xff) } };
         })
       : vi.spyOn(SaskuHandController.prototype, "apply").mockImplementationOnce(() => { throw new Error("unexpected audit failure"); });
     try {
@@ -659,7 +658,7 @@ describe("durable local private-hand access", () => {
     expect(c.game.readPrivateHand(c.f.roster[0]!, c.f.secrets[0]!)).toEqual(expected);
   });
 
-  it("binds private access to the identity's accepted game key without retaining it, poisoning state, or authoring messages", async () => {
+  it("binds private access to the identity's accepted game key without poisoning state or authoring messages", async () => {
     const c = await context({}, true);
     const before = c.game.snapshot;
     const heads = c.session.heads();

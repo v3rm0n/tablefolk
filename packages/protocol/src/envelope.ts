@@ -101,6 +101,7 @@ const UNSIGNED_KEYS = Object.freeze([
 ] as const);
 
 const SIGNED_KEYS = Object.freeze([...UNSIGNED_KEYS, "sig"] as const);
+const verifiedArtifacts = new WeakMap<EnvelopeArtifact, number>();
 const MESSAGE_TYPE_SET: ReadonlySet<string> = new Set(ENVELOPE_MESSAGE_TYPES);
 
 export function encodeUnsignedEnvelope(value: UnsignedEnvelope): CanonicalCbor {
@@ -112,7 +113,8 @@ export function signEnvelope(
   value: UnsignedEnvelope,
   secretKey: Ed25519SecretKey,
 ): EnvelopeArtifact {
-  const envelope = parseUnsignedEnvelope(toUnsignedValue(value));
+  const parsed = parseUnsignedEnvelope(toUnsignedValue(value));
+  const envelope = { ...parsed, body: decodeCanonical(encodeCanonical(parsed.body)) };
   const signerPublicKey = deriveEd25519PublicKey(secretKey);
   if (!bytesEqual(envelope.from, signerPublicKey)) {
     throw new EnvelopeValidationError(
@@ -130,8 +132,11 @@ export function signEnvelope(
 
 export function decodeAndVerifyEnvelope(bytes: Uint8Array): EnvelopeArtifact {
   let envelope: SignedEnvelope;
+  let canonicalBytes: CanonicalCbor;
   try {
-    envelope = parseSignedEnvelope(decodeCanonical(bytes));
+    if (!(bytes instanceof Uint8Array) || bytes.constructor !== Uint8Array) throw new TypeError("Envelope bytes must be a Uint8Array");
+    canonicalBytes = new Uint8Array(bytes) as CanonicalCbor;
+    envelope = parseSignedEnvelope(decodeCanonical(canonicalBytes));
   } catch (cause) {
     if (cause instanceof EnvelopeValidationError) {
       throw cause;
@@ -146,16 +151,40 @@ export function decodeAndVerifyEnvelope(bytes: Uint8Array): EnvelopeArtifact {
     throw new EnvelopeValidationError("INVALID_SIGNATURE", "Envelope signature is invalid");
   }
 
-  return createArtifact(envelope);
+  return createArtifact(envelope, canonicalBytes);
 }
 
-function createArtifact(envelope: SignedEnvelope): EnvelopeArtifact {
-  const canonicalBytes = encodeCanonical(toSignedValue(envelope));
-  return Object.freeze({
-    envelope: Object.freeze(envelope),
-    canonicalBytes,
-    hash: parseHash256(hashEnvelope(canonicalBytes)),
+/** Reuse an artifact minted in this process. Structural lookalikes must verify their bytes. */
+export function verifyEnvelopeArtifact(candidate: EnvelopeArtifact, checkedBytes?: Uint8Array): EnvelopeArtifact {
+  return verifiedArtifacts.has(candidate) ? candidate : decodeAndVerifyEnvelope(checkedBytes ?? candidate.canonicalBytes);
+}
+
+/** Obtain a verified artifact's encoded size without copying its byte buffer. */
+export function verifiedEnvelopeByteLength(candidate: EnvelopeArtifact): number | undefined {
+  return verifiedArtifacts.get(candidate);
+}
+
+function createArtifact(
+  envelope: SignedEnvelope,
+  canonicalBytes = encodeCanonical(toSignedValue(envelope)),
+): EnvelopeArtifact {
+  const hash = parseHash256(hashEnvelope(canonicalBytes));
+  // Typed arrays cannot be frozen. Detach every exposed byte view from the verified snapshot.
+  const header = Object.freeze({
+    ...envelope,
+    get game() { return parseGameId(envelope.game); },
+    get from() { return parseIdentityPublicKey(envelope.from); },
+    get prev() { return parseHash256(envelope.prev); },
+    get sig() { return parseEd25519Signature(envelope.sig); },
+    get body() { return snapshotCborValue(envelope.body); },
+  });
+  const artifact = Object.freeze({
+    envelope: header,
+    get canonicalBytes() { return canonicalBytes.slice() as CanonicalCbor; },
+    get hash() { return parseHash256(hash); },
   }) as EnvelopeArtifact;
+  verifiedArtifacts.set(artifact, canonicalBytes.length);
+  return artifact;
 }
 
 function parseUnsignedEnvelope(value: CborValue): UnsignedEnvelope {
@@ -177,7 +206,7 @@ function parseUnsignedEnvelope(value: CborValue): UnsignedEnvelope {
     round: requireUnsignedInteger(record["round"], "round"),
     phase: requireNonEmptyText(record["phase"], "phase"),
     type: requireMessageType(record["type"]),
-    body: snapshotCborValue(record["body"]!),
+    body: record["body"]!,
   };
 }
 
@@ -191,7 +220,14 @@ function parseSignedEnvelope(value: CborValue): SignedEnvelope {
 }
 
 function snapshotCborValue(value: CborValue): CborValue {
-  return decodeCanonical(encodeCanonical(value));
+  if (value instanceof Uint8Array) return value.slice();
+  if (Array.isArray(value)) return value.map(snapshotCborValue);
+  if (isCborMap(value)) {
+    const copy: Record<string, CborValue> = Object.create(null);
+    for (const key of Object.keys(value)) copy[key] = snapshotCborValue(value[key]!);
+    return copy;
+  }
+  return value;
 }
 
 function toUnsignedValue(envelope: UnsignedEnvelope): CborMap {

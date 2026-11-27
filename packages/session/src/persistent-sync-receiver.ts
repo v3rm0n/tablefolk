@@ -1,6 +1,8 @@
 import { bytesEqual } from "@p2pcards/crypto";
 import {
+  verifiedEnvelopeByteLength,
   decodeAndVerifyEnvelope,
+  verifyEnvelopeArtifact,
   decodeSyncRequestBody,
   decodeSyncResponseBody,
   encodeSyncRequestBody,
@@ -61,6 +63,7 @@ export type PersistentSyncReceiveResult = SyncReceiptProgress & (
 
 interface PendingResponse {
   readonly bytes: Uint8Array;
+  readonly artifact?: EnvelopeArtifact;
   readonly request: SyncRequestBody;
   readonly signal: SyncCancellationSignal | undefined;
   readonly onAbort: () => void;
@@ -134,6 +137,7 @@ export class PersistentSyncReceiver {
       const promise = new Promise<PersistentSyncReceiveResult>((complete) => { resolve = complete; });
       const job: PendingResponse = {
         bytes: bytes.slice(),
+        ...(verifiedEnvelopeByteLength(candidate) !== undefined ? { artifact: candidate } : {}),
         request: normalized,
         signal,
         resolve,
@@ -208,7 +212,7 @@ export class PersistentSyncReceiver {
       if (job.signal?.aborted) {
         return wasCancelled();
       }
-      const outer = decodeAndVerifyEnvelope(job.bytes);
+      const outer = job.artifact ?? decodeAndVerifyEnvelope(job.bytes);
       if (outer.envelope.type !== "SYNC_RESP") {
         return stop("wrong_type");
       }
@@ -257,8 +261,8 @@ export class PersistentSyncReceiver {
         if (chain.status === "rejected") {
           return stop(chain.reason);
         }
-        const receipt = await this.#history.receive(decodeAndVerifyEnvelope(artifact.canonicalBytes));
-        const returned = decodeAndVerifyEnvelope(receipt.received.canonicalBytes);
+        const receipt = await this.#history.receive(artifact);
+        const returned = verifyEnvelopeArtifact(receipt.received);
         if (!bytesEqual(returned.canonicalBytes, artifact.canonicalBytes)) {
           throw new Error("History receiver returned a receipt for a different artifact");
         }
@@ -290,7 +294,7 @@ export class PersistentSyncReceiver {
   }
 
   #requireCommitted(expected: EnvelopeArtifact, returned: EnvelopeArtifact): void {
-    const snapshot = decodeAndVerifyEnvelope(returned.canonicalBytes);
+    const snapshot = verifyEnvelopeArtifact(returned);
     if (!bytesEqual(expected.canonicalBytes, snapshot.canonicalBytes) ||
         this.#registry.classify(expected).status !== "duplicate") {
       throw new Error("Durable receiver did not commit the exact artifact to the shared registry");

@@ -548,7 +548,7 @@ describe("Sasku round inbox budgets and isolation", () => {
     expect(inbox.pendingBytes).toBe(0);
   });
 
-  it("copies remote and payload views on admission and detaches receipt artifacts from dependencies and later callers", async () => {
+  it("copies remote and payload views and reuses isolated receipt artifacts", async () => {
     const c = await context({}, undefined, false);
     const inbox = inboxFor(c);
     const first = await native(c, c.f.deal(0, 1));
@@ -586,7 +586,7 @@ describe("Sasku round inbox budgets and isolation", () => {
     for (const [index, original] of [first, second].entries()) {
       const result = results[index]!;
       expect(result.received).toEqual(decodeAndVerifyEnvelope(original.canonicalBytes));
-      expect(result.received).not.toBe(receipts[index]!.received);
+      expect(result.received).toBe(receipts[index]!.received);
       expect(Object.isFrozen(result)).toBe(true);
       receipts[index]!.received.canonicalBytes.fill(0x99);
       expect(result.received.canonicalBytes).toEqual(original.canonicalBytes);
