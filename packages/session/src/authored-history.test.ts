@@ -159,7 +159,7 @@ describe("authored history replay", () => {
     });
     source.readAuthoredHead.mockClear();
     await expect(replayAuthoredHistory(source, GAME, SELF, send, {
-      signal: { aborted: true, addEventListener() {}, removeEventListener() {} },
+      signal: { aborted: true },
     })).resolves.toMatchObject({ status: "cancelled", checkpoint: null });
     expect(source.readAuthoredHead).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
@@ -203,7 +203,7 @@ function chain(count: number): EnvelopeArtifact[] {
   for (let seq = 0; seq < count; seq += 1) {
     records.push(signEnvelope({
       v: 1, game: GAME, from: SELF, seq, prev: records.at(-1)?.hash ?? ZERO,
-      round: 1, phase: "setup.keys", type: "WITNESS", body: { heads: [] },
+      round: 1, phase: "setup.keys", type: "VIOLATION", body: { heads: [] },
     }, SECRET));
   }
   return records;

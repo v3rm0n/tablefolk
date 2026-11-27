@@ -61,7 +61,7 @@ it("enforces peer binding, budgets, unsupported controls, and cancellation", asy
   const c = await fixture(false, 1);
   await expect(c.owner.receive(c.f.roster[2]!, c.shuffles[1]!.canonicalBytes)).rejects.toThrow(/sender/);
   await expect(c.owner.receive(c.f.roster[0]!, c.shuffles[0]!.canonicalBytes)).rejects.toThrow(/peer/);
-  const control = c.f.sign(1, "SYNC_REQ", "control.sync", { from: c.f.roster[0]!, from_seq: 0, to_seq: 0 });
+  const control = c.f.sign(1, "VIOLATION", "control.equivocation", {});
   await expect(c.owner.receive(c.f.roster[1]!, control.canonicalBytes)).rejects.toThrow(/Unsupported/);
   const pending = c.owner.receive(c.f.roster[3]!, c.shuffles[3]!.canonicalBytes);
   const rejected = expect(pending).rejects.toThrow(/closed/);

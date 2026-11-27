@@ -7,6 +7,7 @@ import scoring from "../../../packages/rules-sasku/src/scoring.ts?raw";
 import match from "./sasku-match.ts?raw";
 
 // The roster signatures bind this match policy and rules implementation.
+// Keep the existing profile digest so saved rosters survive the transport update.
 export const FIRST_ROUND = 1;
 export const FIRST_DEALER = 3;
 export const FIRST_DEAL = Object.freeze([0, 1, 2, 3].map(to => Object.freeze({ to, count: 9 })));

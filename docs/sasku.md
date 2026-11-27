@@ -156,42 +156,30 @@ Rust/WASM and reuse a single persistent crypto worker across prove, verify, and
 DLEQ calls, zeroizing private witness buffers in `finally` and respawning only
 on timeout or error.)*
 
-### Readiness barrier & sync boundaries
+### Catch-up and disconnects
 
-- **Browser readiness exchange (current `main` vs. target `#4`):** on `main`,
-  each new authenticated connection replays its full original authored history
-  (and only the verified, acknowledged suffix while that connection stays
-  alive), then exchanges ephemeral generation-bound **prefix/ack** markers
-  (`PeerHistoryBarrier`) outside the signed transcript. All three peers must
-  satisfy this barrier before local drivers author new contributions.
-  Disconnecting pauses new local actions; reconnecting replays original signed
-  bytes instead of re-signing. In `#4`, ephemeral unchained `HEADS` /
-  `SYNC_REQ` / `SYNC_RESP` replace both chained `WITNESS`/`SYNC_*` and
-  per-message `PeerHistoryBarrier` RTT stalls, enabling automatic mid-round
-  reconnect and relay-assisted catch-up.
-- **Reload recovery (current `main` vs. target `#3`):** on `main`, restoring a
-  table validates the finalized roster, re-verifies complete sender chains,
-  setup, and every stored shuffle proof without writing to storage, and checks
-  that the local IndexedDB game key matches its signed `KEY_SHARE`. In `#3`, a
-  trusted local IndexedDB reload checkpoint keyed by the four
-  `(seat, seq, hash)` transcript heads enables immediate restore while keeping
-  the full signed transcript for peer sync and on-demand full verification.
-- **Owner-coordinated `SYNC_REQ`/`SYNC_RESP` (current `main`):**
-  `CandidateSaskuRoundOwner` currently supports bounded chained control-scope
-  sync receipt and serving (`phase: "control.sync"`, `<= 32` originals,
-  `<= 64 KiB` per envelope) on the same queue; automatic ephemeral catch-up is
-  tracked in `#4`.
+- Each authenticated channel generation exchanges ephemeral `HEADS`. A peer
+  missing signed history requests the original with `SYNC_REQ` and verifies
+  the signed envelope in `SYNC_RESP` before feeding it into the same lobby
+  or round receiver as live traffic. Any authenticated roster peer with a
+  copy can serve it. After catch-up, ordered live envelopes need no application
+  acknowledgement.
+- A disconnect pauses new moves and shows which players are missing. If at
+  least two players remain, they can each choose **Vote to end table**. The
+  table ends if all connected players vote for the same set of missing seats.
+  Until then, players can reconnect using the same identity and continue.
+- **Reload recovery:** restoring a table validates the finalized roster,
+  re-verifies stored sender chains, setup, and shuffle proofs, and checks the
+  local IndexedDB game key against its signed `KEY_SHARE`. A trusted local
+  checkpoint keyed to the four `(seat, seq, hash)` transcript heads is tracked
+  in #3.
 
 ---
 
 ## 5. Known Limitations & Remaining Work
 
-- **Performance (`#2`, `#3`, `#5`):** shuffle remasking and DLEQ still run
-  in JS. Envelopes are re-verified across internal layers and on reload.
-- **Connectivity & reconnect (`#4`, `#7`):** STUN is configured without TURN,
-  so strict NATs/firewalls can block direct WebRTC links; all four original
-  authors must currently stay online because ephemeral `HEADS`/`SYNC_*`
-  catch-up and human-triggered abort voting are not yet wired into the browser.
+- **Connectivity (#7):** STUN is configured without TURN, so strict NATs and
+  firewalls can block direct WebRTC links.
 - **Offline verification & CSP (`#8`):** in-browser CBOR transcript export and
   verification (omitting `HELLO`) and strict static CSP headers are not yet
   implemented.

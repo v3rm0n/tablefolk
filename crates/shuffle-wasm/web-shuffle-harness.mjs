@@ -10,7 +10,7 @@ import { CandidateShuffleLedger } from "../../packages/engine/src/candidate-shuf
 import { roundRevealFixture } from "../../packages/engine/src/round-reveal.test-fixture.ts";
 import { SASKU_DECK_SPEC } from "../../packages/rules-sasku/src/index.ts";
 import { encodeCandidateShuffleProof } from "../../packages/deck/src/index.ts";
-import { parseHash256, encodeSyncRequestBody, encodeSyncResponseBody } from "../../packages/protocol/src/index.ts";
+import { parseHash256, encodeChannelControl, decodeChannelControl } from "../../packages/protocol/src/index.ts";
 globalThis.runWebShuffleChecks = async () => {
     const f = roundRevealFixture({ seats: 4, deckSpec: SASKU_DECK_SPEC });
     const client = new CandidateShuffleClient();
@@ -120,17 +120,7 @@ async function durableChecks(client) {
       game = await recoverCandidateShuffledSaskuRound({ ...roundOptions, session, sessionReceiver: durable });
       if (JSON.stringify(game.snapshot) !== completed) throw new Error("Completed hand recovery differs");
       game.close();
-      const controlOwner = await CandidateSaskuRoundOwner.open({ ...roundOptions, session, sessionReceiver: durable });
-      try {
-        const requestBody = { from: f.roster[1], fromSeq: 3, toSeq: 3 };
-        const outgoing = await controlOwner.authorSyncRequest(authors[0], requestBody);
-        if (outgoing.status !== "accepted") throw new Error("Owned request authoring failed");
-        const incoming = await authors[2].author({ type: "SYNC_REQ", round: f.round, phase: "control.sync", body: encodeSyncRequestBody(requestBody) });
-        await controlOwner.receiveSyncRequest(f.roster[2], incoming.canonicalBytes);
-        const served = await controlOwner.authorSyncResponse(authors[0], f.roster[2], incoming);
-        if (served.status !== "accepted" || served.received.envelope.seq !== outgoing.received.envelope.seq + 1) throw new Error("Owned response authoring failed");
-      } finally { controlOwner.close(); }
-      const coordinated = await replayWithOwner(f, options, client, records, completed, authors[3]);
+      const coordinated = await replayWithOwner(f, options, client, records, completed);
       return { ...result, hand: { privateHandSizes: hands.map(h => Object.keys(h.dealt).length), plays: 36, audit: game.snapshot.audit.result.status, recovered: true }, coordinated };
     } finally { game.close(); }
   } finally {
@@ -139,7 +129,7 @@ async function durableChecks(client) {
   }
 }
 
-async function replayWithOwner(f, options, client, records, completed, remoteAuthor) {
+async function replayWithOwner(f, options, client, records, completed) {
   const databaseName = `candidate-owner-${crypto.randomUUID()}`;
   const store = new IndexedDbSessionStore({ databaseName });
   const session = new SessionChainRegistry(f.gameId, f.roster);
@@ -155,10 +145,10 @@ async function replayWithOwner(f, options, client, records, completed, remoteAut
     if (results.some(r => r.status !== "accepted") || owner.snapshot.phase !== "round" || JSON.stringify(owner.snapshot.state) !== completed) throw new Error("Coordinated replay differs");
     if (owner.pendingBytes !== 0 || owner.pendingEnvelopes !== 0) throw new Error("Owner retained pending work");
     const original = records.map(r => r.artifact).find(a => a.envelope.type === "SHUFFLE" && a.envelope.from.every((byte, i) => byte === f.roster[0][i]));
-    const request = { from: f.roster[0], fromSeq: original.envelope.seq, toSeq: original.envelope.seq };
-    const response = await remoteAuthor.author({ type: "SYNC_RESP", round: f.round, phase: "control.sync", body: encodeSyncResponseBody({ envelopes: [original] }) });
-    const synced = await owner.receiveSyncResponse(f.roster[3], response.canonicalBytes, request);
-    if (synced.status !== "range_received" || synced.outerStatus !== "accepted" || synced.receipts[0] !== "duplicate") throw new Error("Coordinated sync receipt failed");
+    const frame = encodeChannelControl({ type: "SYNC_RESP", id: 0, body: { envelopes: [original] } });
+    const response = decodeChannelControl(frame);
+    const synced = await owner.receiveHistory(response.body.envelopes[0]);
+    if (synced.status !== "duplicate") throw new Error("Coordinated sync replay was not idempotent");
     return { reverseHistoryEnvelopes: results.length, audit: owner.snapshot.state.audit.result.status, pending: owner.pendingEnvelopes, sync: synced.status };
   } finally {
     owner?.close(); await store.close();

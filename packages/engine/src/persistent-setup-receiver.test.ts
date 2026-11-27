@@ -67,7 +67,7 @@ describe("persistent setup receiver", () => {
 
   it("preserves semantic state on a real chain gap, then accepts the original after its native predecessor", async () => {
     const c = persistentSetupFixture();
-    const predecessor = await c.authors[1]!.author({ round: c.round, phase: "setup.keys", type: "WITNESS", body: { heads: [] } });
+    const predecessor = await c.authors[1]!.author({ round: c.round, phase: "setup.keys", type: "VIOLATION", body: { heads: [] } });
     const key = await keyEnvelope(c, 1);
     const before = c.receiver.snapshot;
     await expect(c.receiver.receive(key)).resolves.toMatchObject({
@@ -84,7 +84,7 @@ describe("persistent setup receiver", () => {
   it("preserves semantic state on a durable equal-sequence conflict", async () => {
     const c = persistentSetupFixture();
     const key = await keyEnvelope(c, 1);
-    const conflict = signEnvelope({ ...key.envelope, type: "WITNESS", body: { heads: [] } }, c.identities[1]!.secretKey);
+    const conflict = signEnvelope({ ...key.envelope, type: "VIOLATION", body: { heads: [] } }, c.identities[1]!.secretKey);
     await c.store.persistAcceptedEnvelope(conflict);
     const before = c.receiver.snapshot;
     await expect(c.receiver.receive(key)).resolves.toMatchObject({

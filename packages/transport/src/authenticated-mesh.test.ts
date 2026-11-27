@@ -6,7 +6,8 @@ import {
 } from "@p2pcards/crypto";
 import {
   decodeAndVerifyEnvelope,
-  encodeSyncResponseBody,
+  decodeChannelControl,
+  encodeChannelControl,
   parseGameId,
   parseHash256,
   parseIdentityPublicKey,
@@ -16,10 +17,10 @@ import {
 } from "@p2pcards/protocol";
 import {
   PersistentSessionReceiver,
-  PersistentSyncReceiver,
+  preflightSyncResponse,
   SessionChainRegistry,
   type AcceptedEnvelopeStore,
-  type PersistentSyncReceiveResult,
+  type PersistentSessionReceiveResult,
 } from "@p2pcards/session";
 import { describe, expect, it, vi } from "vitest";
 
@@ -254,26 +255,21 @@ describe("authenticated full-mesh facade", () => {
       },
     };
     const controls = new PersistentSessionReceiver(chains, store);
-    const ranges = new PersistentSyncReceiver(chains, controls, {
-      receive: async (received) => {
-        // Deliberately tiny transport-test semantics, not a production game dispatcher.
-        if (received.envelope.type !== "ACTION" ||
-            JSON.stringify(received.envelope.body) !== '{"fixture":true}') {
-          return { status: "rejected", reason: "unsupported_history", received };
-        }
-        return controls.receive(received);
-      },
-    });
     const requested = { from: CAROL.publicKey, fromSeq: 0, toSeq: 0 };
     const bobSync = synchronizer();
-    let result: PersistentSyncReceiveResult | undefined;
+    let result: PersistentSessionReceiveResult | undefined;
     const peers = pair({
       synchronizePeer: (context) => {
         context.onMessage(async (payload) => {
-          result = await ranges.receiveResponse(decodeAndVerifyEnvelope(payload), requested, { signal: context.signal });
-          if (result.status !== "range_received") {
-            throw new Error("Requested history was not received");
+          const control = decodeChannelControl(payload);
+          if (control.type !== "SYNC_RESP" || control.id !== 0 || !control.body) throw new Error("Expected requested history");
+          const preflight = preflightSyncResponse(chains, requested, control.body);
+          if (preflight.status !== "valid") throw new Error("Invalid history");
+          const [received] = preflight.response.envelopes;
+          if (received?.envelope.type !== "ACTION" || JSON.stringify(received.envelope.body) !== '{"fixture":true}') {
+            throw new Error("Unexpected historical action");
           }
+          result = await controls.receive(received);
           rangeReceived.resolve();
         });
         return readinessDecision.promise;
@@ -284,19 +280,17 @@ describe("authenticated full-mesh facade", () => {
       v: 1, game: GAME_ID, from: CAROL.publicKey, seq: 0, prev: parseHash256(new Uint8Array(32)),
       round: 1, phase: "play", type: "ACTION", body: { fixture: true },
     }, CAROL.secretKey);
-    const outer = signEnvelope({
-      v: 1, game: GAME_ID, from: BOB.publicKey, seq: 0, prev: parseHash256(new Uint8Array(32)),
-      round: 1, phase: "play", type: "SYNC_RESP", body: encodeSyncResponseBody({ envelopes: [historical] }),
-    }, BOB.secretKey);
-    await bobSync.attempts[0]!.context.send(outer.canonicalBytes);
+    await bobSync.attempts[0]!.context.send(encodeChannelControl({
+      type: "SYNC_RESP", id: 0, body: { envelopes: [historical] },
+    }));
     await historyStarted.promise;
     expect(chains.readRange(CAROL.publicKey, 0, 0).status).toBe("missing");
     expect(peers.alice.readyPeers).toEqual([]);
     durableCommit.resolve();
     await rangeReceived.promise;
-    expect(result).toMatchObject({ status: "range_received", outerStatus: "accepted", receipts: ["accepted"] });
+    expect(result).toMatchObject({ status: "accepted" });
     expect(chains.readRange(CAROL.publicKey, 0, 0).status).toBe("complete");
-    expect(records.size).toBe(2);
+    expect(records.size).toBe(1);
     expect(peers.alice.readyPeers).toEqual([]);
     expect(peers.aliceMessages).toEqual([]);
     await expect(peers.alice.send(BOB.publicKey, new Uint8Array([1]))).rejects.toThrow(/synchronization/);

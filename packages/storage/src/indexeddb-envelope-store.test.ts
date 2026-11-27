@@ -7,7 +7,7 @@ import {
 } from "@p2pcards/crypto";
 import {
   decodeAndVerifyEnvelope,
-  decodeWitnessBody,
+  decodeHeadsBody,
   parseGameId,
   parseHash256,
   parseIdentityPublicKey,
@@ -273,13 +273,13 @@ describe("IndexedDB authored envelope store", () => {
     await store.close();
   });
 
-  it("replays originals across restart so the next chained control needs no gap exemption", async () => {
+  it("replays originals across restart so the next signed envelope needs no gap exemption", async () => {
     const factory = new IDBFactory();
     let source = new IndexedDbAuthoredEnvelopeStore({ factory, keyRange: IDBKeyRange, databaseName: "replay-source" });
     const author = new PersistentEnvelopeAuthor(GAME_ID, SECRET_KEY, source);
     const records = [
-      await author.author({ round: 0, phase: "lobby", type: "WITNESS", body: { heads: [] } }),
-      await author.author({ round: 0, phase: "lobby", type: "WITNESS", body: { heads: [] } }),
+      await author.author({ round: 0, phase: "lobby", type: "VIOLATION", body: { heads: [] } }),
+      await author.author({ round: 0, phase: "lobby", type: "VIOLATION", body: { heads: [] } }),
     ];
     await source.close();
     source = new IndexedDbAuthoredEnvelopeStore({ factory, keyRange: IDBKeyRange, databaseName: "replay-source" });
@@ -291,8 +291,7 @@ describe("IndexedDB authored envelope store", () => {
     const submitted: Uint8Array[] = [];
     const replayed = await replayAuthoredHistory(source, GAME_ID, PUBLIC_KEY, async (bytes) => {
       const original = decodeAndVerifyEnvelope(bytes);
-      decodeWitnessBody(original.envelope.body);
-      // Historical controls are validated and stored, not re-executed as network requests.
+      decodeHeadsBody(original.envelope.body);
       const received = await receiver.receive(original);
       expect(received.status).toBe("accepted");
       submitted.push(bytes);
@@ -301,7 +300,7 @@ describe("IndexedDB authored envelope store", () => {
     expect(submitted).toEqual(records.map(({ canonicalBytes }) => canonicalBytes));
     expect((await source.readAuthoredHead(GAME_ID, PUBLIC_KEY))?.hash).toEqual(records[1]!.hash);
     const next = await new PersistentEnvelopeAuthor(GAME_ID, SECRET_KEY, source).author({
-      round: 0, phase: "lobby", type: "SYNC_REQ", body: { from: others[0]!, from_seq: 0, to_seq: 0 },
+      round: 0, phase: "lobby", type: "VIOLATION", body: { from: others[0]!, from_seq: 0, to_seq: 0 },
     });
     await expect(receiver.receive(next)).resolves.toMatchObject({ status: "accepted" });
     expect(next.envelope).toMatchObject({ seq: 2, prev: records[1]!.hash });

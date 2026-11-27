@@ -1,13 +1,15 @@
 import { LiveRound } from "./live-round";
-import { PeerHistoryBarrier } from "./peer-history-barrier";
+import { HistorySync } from "./history-sync";
+import { TableAbortVote } from "./table-abort";
 import type { SaskuActionIntent } from "@p2pcards/game-sasku";
 import { bytesEqual, bytesToHex, hexToBytes, importEd25519PublicKey, randomBytes, type Ed25519KeyPair } from "@p2pcards/crypto";
 import {
+  CHANNEL_CONTROL_PREFIX, MAX_GAME_ENVELOPE_BYTES, MAX_HISTORY_ENVELOPE_BYTES, decodeChannelControl, encodeChannelControl,
   decodeAndVerifyEnvelope, decodeJoinBody, decodeRosterBody, decodeReadyBody, deriveSignalingRoomId,
-  encodeJoinBody, encodeReadyBody, encodeRosterBody, parseGameId, parseHash256, parseIdentityPublicKey,
-  type EnvelopeArtifact, type IdentityPublicKey,
+  encodeJoinBody, encodeReadyBody, encodeRosterBody, parseGameId, parseIdentityPublicKey,
+  type ChannelControl, type EnvelopeArtifact, type IdentityPublicKey,
 } from "@p2pcards/protocol";
-import { LobbyChainRegistry, PersistentEnvelopeAuthor, PersistentLobbyReceiver, recoverLobby, replayAuthoredHistory, type ChainHead, type EnvelopeContent } from "@p2pcards/session";
+import { LobbyChainRegistry, PersistentEnvelopeAuthor, PersistentLobbyReceiver, recoverLobby, type ChainHead, type EnvelopeContent } from "@p2pcards/session";
 import { IndexedDbAuthoredEnvelopeStore, IndexedDbIdentityStore, IndexedDbSessionStore, type IndexedDbStoreOptions } from "@p2pcards/storage";
 import { TrysteroNostrSignalingAdapter, type MeshPeerConnectionFactory } from "@p2pcards/transport";
 
@@ -33,18 +35,22 @@ interface Room {
   blocked: boolean;
   recordCount: number;
   releaseLease: (() => void) | null;
-  readonly flushes: Map<string, { generation: number; dirty: boolean }>;
-  readonly sentThrough: Map<string, { generation: number; checkpoint: ChainHead }>;
-  readonly ackWaiters: Map<string, Set<() => void>>;
+  ownJoin: EnvelopeArtifact | null;
+  headsTimer: ReturnType<typeof setInterval> | null;
+  readonly votes: TableAbortVote;
+  ended: number | null;
   game: LiveRound | null;
   playing: boolean;
   localReady: boolean;
   autoReadyRequested: boolean;
   readonly peerReady: Map<string, { generation: number; ready: boolean }>;
-  readonly barriers: Map<string, { generation: number; barrier: PeerHistoryBarrier }>;
+  readonly sync: Map<string, { generation: number; history: HistorySync }>;
   readonly roundCompletions: Map<string, Map<number, { generation: number; marker: Uint8Array }>>;
   readonly sentRoundCompletions: Map<string, Map<number, { generation: number; marker: Uint8Array }>>;
   readonly early: EnvelopeArtifact[];
+  readonly restoredViolations: EnvelopeArtifact[];
+  readonly lobbyPending: EnvelopeArtifact[];
+  evidence: readonly [EnvelopeArtifact, EnvelopeArtifact] | null;
   readonly paths: Map<string, "direct" | "relayed" | "unknown">;
 }
 
@@ -136,10 +142,11 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       const authored = new IndexedDbAuthoredEnvelopeStore(this.#options.storage);
       const context = { gameId: invitation.gameId, host: invitation.host, rulesHash: connectionRulesHash(), iceConfigHash: lobbyIceConfigHash() };
       const lobby = new LobbyChainRegistry(context);
+      const ended = this.#readTableEnd(invitation.gameId, self.publicKey);
       room = {
         invitation, host, stored, authored, author: new PersistentEnvelopeAuthor(invitation.gameId, self.secretKey, authored),
         abort: new AbortController(), lobby, receiver: new PersistentLobbyReceiver(lobby, stored),
-        signaling: null, transport: null, queue: Promise.resolve(), pending: 0, blocked: false, recordCount: 0, releaseLease: null, flushes: new Map(), sentThrough: new Map(), ackWaiters: new Map(), paths: new Map(), game: null, playing: false, localReady: true, autoReadyRequested: false, peerReady: new Map(), barriers: new Map(), roundCompletions: new Map(), sentRoundCompletions: new Map(), early: [],
+        signaling: null, transport: null, queue: Promise.resolve(), pending: 0, blocked: false, recordCount: 0, releaseLease: null, ownJoin: null, headsTimer: null, votes: new TableAbortVote(), ended, paths: new Map(), game: null, playing: false, localReady: true, autoReadyRequested: false, peerReady: new Map(), sync: new Map(), roundCompletions: new Map(), sentRoundCompletions: new Map(), early: [], restoredViolations: [], lobbyPending: [], evidence: null,
       };
       this.#room = room;
       this.#refresh(room);
@@ -147,7 +154,8 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       this.#require(room, epoch);
       const records = await stored.loadTranscript(invitation.gameId);
       this.#require(room, epoch);
-      if (records.length > 4096 || records.some(({ artifact }) => artifact.canonicalBytes.length > 65536)) {
+      if (records.length > 4096 || records.some(({ artifact }) =>
+        artifact.canonicalBytes.length > (artifact.envelope.type === "VIOLATION" ? MAX_HISTORY_ENVELOPE_BYTES : MAX_GAME_ENVELOPE_BYTES))) {
         throw new Error("Stored history exceeds this Sasku match profile; it will not be discarded automatically");
       }
       const lobbyRecords = records.filter(({ artifact }) => ["JOIN", "ROSTER", "READY"].includes(artifact.envelope.type));
@@ -173,21 +181,23 @@ export class BrowserLobbyController implements BrowserLobbyActions {
             throw new Error("Local roster snapshot changed during recovery");
           }
         }
+        room.ownJoin = lobbyRecords.find(({ artifact }) => artifact.envelope.type === "JOIN" && bytesEqual(artifact.envelope.from, self.publicKey))?.artifact ?? null;
         room.lobby = recovered.lobby;
         room.receiver = new PersistentLobbyReceiver(room.lobby, stored);
         const gameRecords = records.filter(({ artifact }) => !["JOIN", "ROSTER", "READY"].includes(artifact.envelope.type));
-        if (gameRecords.length) {
+        if (gameRecords.length || room.ended !== null) {
           const session = room.lobby.finalizedRegistry;
           if (!session) throw new Error("Saved round has no finalized roster");
           for (const { artifact } of gameRecords.sort((a, b) => a.artifact.envelope.seq - b.artifact.envelope.seq)) {
             if (session.ingest(artifact).status !== "accepted") throw new Error("Saved round history is not contiguous");
+            if (artifact.envelope.type === "VIOLATION") room.restoredViolations.push(artifact);
           }
           room.playing = true;
         }
       } else if (host) {
         await this.#publish(room, { round: 0, phase: "lobby", type: "ROSTER", body: encodeRosterBody({ ...context, seats: [parseIdentityPublicKey(self.publicKey)] }) });
       } else {
-        await room.author.author({ round: 0, phase: "lobby", type: "JOIN", body: encodeJoinBody({ pkId: parseIdentityPublicKey(self.publicKey), rulesHash: context.rulesHash, clientVersion: "sasku-match-candidate/4" }) });
+        room.ownJoin = await room.author.author({ round: 0, phase: "lobby", type: "JOIN", body: encodeJoinBody({ pkId: parseIdentityPublicKey(self.publicKey), rulesHash: context.rulesHash, clientVersion: "sasku-match-candidate/4" }) });
         room.recordCount += 1;
       }
       this.#require(room, epoch);
@@ -214,9 +224,9 @@ export class BrowserLobbyController implements BrowserLobbyActions {
         },
         onAuthenticated: (remote, generation) => {
           if (this.#room !== current) { return; }
-          current.barriers.set(bytesToHex(remote), { generation, barrier: new PeerHistoryBarrier() });
-          current.sentThrough.delete(bytesToHex(remote));
-          this.#notifyAck(current, bytesToHex(remote));
+          current.sync.set(bytesToHex(remote), { generation, history: new HistorySync() });
+          this.#sendHeads(current, remote, generation);
+          this.#sendTableEnd(current, remote, generation);
           current.peerReady.delete(bytesToHex(remote));
           current.roundCompletions.delete(bytesToHex(remote));
           current.sentRoundCompletions.delete(bytesToHex(remote));
@@ -224,7 +234,6 @@ export class BrowserLobbyController implements BrowserLobbyActions {
           void current.transport!.send(remote, generation, Uint8Array.of(1, current.localReady ? 1 : 0)).catch((cause: unknown) => {
             if (this.#room === current) this.#event(`Ready status delivery failed: ${message(cause)}`);
           });
-          this.#flush(current, remote, generation);
           void current.transport!.path(remote).then((path) => {
             if (this.#room === current && current.transport?.generation(remote) === generation) {
               current.paths.set(bytesToHex(remote), path.path); this.#refresh(current);
@@ -234,14 +243,11 @@ export class BrowserLobbyController implements BrowserLobbyActions {
         onMessage: (remote, payload, generation) => this.#incoming(current, remote, payload, generation),
         onDisconnected: (remote) => {
           if (this.#room !== current) { return; }
-          current.barriers.delete(bytesToHex(remote));
+          current.sync.delete(bytesToHex(remote));
           current.peerReady.delete(bytesToHex(remote));
           current.roundCompletions.delete(bytesToHex(remote));
           current.sentRoundCompletions.delete(bytesToHex(remote));
           current.paths.delete(bytesToHex(remote));
-          current.flushes.delete(bytesToHex(remote));
-          current.sentThrough.delete(bytesToHex(remote));
-          this.#notifyAck(current, bytesToHex(remote));
           if (!current.lobby.isRosterMember(remote)) { current.transport?.remove(remote); }
           this.#refresh(current);
         },
@@ -254,6 +260,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       });
       await room.transport.start();
       this.#require(room, epoch);
+      room.headsTimer = setInterval(() => this.#broadcastHeads(current), 5_000);
       this.#event(host ? "Table opened. Share the invitation with three other identities." : "Joining the host; waiting for a signed roster.");
       this.#set({ busy: null }); this.#refresh(room);
     } catch (cause) {
@@ -267,9 +274,11 @@ export class BrowserLobbyController implements BrowserLobbyActions {
 
   async #incoming(room: Room, remote: IdentityPublicKey, payload: Uint8Array, generation: number): Promise<void> {
     if (this.#room !== room || room.transport?.generation(remote) !== generation) return;
-    if (payload[0] === 0) {
-      const key = bytesToHex(remote);
-      room.barriers.get(key)?.barrier.receive(payload); this.#notifyAck(room, key); this.#refresh(room); return;
+    if (payload[0] === CHANNEL_CONTROL_PREFIX) {
+      const control = decodeChannelControl(payload);
+      return this.#enqueue(room, async () => {
+        if (room.transport?.generation(remote) === generation) await this.#control(room, remote, generation, control);
+      });
     }
     if (payload[0] === 1) {
       if (payload.length !== 2 || (payload[1] !== 0 && payload[1] !== 1)) throw new LobbyProtocolError("Invalid ready status");
@@ -287,78 +296,105 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       room.roundCompletions.set(key, byRound);
       this.#refresh(room); return;
     }
-    if (payload.length > 65536) throw new LobbyProtocolError("Envelope exceeds 64 KiB");
-    const candidate = decodeAndVerifyEnvelope(payload);
-    if (!["JOIN", "ROSTER", "READY"].includes(candidate.envelope.type)) {
-      if (!bytesEqual(candidate.envelope.from, remote) || !bytesEqual(candidate.envelope.game, room.invitation.gameId)) throw new LobbyProtocolError("Wrong authenticated round sender");
-      try {
-        this.#require(room);
-        if (room.blocked) throw new Error("Lobby storage needs recovery; leave and reopen the invitation");
-        if (room.game) room.game.receive(candidate);
-        else {
-          if (room.early.length >= 32) throw new LobbyProtocolError("Early round queue is full");
-          room.early.push(candidate);
-        }
-        if (!room.playing && bytesEqual(remote, room.invitation.host) && candidate.envelope.type === "KEY_SHARE") {
-          room.playing = true;
-          this.#refresh(room);
-        }
-      } catch (cause) {
-        this.#recordFailure(room, cause);
-        throw cause;
-      }
-      return;
-    }
-    if (payload.length > 4096) { throw new LobbyProtocolError("Lobby envelope exceeds 4 KiB"); }
-    const artifact = candidate;
-    try {
-      if (!bytesEqual(artifact.envelope.game, room.invitation.gameId) || !bytesEqual(artifact.envelope.from, remote) ||
-          artifact.envelope.round !== 0 || artifact.envelope.phase !== "lobby") {
-        throw new Error("Only this authenticated author's lobby messages are accepted");
-      }
-      if (artifact.envelope.type === "JOIN") { decodeJoinBody(artifact.envelope.body); }
-      if (artifact.envelope.type === "ROSTER") { decodeRosterBody(artifact.envelope.body); }
-      if (artifact.envelope.type === "READY") { decodeReadyBody(artifact.envelope.body); }
-    } catch (cause) { throw new LobbyProtocolError(message(cause)); }
+    if (payload.length > MAX_HISTORY_ENVELOPE_BYTES) throw new LobbyProtocolError("Envelope exceeds history size limit");
+    const artifact = decodeAndVerifyEnvelope(payload);
+    if (!bytesEqual(artifact.envelope.from, remote)) throw new LobbyProtocolError("Wrong authenticated sender");
     return this.#enqueue(room, async () => {
-      const existing = room.lobby.get(remote, artifact.envelope.seq);
-      if (existing !== undefined && bytesEqual(existing.canonicalBytes, artifact.canonicalBytes)) { return; }
-      if (room.recordCount >= 128) { throw new LobbyProtocolError("Connection-check history limit reached; open a new table"); }
-      const envelope = artifact.envelope;
-      if (envelope.type === "JOIN") {
-        const join = decodeJoinBody(envelope.body);
-        if (!bytesEqual(join.rulesHash, connectionRulesHash())) { throw new LobbyProtocolError("Rules bundle mismatch"); }
-        if (room.host && !room.lobby.isRosterMember(remote)) {
-          if ((room.lobby.roster?.seats.length ?? 1) >= 4) { throw new LobbyProtocolError("This table already has four seats"); }
-          this.#accepted(room, await room.receiver.receiveAdmittedJoin(artifact));
-          this.#require(room);
-          const seats = [...room.lobby.roster!.seats, remote];
-          await this.#publish(room, { round: 0, phase: "lobby", type: "ROSTER", body: encodeRosterBody({
-            gameId: room.invitation.gameId, rulesHash: connectionRulesHash(), iceConfigHash: lobbyIceConfigHash(), seats,
-          }) });
-        } else {
-          this.#accepted(room, await room.receiver.receiveRosterMemberJoin(artifact));
-        }
-      } else if (envelope.type === "ROSTER") {
-        if (decodeRosterBody(envelope.body).seats.length > 4) { throw new LobbyProtocolError("Connection-check rosters have at most four seats"); }
-        this.#accepted(room, await room.receiver.receiveRoster(artifact));
-        this.#require(room);
-        await this.#afterRoster(room);
-      } else {
-        if (room.lobby.roster?.seats.length !== 4) { throw new LobbyProtocolError("Readiness requires four seats"); }
-        this.#accepted(room, await room.receiver.receiveReady(artifact));
-      }
-      this.#require(room);
+      if (room.transport?.generation(remote) !== generation) return;
+      await this.#acceptArtifact(room, remote, artifact);
       this.#refresh(room);
     });
+  }
+
+  async #acceptArtifact(room: Room, source: IdentityPublicKey, artifact: EnvelopeArtifact): Promise<void> {
+    const { from, game, seq, phase, round, type, body } = artifact.envelope;
+    if (!bytesEqual(game, room.invitation.gameId) || !this.#allowedAuthor(room, source, from)) {
+      throw new LobbyProtocolError("Signed history is outside this table");
+    }
+    const existing = this.#get(room, from, seq);
+    if (existing) {
+      if (!bytesEqual(existing.hash, artifact.hash)) this.#reportEquivocation(room, existing, artifact);
+      return;
+    }
+    if (!["JOIN", "ROSTER", "READY"].includes(type)) {
+      if (!room.lobby.isRosterMember(from)) throw new LobbyProtocolError("Round author is outside the roster");
+      if (!["KEY_SHARE", "SHUFFLE", "SHARES", "ACTION", "AUDIT_DISCLOSE", "VIOLATION"].includes(type)) {
+        throw new LobbyProtocolError("Unsupported match envelope");
+      }
+      if (room.game) {
+        try { room.game.receiveHistory(artifact); }
+        catch (cause) { throw new LobbyProtocolError(message(cause)); }
+      }
+      else {
+        if (room.early.length >= 32) throw new LobbyProtocolError("Early round queue is full");
+        room.early.push(artifact);
+      }
+      if (!room.playing && bytesEqual(from, room.invitation.host) && type === "KEY_SHARE") room.playing = true;
+      return;
+    }
+    if (artifact.canonicalBytes.length > 4096 || round !== 0 || phase !== "lobby") {
+      throw new LobbyProtocolError("Invalid lobby envelope scope or size");
+    }
+    try {
+      if (type === "JOIN") decodeJoinBody(body);
+      if (type === "ROSTER") decodeRosterBody(body);
+      if (type === "READY") decodeReadyBody(body);
+    } catch (cause) { throw new LobbyProtocolError(message(cause)); }
+    if (room.lobbyPending.some(item => bytesEqual(item.hash, artifact.hash))) return;
+    if (room.lobbyPending.length >= 32) throw new LobbyProtocolError("Lobby history queue is full");
+    room.lobbyPending.push(artifact);
+    while (true) {
+      const index = room.lobbyPending.findIndex(({ envelope }) => {
+        const head = room.lobby.headOf(envelope.from);
+        return envelope.seq <= (head?.seq ?? -1) + 1 &&
+          (envelope.type !== "READY" || room.lobby.roster?.seats.length === 4);
+      });
+      if (index < 0) return;
+      await this.#acceptLobbyArtifact(room, room.lobbyPending.splice(index, 1)[0]!);
+    }
+  }
+
+  async #acceptLobbyArtifact(room: Room, artifact: EnvelopeArtifact): Promise<void> {
+    const remote = artifact.envelope.from;
+    const existing = room.lobby.get(remote, artifact.envelope.seq);
+    if (existing) {
+      if (!bytesEqual(existing.hash, artifact.hash)) this.#reportEquivocation(room, existing, artifact);
+      return;
+    }
+    if (room.recordCount >= 128) { throw new LobbyProtocolError("Connection-check history limit reached; open a new table"); }
+    const envelope = artifact.envelope;
+    if (envelope.type === "JOIN") {
+      const join = decodeJoinBody(envelope.body);
+      if (!bytesEqual(join.rulesHash, connectionRulesHash())) { throw new LobbyProtocolError("Rules bundle mismatch"); }
+      if (room.host && !room.lobby.isRosterMember(remote)) {
+        if ((room.lobby.roster?.seats.length ?? 1) >= 4) { throw new LobbyProtocolError("This table already has four seats"); }
+        this.#accepted(room, await room.receiver.receiveAdmittedJoin(artifact));
+        this.#require(room);
+        const seats = [...room.lobby.roster!.seats, remote];
+        await this.#publish(room, { round: 0, phase: "lobby", type: "ROSTER", body: encodeRosterBody({
+          gameId: room.invitation.gameId, rulesHash: connectionRulesHash(), iceConfigHash: lobbyIceConfigHash(), seats,
+        }) });
+      } else {
+        this.#accepted(room, await room.receiver.receiveRosterMemberJoin(artifact));
+      }
+    } else if (envelope.type === "ROSTER") {
+      if (decodeRosterBody(envelope.body).seats.length > 4) { throw new LobbyProtocolError("Connection-check rosters have at most four seats"); }
+      this.#accepted(room, await room.receiver.receiveRoster(artifact));
+      this.#require(room);
+      await this.#afterRoster(room);
+    } else {
+      if (room.lobby.roster?.seats.length !== 4) { throw new LobbyProtocolError("Readiness requires four seats"); }
+      this.#accepted(room, await room.receiver.receiveReady(artifact));
+    }
+    this.#require(room);
+    this.#refresh(room);
   }
 
   async #afterRoster(room: Room): Promise<void> {
     const self = parseIdentityPublicKey(this.#self().publicKey);
     if (!room.host && room.lobby.isRosterMember(self) && !room.lobby.hasSender(self)) {
-      const own = await room.authored.readAuthoredPage(room.invitation.gameId, self, 0, 0);
-      this.#require(room);
-      this.#accepted(room, await room.receiver.receiveRosterMemberJoin(own[0]!));
+      if (!room.ownJoin) throw new Error("Local JOIN is unavailable");
+      this.#accepted(room, await room.receiver.receiveRosterMemberJoin(room.ownJoin));
     }
     this.#require(room);
     for (const member of room.lobby.roster?.seats ?? []) {
@@ -377,105 +413,111 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     this.#accepted(room, content.type === "ROSTER" ? await room.receiver.receiveRoster(artifact) : await room.receiver.receiveReady(artifact));
     this.#require(room);
     if (content.type === "ROSTER") { await this.#afterRoster(room); }
+    this.#broadcastArtifact(room, artifact);
+    if (content.type === "ROSTER") this.#broadcastHeads(room);
+  }
+
+  #allowedAuthor(room: Room, remote: IdentityPublicKey, from: IdentityPublicKey): boolean {
+    return room.lobby.isRosterMember(from) || bytesEqual(room.invitation.host, from) ||
+      bytesEqual(this.#self().publicKey, from) || bytesEqual(remote, from);
+  }
+
+  #get(room: Room, from: IdentityPublicKey, seq: number): EnvelopeArtifact | undefined {
+    return room.game?.get(from, seq) ?? room.lobby.get(from, seq) ??
+      (seq === 0 && room.ownJoin && bytesEqual(room.ownJoin.envelope.from, from) ? room.ownJoin : undefined);
+  }
+
+  #head(room: Room, from: IdentityPublicKey): ChainHead | null {
+    const head = room.lobby.finalizedRegistry?.heads().find(head => bytesEqual(head.from, from)) ?? room.lobby.headOf(from);
+    if (head) return head;
+    if (room.ownJoin && bytesEqual(room.ownJoin.envelope.from, from)) return { from, seq: 0, hash: room.ownJoin.hash };
+    return null;
+  }
+
+  #sendHeads(room: Room, remote: IdentityPublicKey, generation: number): void {
+    const self = parseIdentityPublicKey(this.#self().publicKey);
+    // An unseated guest only needs the host's roster history to bootstrap.
+    const authors = room.lobby.isRosterMember(remote) ? room.lobby.roster!.seats : [self];
+    const heads = authors.flatMap(from => this.#head(room, from) ?? []);
+    this.#send(room, remote, generation, encodeChannelControl({ type: "HEADS", body: { heads } }));
+  }
+
+  #broadcastHeads(room: Room): void {
+    if (this.#room !== room) return;
     for (const peer of room.transport?.peers ?? []) {
-      if (room.transport?.authenticated(peer.identity)) { this.#flush(room, peer.identity, peer.generation); }
+      if (room.transport?.authenticated(peer.identity)) this.#sendHeads(room, peer.identity, peer.generation);
     }
   }
 
-  #flush(room: Room, remote: IdentityPublicKey, generation: number): void {
-    const key = bytesToHex(remote);
-    const existing = room.flushes.get(key);
-    if (existing?.generation === generation) { existing.dirty = true; return; }
-    const flush = { generation, dirty: true };
-    let failed = false;
-    room.flushes.set(key, flush);
-    void (async () => {
-      while (flush.dirty && this.#room === room && room.transport?.generation(remote) === generation) {
-        flush.dirty = false;
-        const previous = room.sentThrough.get(key);
-        let acknowledgedSeq = previous?.generation === generation ? previous.checkpoint.seq : -1;
-        let batchHead: EnvelopeArtifact | null = null;
-        let batchSize = 0;
-        const acknowledgeBatch = async (): Promise<void> => {
-          const head = batchHead;
-          if (head === null) return;
-          const entry = room.barriers.get(key);
-          if (entry?.generation !== generation) throw new Error("History channel changed during delivery");
-          await room.transport!.send(remote, generation, entry.barrier.announce(head));
-          await this.#waitForAck(room, key, remote, generation, head);
-          acknowledgedSeq = head.envelope.seq;
-          room.sentThrough.set(key, { generation, checkpoint: Object.freeze({ from: parseIdentityPublicKey(this.#self().publicKey),
-            seq: acknowledgedSeq, hash: parseHash256(head.hash) }) });
-          batchHead = null;
-          batchSize = 0;
-          this.#refresh(room);
-        };
-        const result = await replayAuthoredHistory(room.authored, room.invitation.gameId, parseIdentityPublicKey(this.#self().publicKey),
-          async (bytes) => {
-            const artifact = decodeAndVerifyEnvelope(bytes);
-            if (artifact.envelope.seq <= acknowledgedSeq) return;
-            await room.transport!.send(remote, generation, bytes);
-            batchHead = artifact;
-            if (++batchSize >= 4) await acknowledgeBatch();
-          },
-          { signal: room.abort.signal, maxEnvelopes: 4096, maxBytes: 64 * 1024 * 1024,
-            ...(previous?.generation === generation ? { after: previous.checkpoint } : {}) });
-        if (result.status === "failed") {
-          if (this.#room === room && result.stage !== "send") {
-            room.blocked = true;
-            this.#set({ error: `Local authored history needs recovery: ${message(result.error)}` });
-            this.#refresh(room);
-          }
-          throw result.error;
-        }
-        if (result.status === "cancelled") { return; }
-        await acknowledgeBatch();
-        const entry = room.barriers.get(key);
-        const head = await room.author.readHead();
-        if (head && entry?.generation === generation && room.transport?.generation(remote) === generation) {
-          await room.transport.send(remote, generation, entry.barrier.announce(head));
-          this.#refresh(room);
-        }
-      }
-    })().catch((cause: unknown) => {
-      failed = true;
-      if (this.#room === room && room.transport?.generation(remote) === generation) { this.#event(`History delivery failed: ${message(cause)}`); }
-    }).finally(() => {
-      if (room.flushes.get(key) === flush) {
-        room.flushes.delete(key);
-        if (!failed && flush.dirty && this.#room === room && room.transport?.generation(remote) === generation) {
-          this.#flush(room, remote, generation);
-        }
-      }
+  #broadcastArtifact(room: Room, artifact: EnvelopeArtifact): void {
+    for (const peer of room.transport?.peers ?? []) {
+      if (room.transport?.authenticated(peer.identity)) this.#send(room, peer.identity, peer.generation, artifact.canonicalBytes);
+    }
+  }
+
+  #send(room: Room, remote: IdentityPublicKey, generation: number, payload: Uint8Array): void {
+    void room.transport?.send(remote, generation, payload).catch((cause: unknown) => {
+      if (this.#room === room && room.transport?.generation(remote) === generation) this.#event(message(cause));
     });
   }
 
-  #notifyAck(room: Room, key: string): void {
-    for (const wake of room.ackWaiters.get(key) ?? []) wake();
+  #historySource(room: Room, remote: IdentityPublicKey) {
+    return {
+      allowed: (from: IdentityPublicKey) => this.#allowedAuthor(room, remote, from),
+      head: (from: IdentityPublicKey) => this.#head(room, from),
+      get: (from: IdentityPublicKey, seq: number) => this.#get(room, from, seq),
+    };
   }
 
-  #waitForAck(room: Room, key: string, remote: IdentityPublicKey, generation: number, head: EnvelopeArtifact): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      const waiters = room.ackWaiters.get(key) ?? new Set<() => void>();
-      room.ackWaiters.set(key, waiters);
-      const cleanup = () => {
-        clearTimeout(timeout);
-        room.abort.signal.removeEventListener("abort", wake);
-        waiters.delete(wake);
-        if (waiters.size === 0) room.ackWaiters.delete(key);
-      };
-      const wake = () => {
-        if (this.#room !== room || room.abort.signal.aborted || room.transport?.generation(remote) !== generation) {
-          cleanup(); reject(new Error("History channel closed during delivery"));
-        } else if (room.barriers.get(key)?.generation === generation && room.barriers.get(key)!.barrier.acknowledged(head)) {
-          cleanup(); resolve();
+  async #control(room: Room, remote: IdentityPublicKey, generation: number, control: ChannelControl): Promise<void> {
+    const sync = room.sync.get(bytesToHex(remote));
+    if (!sync || sync.generation !== generation) return;
+    switch (control.type) {
+      case "HEADS":
+        if (control.body.heads.some(head => head.seq >= 4096)) throw new LobbyProtocolError("Advertised history exceeds match limit");
+        sync.history.advertise(control.body.heads);
+        break;
+      case "SYNC_REQ": {
+        const { from, fromSeq } = control.body;
+        const mayShare = bytesEqual(from, this.#self().publicKey) || (room.lobby.isRosterMember(remote) && room.lobby.isRosterMember(from));
+        const artifact = mayShare ? this.#get(room, from, fromSeq) : undefined;
+        this.#send(room, remote, generation, encodeChannelControl({
+          type: "SYNC_RESP", id: control.id, body: artifact ? { envelopes: [artifact] } : null,
+        }));
+        break;
+      }
+      case "SYNC_RESP": {
+        if (control.body?.envelopes.some(artifact => !bytesEqual(artifact.envelope.game, room.invitation.gameId))) {
+          throw new LobbyProtocolError("SYNC_RESP contains history from another table");
         }
-      };
-      const timeout = setTimeout(() => { cleanup(); reject(new Error("Timed out waiting for peer history acknowledgement")); }, 30_000);
-      waiters.add(wake);
-      room.abort.signal.addEventListener("abort", wake);
-      wake();
-    });
+        let result;
+        try {
+          result = sync.history.receive(control, this.#historySource(room, remote));
+        } catch (cause) { throw new LobbyProtocolError(message(cause)); }
+        if (result && "request" in result) this.#send(room, remote, generation, encodeChannelControl(result.request));
+        else if (result?.conflict) this.#reportEquivocation(room, result.conflict, result.artifact);
+        else if (result) await this.#acceptArtifact(room, remote, result.artifact);
+        break;
+      }
+      case "ABORT_VOTE": {
+        const seat = room.lobby.finalizedRegistry?.seatOf(remote);
+        if (seat !== undefined && seat !== null) {
+          const { missing, ended } = control.body;
+          if (ended && room.votes.confirm(seat, missing)) this.#endTable(room, missing);
+          else if (!ended && room.playing) room.votes.receive(seat, missing);
+        }
+        break;
+      }
+    }
+    this.#refresh(room);
+  }
+
+  #reportEquivocation(room: Room, left: EnvelopeArtifact, right: EnvelopeArtifact): void {
+    if (room.game) room.game.reportEquivocation(left, right);
+    else if (room.evidence === null && room.lobby.isRosterMember(left.envelope.from)) {
+      room.evidence = [left, right];
+      this.#set({ error: "A player signed conflicting lobby history." });
+    }
   }
 
   async markReady(): Promise<void> {
@@ -513,11 +555,23 @@ export class BrowserLobbyController implements BrowserLobbyActions {
 
   async playAction(intent: SaskuActionIntent): Promise<void> {
     const room = this.#room;
-    if (!room?.game || !room.playing) throw new Error("No active round");
+    if (!room?.game || !room.playing || room.ended !== null) throw new Error("No active round");
     await room.game.act(intent);
   }
-  #flushAll(room: Room): void {
-    for (const peer of room.transport?.peers ?? []) if (room.transport?.authenticated(peer.identity)) this.#flush(room, peer.identity, peer.generation);
+  async voteToEndTable(): Promise<void> {
+    const room = this.#room;
+    if (!room?.playing || !room.game || room.ended !== null || !room.votes.available ||
+        room.game.view.phase === "match_complete" || room.game.view.error) throw new Error("A table vote is not available");
+    const seat = room.game.view.seat;
+    if (room.votes.hasVoted(seat)) return;
+    const body = { missing: room.votes.missing, ended: false };
+    room.votes.receive(seat, body.missing);
+    for (const peer of room.transport?.peers ?? []) {
+      if (room.transport?.authenticated(peer.identity) && room.lobby.isRosterMember(peer.identity)) {
+        this.#send(room, peer.identity, peer.generation, encodeChannelControl({ type: "ABORT_VOTE", body }));
+      }
+    }
+    this.#refresh(room);
   }
 
   async retryPeer(publicKey: string): Promise<void> {
@@ -559,14 +613,14 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     this.#set({ busy: "leaving" });
     await this.#closeRoom(this.#room);
     if (this.#options.manageHistory !== false && typeof window !== "undefined") { const url = new URL(this.#baseUrl); url.hash = ""; window.history.replaceState(null, "", url); }
-    this.#set({ phase: "welcome", room: null, game: null, peers: [], relays: [], busy: null, error: null, events: [] });
+    this.#set({ phase: "welcome", room: null, game: null, tableStatus: null, peers: [], relays: [], busy: null, error: null, events: [] });
   }
 
   async #closeRoom(room: Room | null): Promise<void> {
     if (room === null) { return; }
     if (this.#room === room) { this.#room = null; }
     room.abort.abort();
-    for (const key of room.ackWaiters.keys()) this.#notifyAck(room, key);
+    if (room.headsTimer !== null) clearInterval(room.headsTimer);
     await room.transport?.close().catch(() => undefined);
     await room.queue;
     await room.game?.close();
@@ -609,15 +663,20 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     if (this.#room !== room || this.#identity === null) { return; }
     if (room.lobby.finalizedRegistry && room.game === null) {
       room.game = new LiveRound({ session: room.lobby.finalizedRegistry, roster: room.lobby.roster!, self: parseIdentityPublicKey(this.#identity.publicKey),
-        author: room.author, stored: room.stored, ...(this.#options.storage ? { storage: this.#options.storage } : {}),
-        changed: () => this.#refresh(room), published: () => this.#flushAll(room) });
-      for (const artifact of room.early.splice(0)) room.game.receive(artifact);
-      this.#flushAll(room);
+        author: room.author, stored: room.stored, restoredViolations: room.restoredViolations, ...(this.#options.storage ? { storage: this.#options.storage } : {}),
+        changed: () => this.#refresh(room), published: artifact => this.#broadcastArtifact(room, artifact) });
+      if (room.evidence) room.game.reportEquivocation(...room.evidence);
+      for (const artifact of room.early.splice(0)) {
+        try { room.game.receiveHistory(artifact); }
+        catch (cause) { this.#event(message(cause)); }
+      }
     }
-    for (const [key, entry] of room.barriers) {
-      const remote = parseIdentityPublicKey(hexToBytes(key));
-      const ack = entry.barrier.acknowledge(seq => room.game?.get(remote, seq) ?? room.lobby.get(remote, seq));
-      if (ack) void room.transport?.send(remote, entry.generation, ack).catch(() => undefined);
+    for (const peer of room.transport?.peers ?? []) {
+      const entry = room.sync.get(bytesToHex(peer.identity));
+      if (entry?.generation !== peer.generation) continue;
+      for (const request of entry.history.advance(this.#historySource(room, peer.identity))) {
+        this.#send(room, peer.identity, entry.generation, encodeChannelControl(request));
+      }
     }
     const roster = room.lobby.roster?.seats ?? [];
     const self = parseIdentityPublicKey(this.#identity.publicKey);
@@ -633,9 +692,12 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       state: room.transport?.authenticated(peer.identity) ? "authenticated" as const : peer.connectionState === "closed" ? "disconnected" as const : "connecting" as const,
       path: room.paths.get(bytesToHex(peer.identity)) ?? "unknown" as const,
     }));
+    const disconnected = seats.flatMap(({ connected }, seat) => connected ? [] : [seat]);
+    room.votes.update(disconnected.reduce((mask, seat) => mask | (1 << seat), 0));
+    if (room.playing && room.votes.ended) this.#endTable(room, room.votes.missing);
     const synchronized = roster.length === 4 && roster.every(key => bytesEqual(key, self) ||
-      (room.transport?.authenticated(key) && room.barriers.get(bytesToHex(key))?.barrier.ready));
-    room.game?.connected(room.playing && synchronized);
+      (room.transport?.authenticated(key) && room.sync.get(bytesToHex(key))?.history.ready));
+    room.game?.connected(room.playing && synchronized && room.ended === null);
     const gameView = room.game?.view;
     const audited = gameView?.state?.audit?.result;
     const completion = gameView && audited?.status === "valid" && gameView.match.completed.length < gameView.match.round
@@ -670,7 +732,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       const remote = room.roundCompletions.get(bytesToHex(key))?.get(completion[1]!);
       return remote !== undefined && remote.generation === room.transport?.generation(key) && sameRoundCompletion(remote.marker, completion);
     })()) && !room.blocked;
-    room.game?.roundReady(allComplete ? gameView!.match.round : 0);
+    room.game?.roundReady(allComplete && room.ended === null ? gameView!.match.round : 0);
     const canReady = !room.blocked && room.recordCount < 128 && room.lobby.state !== "finalized" && roster.length === 4 && ownSeat >= 0 &&
       !readySeats.includes(ownSeat) && roster.every((key) => room.lobby.headOf(key) !== null) && seats.every(({ connected }) => connected);
     const allReadyKnown = room.localReady && roster.length === 4 && roster.every(key => bytesEqual(key, self) || (
@@ -682,6 +744,10 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     }
     this.#set({
       game: room.playing ? room.game?.view ?? null : null,
+      tableStatus: room.playing ? { disconnected, ended: room.ended === null ? null : "The connected players voted to end this table.",
+        canVote: room.votes.available && room.ended === null && gameView?.phase !== "match_complete" && !gameView?.error,
+        voted: room.votes.hasVoted(ownSeat),
+        votes: room.votes.count, needed: seats.length - disconnected.length } : null,
       phase: room.lobby.state === "finalized" ? "agreed" : room.transport === null ? "connecting" : "lobby",
       room: Object.freeze({ gameId: bytesToHex(room.invitation.gameId), host: bytesToHex(room.invitation.host), isHost: room.host,
         invitation: createLobbyInvitation(this.#baseUrl, room.invitation.gameId, room.invitation.host), seats: Object.freeze(seats),
@@ -696,6 +762,35 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     }
   }
 
+  #endTable(room: Room, missing: number): void {
+    if (room.ended !== null || room.game?.view.phase === "match_complete") return;
+    room.ended = missing;
+    room.playing = true;
+    const self = this.#self().publicKey;
+    try { globalThis.localStorage?.setItem(tableEndKey(room.invitation.gameId, self), String(missing)); }
+    catch { this.#event("This browser could not save the table vote result."); }
+    for (const peer of room.transport?.peers ?? []) {
+      if (room.transport?.authenticated(peer.identity)) this.#sendTableEnd(room, peer.identity, peer.generation);
+    }
+  }
+
+  #sendTableEnd(room: Room, remote: IdentityPublicKey, generation: number): void {
+    const missing = room.ended;
+    const seat = room.lobby.finalizedRegistry?.seatOf(parseIdentityPublicKey(this.#self().publicKey));
+    if (missing !== null && seat !== undefined && seat !== null && (missing & (1 << seat)) === 0 && room.lobby.isRosterMember(remote)) {
+      this.#send(room, remote, generation, encodeChannelControl({ type: "ABORT_VOTE", body: { missing, ended: true } }));
+    }
+  }
+
+  #readTableEnd(game: Uint8Array, self: Uint8Array): number | null {
+    try {
+      const missing = Number(globalThis.localStorage?.getItem(tableEndKey(game, self)));
+      return Number.isInteger(missing) && missing > 0 && missing < 15 ? missing : null;
+    } catch {
+      return null;
+    }
+  }
+
   #event(event: string): void { this.#set({ events: Object.freeze([...this.#snapshot.events.slice(-7), event.slice(0, 240)]) }); }
   #set(update: Partial<BrowserLobbySnapshot>): void {
     if (this.#disposed) { return; }
@@ -705,3 +800,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
 }
 
 function message(cause: unknown): string { return (cause instanceof Error ? cause.message : "Lobby operation failed").slice(0, 300); }
+
+function tableEndKey(game: Uint8Array, self: Uint8Array): string {
+  return `p2pcards:table-ended:${bytesToHex(game)}:${bytesToHex(self)}`;
+}

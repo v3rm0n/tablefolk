@@ -1,8 +1,11 @@
 import { bytesEqual, bytesToHex, RistrettoPoint, type RistrettoScalar } from "@p2pcards/crypto";
 import { PersistentSetupReceiver } from "@p2pcards/engine";
 import { CandidateSaskuRoundOwner, type CandidateRoundCheckpoint, type SaskuActionIntent, type SaskuRoundSnapshot } from "@p2pcards/game-sasku";
-import { type EnvelopeArtifact, type IdentityPublicKey, type RosterBody } from "@p2pcards/protocol";
-import { captureSessionHistory, PersistentEnvelopeAuthor, PersistentSessionReceiver, type SessionChainRegistry } from "@p2pcards/session";
+import {
+  decodeEquivocationViolationBody, encodeEquivocationViolationBody, MAX_GAME_ENVELOPE_BYTES, MAX_HISTORY_ENVELOPE_BYTES,
+  type EnvelopeArtifact, type EquivocationViolationBody, type IdentityPublicKey, type RosterBody,
+} from "@p2pcards/protocol";
+import { assessEquivocationViolation, captureSessionHistory, createEquivocationViolation, PersistentEnvelopeAuthor, PersistentSessionReceiver, type SessionChainRegistry } from "@p2pcards/session";
 import { IndexedDbGameSecretStore, type IndexedDbStoreOptions, type IndexedDbSessionStore } from "@p2pcards/storage";
 import { legalSaskuCards, saskuBidStrength, type SaskuCardId } from "@p2pcards/rules-sasku";
 import { CandidateShuffleClient } from "./candidate-shuffle-client";
@@ -32,7 +35,8 @@ export interface LiveRoundView {
 interface Options {
   session: SessionChainRegistry; roster: RosterBody; self: IdentityPublicKey;
   author: PersistentEnvelopeAuthor; stored: IndexedDbSessionStore; storage?: IndexedDbStoreOptions;
-  changed: () => void; published: () => void;
+  restoredViolations: readonly EnvelopeArtifact[];
+  changed: () => void; published: (artifact: EnvelopeArtifact) => void;
 }
 /** A full Sasku match driver. Only public envelopes leave the browser; secret stores stay local. */
 export class LiveRound {
@@ -54,6 +58,9 @@ export class LiveRound {
   #again = false;
   #closed = false;
   #error: string | null = null;
+  #violation: EquivocationViolationBody | null = null;
+  #violationStored = false;
+  #unpublishedViolation: EquivocationViolationBody | null = null;
   #action: { intent: SaskuActionIntent; expected: SaskuRoundSnapshot; resolve: () => void; reject: (e: unknown) => void } | null = null;
   #view: LiveRoundView;
   constructor(options: Options) {
@@ -64,6 +71,10 @@ export class LiveRound {
     this.#setup = new PersistentSetupReceiver({ round: 0, self: options.self, session: options.session, sessionReceiver: this.#durable,
       beaconRequired: false, serializedByCaller: true, historyLimits: MATCH_HISTORY_LIMITS });
     this.#view = { phase: "setup", match: this.#match, message: "Synchronizing signed histories", seat: options.session.seatOf(options.self)!, connected: false, busy: true, hand: [], strength: null, state: null, error: null };
+    for (const artifact of options.restoredViolations) {
+      this.#violation = this.#validateViolation(artifact);
+      this.#violationStored = true;
+    }
     this.#kick();
   }
   get view(): LiveRoundView { return this.#view; }
@@ -76,25 +87,83 @@ export class LiveRound {
     const value = round === this.#match.round ? round : 0;
     if (this.#roundReady !== value) { this.#roundReady = value; this.#kick(); }
   }
-  receive(a: EnvelopeArtifact): void {
+  receiveHistory(artifact: EnvelopeArtifact): void {
     if (this.#closed || this.#error) throw new Error(this.#error ?? "Round is closed");
-    const e = a.envelope;
-    if (this.#options.session.seatOf(e.from) === null) throw new Error("Wrong round sender");
-    const classification = this.#options.session.classify(a);
-    if (classification.status === "duplicate") return;
-    if (classification.status === "rejected" && classification.reason !== "gap") throw new Error(`Round chain rejected: ${classification.reason}`);
-    const setup = ["KEY_SHARE", "RAND_COMMIT", "RAND_REVEAL"].includes(e.type);
-    if ((setup ? e.round !== 0 : e.round < FIRST_ROUND || e.round > MAX_SASKU_MATCH_ROUNDS) ||
-        !["KEY_SHARE", "RAND_COMMIT", "RAND_REVEAL", "SHUFFLE", "SHARES", "ACTION", "AUDIT_DISCLOSE"].includes(e.type)) throw new Error("Unsupported match traffic");
-    if (!setup && (this.#match.winner !== null || e.round < this.#match.round)) throw new Error("Match traffic arrived after its round ended");
+    const e = artifact.envelope;
+    if (artifact.canonicalBytes.length > (e.type === "VIOLATION" ? MAX_HISTORY_ENVELOPE_BYTES : MAX_GAME_ENVELOPE_BYTES) ||
+        !bytesEqual(e.game, this.#options.roster.gameId) || this.#options.session.seatOf(e.from) === null) {
+      throw new Error("Wrong round history scope");
+    }
+    if (this.#violationStored && e.type !== "VIOLATION") return;
+    const chain = this.#options.session.classify(artifact);
+    if (chain.status === "duplicate") return;
+    if (chain.status === "rejected" && chain.reason === "equivocation") {
+      this.reportEquivocation(chain.existing, artifact);
+      return;
+    }
+    if (e.type === "VIOLATION") {
+      const evidence = this.#validateViolation(artifact);
+      this.#violation ??= evidence;
+      if (chain.status === "rejected") {
+        // The evidence verifies independently. Record it on our own chain when the reporter's chain is unavailable.
+        if (!this.#violationStored) this.#unpublishedViolation ??= evidence;
+        this.#kick();
+        return;
+      }
+    } else if (chain.status === "rejected" && chain.reason !== "gap") {
+      throw new Error(`Round chain rejected: ${chain.reason}`);
+    }
+    if (e.type !== "VIOLATION") {
+      const setup = e.type === "KEY_SHARE";
+      if ((setup ? e.round !== 0 : e.round < FIRST_ROUND || e.round > MAX_SASKU_MATCH_ROUNDS) ||
+          !["KEY_SHARE", "SHUFFLE", "SHARES", "ACTION", "AUDIT_DISCLOSE"].includes(e.type)) throw new Error("Unsupported match traffic");
+      if (!setup && (this.#match.winner !== null || e.round < this.#match.round)) throw new Error("Match traffic arrived after its round ended");
+    }
     const key = `${bytesToHex(e.from)}:${e.seq}`, prior = this.#pending.get(key);
-    if (prior) { if (!bytesEqual(prior.canonicalBytes, a.canonicalBytes)) throw new Error("Conflicting pending envelope"); return; }
-    if (this.#pending.size >= 256 || this.#bytes + a.canonicalBytes.length > 4 * 1024 * 1024) throw new Error("Round receive budget exceeded");
-    this.#pending.set(key, a); this.#bytes += a.canonicalBytes.length; this.#kick();
+    if (prior) {
+      if (!bytesEqual(prior.hash, artifact.hash)) this.reportEquivocation(prior, artifact);
+      return;
+    }
+    if (this.#pending.size >= 256 || this.#bytes + artifact.canonicalBytes.length > 4 * 1024 * 1024) {
+      throw new Error("Round receive budget exceeded");
+    }
+    this.#pending.set(key, artifact);
+    this.#bytes += artifact.canonicalBytes.length;
+    this.#kick();
+  }
+
+  reportEquivocation(left: EnvelopeArtifact, right: EnvelopeArtifact): void {
+    if (this.#violation) return;
+    const evidence = createEquivocationViolation(this.#options.session, left, right);
+    this.#violation = evidence;
+    this.#unpublishedViolation = evidence;
+    this.#kick();
+  }
+
+  #validateViolation(artifact: EnvelopeArtifact): EquivocationViolationBody {
+    const { phase, round, body } = artifact.envelope;
+    if (phase !== "control.equivocation" || round !== 0) throw new Error("Invalid equivocation certificate scope");
+    const checked = assessEquivocationViolation(this.#options.session, decodeEquivocationViolationBody(body));
+    if (checked.status !== "valid") throw new Error(`Invalid equivocation certificate: ${checked.reason}`);
+    return checked.body;
+  }
+
+  async #publishViolation(evidence: EquivocationViolationBody): Promise<void> {
+    const artifact = await this.#options.author.author(
+      { type: "VIOLATION", round: 0, phase: "control.equivocation", body: encodeEquivocationViolationBody(evidence) },
+      head => {
+        const local = this.#options.session.heads().find(item => bytesEqual(item.from, this.#options.self));
+        if (!head || !local || local.seq !== head.envelope.seq || !bytesEqual(local.hash, head.hash)) {
+          throw new Error("Local history changed while reporting equivocation");
+        }
+      },
+    );
+    accepted(await this.#durable.receiveVerified(artifact));
+    this.#options.published(artifact);
   }
   act(intent: SaskuActionIntent): Promise<void> {
     const state = this.#view.state;
-    if (!state || this.#match.winner !== null || !this.#connected || this.#action || this.#error || this.#closed || state.hand.turn !== this.#view.seat) return Promise.reject(new Error("Wait for your turn and all four connections"));
+    if (!state || this.#match.winner !== null || !this.#connected || this.#violation || this.#action || this.#error || this.#closed || state.hand.turn !== this.#view.seat) return Promise.reject(new Error("Wait for your turn and all four connections"));
     const result = new Promise<void>((resolve, reject) => { this.#action = { intent: { ...intent }, expected: state, resolve, reject }; });
     this.#kick(); return result;
   }
@@ -109,16 +178,35 @@ export class LiveRound {
   async #drain(): Promise<void> {
     while (!this.#closed && !this.#error) {
       this.#update();
-      const next = [...this.#pending.entries()].find(([, a]) => this.#eligible(a));
+      if (this.#violation) {
+        this.#action?.reject(new Error("The table ended because a player signed conflicting history"));
+        this.#action = null;
+      }
+      if (this.#unpublishedViolation) {
+        await this.#publishViolation(this.#unpublishedViolation);
+        this.#unpublishedViolation = null;
+        this.#violationStored = true;
+        break;
+      }
+      const next = [...this.#pending.entries()].find(([, a]) =>
+        (!this.#violationStored || a.envelope.type === "VIOLATION") && this.#eligible(a));
       if (next) {
         const [key, a] = next;
         if (this.#options.session.classify(a).status !== "duplicate") {
-          const result = this.#owner ? await this.#owner.receiveHistory(a) : await this.#setup.receive(a);
+          const result = a.envelope.type === "VIOLATION" ? await this.#durable.receive(a)
+            : this.#owner ? await this.#owner.receiveHistory(a) : await this.#setup.receive(a);
           if (result.status !== "accepted" && result.status !== "duplicate") throw new Error(`Round receipt failed: ${result.status}`);
           if (this.#owner && result.status === "accepted") await this.#saveCheckpoint();
         }
-        this.#pending.delete(key); this.#bytes -= a.canonicalBytes.length; continue;
+        this.#pending.delete(key);
+        this.#bytes -= a.canonicalBytes.length;
+        if (a.envelope.type === "VIOLATION") {
+          this.#violationStored = true;
+          break;
+        }
+        continue;
       }
+      if (this.#violationStored) break;
       if (!this.#owner && this.#setup.snapshot.state === "complete") {
         this.#secret = await this.#keys.loadGameSecret(this.#options.roster.gameId);
         if (this.#secret === null) throw new Error("The saved private game key is missing; it will not be regenerated");
@@ -144,7 +232,7 @@ export class LiveRound {
           continue;
         }
       }
-      if (this.#match.winner !== null) break;
+      if (this.#match.winner !== null || this.#violation) break;
       if (!this.#connected) break;
       const seat = this.#view.seat;
       if (!this.#owner) {
@@ -153,37 +241,36 @@ export class LiveRound {
         const result = s.state === "keys" ? await this.#setup.authorKeyShare(this.#options.author, this.#keys, s)
           : null;
         if (!result || result.status !== "accepted") throw new Error("Local setup contribution failed");
-        this.#options.published(); continue;
+        this.#options.published(result.received); continue;
       }
       const snapshot = this.#owner.snapshot;
       if (snapshot.phase === "shuffle") {
         if (snapshot.state.nextSeat !== seat) break;
         const prepared = await this.#client.prove(this.#owner.nextShuffleStatement());
-        if (this.#closed) break;
+        if (this.#closed || !this.#connected || this.#violation) break;
         const result = await this.#owner.authorShuffle(this.#options.author, prepared, snapshot.state);
         if (result.status !== "accepted") throw new Error("Local shuffle failed");
-        this.#options.published();
+        this.#options.published(result.received);
         await this.#saveCheckpoint();
         continue;
       }
       const state = snapshot.state;
       if (state.ledger.deal?.pendingSenders.includes(seat)) {
-        accepted(await this.#owner.authorDealShares(this.#options.author, this.#secret!, state)); this.#options.published();
+        this.#options.published(accepted(await this.#owner.authorDealShares(this.#options.author, this.#secret!, state)));
         await this.#saveCheckpoint();
         continue;
       }
       if (this.#action) {
         const action = this.#action; this.#action = null;
         try {
-          accepted(await this.#owner.authorAction(this.#options.author, this.#secret!, action.expected, action.intent));
+          this.#options.published(accepted(await this.#owner.authorAction(this.#options.author, this.#secret!, action.expected, action.intent)));
           action.resolve();
-          this.#options.published();
           await this.#saveCheckpoint();
         } catch (e) { action.reject(e); if (this.#owner.failure) throw e; }
         continue;
       }
       if (state.hand.phase === "complete" && state.audit?.pendingSenders.some(sender => sender === seat)) {
-        accepted(await this.#owner.authorAuditDisclose(this.#options.author, state)); this.#options.published();
+        this.#options.published(accepted(await this.#owner.authorAuditDisclose(this.#options.author, state)));
         await this.#saveCheckpoint();
         continue;
       }
@@ -259,6 +346,7 @@ export class LiveRound {
     if (c.status === "rejected") return c.reason !== "gap";
     if (c.status === "duplicate") return true;
     const e = a.envelope;
+    if (e.type === "VIOLATION") return true;
     if (e.round !== (e.type === "KEY_SHARE" || e.type === "RAND_COMMIT" || e.type === "RAND_REVEAL" ? 0 : this.#match.round)) return false;
     if (!this.#owner) {
       const type = { keys: "KEY_SHARE", rand_commit: "RAND_COMMIT", rand_reveal: "RAND_REVEAL", complete: "", failed: "" }[this.#setup.snapshot.state];
@@ -280,7 +368,7 @@ export class LiveRound {
     let hand: LiveRoundView["hand"] = sameRound ? this.#view.hand : [];
     let strength = sameRound ? this.#view.strength : null;
     if (state?.hand.phase === "complete") hand = [];
-    if (!this.#error && !this.#owner?.failure && state && state !== this.#handState && state.hand.phase !== "complete" && !state.ledger.deal && this.#secret !== null && this.#owner!.pendingEnvelopes === 0) {
+    if (!this.#error && !this.#violation && !this.#owner?.failure && state && state !== this.#handState && state.hand.phase !== "complete" && !state.ledger.deal && this.#secret !== null && this.#owner!.pendingEnvelopes === 0) {
       const privateHand = this.#owner!.readPrivateHand(this.#secret);
       if (!privateHand) throw new Error("Private hand is unavailable");
       const cards = Object.values(privateHand.remaining);
@@ -290,8 +378,8 @@ export class LiveRound {
       strength = saskuBidStrength(Object.values(privateHand.dealt));
       this.#handState = state;
     }
-    this.#view = Object.freeze({ ...this.#view, phase, match: this.#match, state, hand, strength, connected: this.#connected, busy: this.#running !== null,
-      error: this.#error, message: !this.#connected ? "Waiting for all four signed histories and connections" : phase === "setup" ? `Preparing ${this.#setup.snapshot.state.replaceAll("_", " ")}`
+    this.#view = Object.freeze({ ...this.#view, phase, match: this.#match, state, hand, strength, connected: this.#connected && !this.#violation, busy: this.#running !== null,
+      error: this.#error ?? (this.#violation ? `Player ${this.#violation.seat + 1} signed conflicting history. The table ended.` : null), message: !this.#connected ? "Waiting for all four signed histories and connections" : phase === "setup" ? `Preparing ${this.#setup.snapshot.state.replaceAll("_", " ")}`
         : phase === "shuffle" ? `Player ${(s!.phase === "shuffle" ? s!.state.nextSeat ?? 0 : 0) + 1} is shuffling` : phase === "dealing" ? "Dealing your private hand" : phase === "audit" ? "Checking the completed round" : "" });
     this.#options.changed();
   }
@@ -306,6 +394,7 @@ export class LiveRound {
   }
 }
 
-function accepted(receipt: { readonly status: string }): void {
+function accepted(receipt: { readonly status: string; readonly received: EnvelopeArtifact }): EnvelopeArtifact {
   if (receipt.status !== "accepted") throw new Error(`Local round contribution failed: ${receipt.status}`);
+  return receipt.received;
 }

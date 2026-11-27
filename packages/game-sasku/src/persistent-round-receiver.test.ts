@@ -154,7 +154,7 @@ describe("persistent Sasku round receiver", () => {
     await expect(c.game.receive(broken)).resolves.toMatchObject({ status: "rejected", reason: "broken_prev" });
     expect(c.game.snapshot).toBe(before);
     await c.game.receive(first);
-    const witness = c.f.sign(2, "WITNESS", c.game.snapshot.ledger.phase, { heads: [] });
+    const witness = c.f.sign(2, "VIOLATION", c.game.snapshot.ledger.phase, { heads: [] });
     await c.durable.receive(witness);
     const share = c.f.deal(0, 2);
     const conflicting = c.f.sign(2, "SHARES", share.envelope.phase, share.envelope.body, {
@@ -365,7 +365,7 @@ describe("durable Sasku audit", () => {
       [{ round: c.f.round + 1 }, "wrong_round"],
       [{ phase: `round.0${c.f.round}.audit` }, "wrong_phase"],
       [{ phase: before.ledger.phase }, "wrong_phase"],
-      [{ type: "WITNESS", body: { heads: [] } }, "wrong_type"],
+      [{ type: "VIOLATION", body: { heads: [] } }, "wrong_type"],
       [{ body: {} }, "malformed_body"],
       [{ body: { items: [], result: "valid" } }, "malformed_body"],
       [{ body: { items: [0] } }, "malformed_body"],
@@ -423,7 +423,7 @@ describe("durable Sasku audit", () => {
     await completeHand(c);
     const before = c.game.snapshot;
     const phase = before.audit!.phase;
-    const witness = c.f.sign(0, "WITNESS", phase, { heads: [] });
+    const witness = c.f.sign(0, "VIOLATION", phase, { heads: [] });
     const disclosure = c.f.sign(0, "AUDIT_DISCLOSE", phase, { items: [] });
     await expect(c.game.receive(disclosure)).resolves.toMatchObject({ status: "rejected", reason: "gap" });
     expect(c.game.snapshot).toBe(before);
@@ -431,7 +431,7 @@ describe("durable Sasku audit", () => {
     await expect(c.game.receive(disclosure)).resolves.toMatchObject({ status: "accepted" });
     const waiting = c.game.snapshot;
     const conflict = c.f.sign(1, "AUDIT_DISCLOSE", phase, { items: [] });
-    await c.store.persistAcceptedEnvelope(signEnvelope({ ...conflict.envelope, type: "WITNESS", body: { heads: [] } }, c.f.identities[1]!.secretKey));
+    await c.store.persistAcceptedEnvelope(signEnvelope({ ...conflict.envelope, type: "VIOLATION", body: { heads: [] } }, c.f.identities[1]!.secretKey));
     await expect(c.game.receive(conflict)).resolves.toMatchObject({ status: "rejected", reason: "durable_conflict" });
     expect(c.game.snapshot).toBe(waiting);
     for (const seat of [2, 3]) await c.game.receive(c.f.sign(seat, "AUDIT_DISCLOSE", phase, { items: [] }));

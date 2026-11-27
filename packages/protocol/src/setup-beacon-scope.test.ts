@@ -422,7 +422,7 @@ describe("local v1 setup beacon scope", () => {
     expect(ENVELOPE_VERSION).toBe(1);
     expect(ENVELOPE_MESSAGE_TYPES).toEqual([
       "JOIN", "ROSTER", "READY", "KEY_SHARE", "RAND_COMMIT", "RAND_REVEAL", "SHUFFLE",
-      "SHARES", "ACTION", "AUDIT_DISCLOSE", "WITNESS", "SYNC_REQ", "SYNC_RESP", "TIMEOUT_VOTE",
+      "SHARES", "ACTION", "AUDIT_DISCLOSE",
       "VIOLATION",
     ]);
     expect(bytesToHex(encodeCanonical(encodeRandCommitBody({

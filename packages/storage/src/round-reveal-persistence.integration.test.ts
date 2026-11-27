@@ -233,7 +233,7 @@ describe("production Sasku receiver with IndexedDB", () => {
     const f = round.fixture;
     try {
       await round.receive(f.action(0, [], 0, "diamonds"));
-      const witness = f.sign(0, "WITNESS", round.game.snapshot.ledger.phase, { heads: [] });
+      const witness = f.sign(0, "VIOLATION", round.game.snapshot.ledger.phase, { heads: [] });
       const play = f.action(0, [0], 1);
       const before = round.game.snapshot.ledger;
       const hand = round.game.snapshot.hand;

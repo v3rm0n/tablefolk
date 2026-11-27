@@ -10,7 +10,7 @@ import {
   type IdentityPublicKey,
 } from "@p2pcards/protocol";
 
-import type { SyncCancellationSignal } from "./persistent-sync-receiver";
+
 import type { ChainHead } from "./sender-chain";
 
 export const MAX_AUTHORED_HISTORY_PAGE_ENVELOPES = 128;
@@ -30,7 +30,7 @@ export interface AuthoredHistoryStore {
 }
 
 export interface AuthoredHistoryReplayOptions {
-  readonly signal?: SyncCancellationSignal;
+  readonly signal?: { readonly aborted: boolean };
   readonly maxEnvelopes?: number;
   readonly maxBytes?: number;
   /** Previously verified and acknowledged prefix on the same live channel. Reconnects must replay from genesis. */

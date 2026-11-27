@@ -1,91 +1,29 @@
-import {
-  decodeAndVerifyEnvelope,
-  decodeWitnessBody,
-  parseIdentityPublicKey,
-  type EnvelopeArtifact,
-  type SyncRequestBody,
-  type WitnessBody,
-} from "@p2pcards/protocol";
+import { bytesEqual } from "@p2pcards/crypto";
+import type { AdvertisedHead, EnvelopeArtifact, SyncRequestBody } from "@p2pcards/protocol";
 
-import { SessionChainRegistry } from "./chain-registry";
-import {
-  DEFAULT_MAX_SYNC_RANGE_ENVELOPES,
-  DEFAULT_MAX_SYNC_RESPONSE_BYTES,
-} from "./sync";
-import { assessWitness, type WitnessAssessment } from "./witness";
+import type { ChainHead } from "./sender-chain";
 
-export type WitnessSyncPlanRejection =
-  | Extract<WitnessAssessment, { status: "rejected" }>
-  | {
-      readonly status: "rejected";
-      readonly reason:
-        | "invalid_artifact"
-        | "limit_exceeded"
-        | "wrong_type"
-        | "witness_not_accepted"
-        | "invalid_witness";
-    };
+export type HeadSyncPlan =
+  | { readonly status: "known" }
+  | { readonly status: "missing" | "conflict"; readonly request: SyncRequestBody };
 
-export type WitnessSyncPlanResult =
-  | {
-      readonly status: "planned";
-      readonly requests: readonly SyncRequestBody[];
-    }
-  | WitnessSyncPlanRejection;
-
-export function planWitnessSyncRequests(
-  registry: SessionChainRegistry,
-  witness: EnvelopeArtifact,
-  maxEnvelopesPerRequest = DEFAULT_MAX_SYNC_RANGE_ENVELOPES,
-): WitnessSyncPlanResult {
-  if (!Number.isSafeInteger(maxEnvelopesPerRequest) || maxEnvelopesPerRequest < 1) {
-    throw new RangeError("maxEnvelopesPerRequest must be a positive safe integer");
+/** Plan the next bounded request using the accepted history of a single authorized author. */
+export function planHeadSyncRequest(
+  claimed: AdvertisedHead,
+  localHead: ChainHead | null,
+  get: (seq: number) => EnvelopeArtifact | undefined,
+  maxEnvelopes = 1,
+): HeadSyncPlan {
+  if (!Number.isSafeInteger(maxEnvelopes) || maxEnvelopes < 1) {
+    throw new RangeError("Sync request limit must be a positive safe integer");
   }
-
-  let artifact: EnvelopeArtifact;
-  try {
-    const bytes = witness.canonicalBytes;
-    if (!(bytes instanceof Uint8Array) || bytes.constructor !== Uint8Array) {
-      return Object.freeze({ status: "rejected", reason: "invalid_artifact" });
-    }
-    if (bytes.byteLength > DEFAULT_MAX_SYNC_RESPONSE_BYTES) {
-      return Object.freeze({ status: "rejected", reason: "limit_exceeded" });
-    }
-    artifact = decodeAndVerifyEnvelope(bytes);
-  } catch {
-    return Object.freeze({ status: "rejected", reason: "invalid_artifact" });
+  const known = get(claimed.seq);
+  if (known) {
+    return bytesEqual(known.hash, claimed.hash) ? { status: "known" }
+      : { status: "conflict", request: { from: claimed.from, fromSeq: claimed.seq, toSeq: claimed.seq } };
   }
-  if (artifact.envelope.type !== "WITNESS") {
-    return Object.freeze({ status: "rejected", reason: "wrong_type" });
-  }
-  // Even an immediately acceptable outer must be ingested by the caller before its claims act.
-  if (registry.classify(artifact).status !== "duplicate") {
-    return Object.freeze({ status: "rejected", reason: "witness_not_accepted" });
-  }
-
-  let body: WitnessBody;
-  try {
-    body = decodeWitnessBody(artifact.envelope.body);
-  } catch {
-    return Object.freeze({ status: "rejected", reason: "invalid_witness" });
-  }
-  const assessment = assessWitness(registry, body);
-  if (assessment.status === "rejected") {
-    return assessment;
-  }
-
-  const requests: SyncRequestBody[] = [];
-  for (const outcome of assessment.outcomes) {
-    if (outcome.status !== "need_sync" && outcome.status !== "conflict") {
-      continue;
-    }
-    const { fromSeq, toSeq } = outcome;
-    requests.push(Object.freeze({
-      from: parseIdentityPublicKey(outcome.claimed.from),
-      fromSeq,
-      // Add only the bounded difference so even a MAX_SAFE_INTEGER claim cannot overflow.
-      toSeq: fromSeq + Math.min(toSeq - fromSeq, maxEnvelopesPerRequest - 1),
-    }));
-  }
-  return Object.freeze({ status: "planned", requests: Object.freeze(requests) });
+  const fromSeq = (localHead?.seq ?? -1) + 1;
+  return { status: "missing", request: {
+    from: claimed.from, fromSeq, toSeq: fromSeq + Math.min(claimed.seq - fromSeq, maxEnvelopes - 1),
+  } };
 }

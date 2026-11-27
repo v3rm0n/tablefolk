@@ -38,14 +38,11 @@ export const ENVELOPE_MESSAGE_TYPES = Object.freeze([
   "SHARES",
   "ACTION",
   "AUDIT_DISCLOSE",
-  "WITNESS",
-  "SYNC_REQ",
-  "SYNC_RESP",
-  "TIMEOUT_VOTE",
   "VIOLATION",
 ] as const);
 
-export type EnvelopeMessageType = (typeof ENVELOPE_MESSAGE_TYPES)[number];
+const LEGACY_ENVELOPE_TYPES = ["WITNESS", "SYNC_REQ", "SYNC_RESP", "TIMEOUT_VOTE"] as const;
+export type EnvelopeMessageType = (typeof ENVELOPE_MESSAGE_TYPES)[number] | (typeof LEGACY_ENVELOPE_TYPES)[number];
 
 export interface UnsignedEnvelope {
   readonly v: typeof ENVELOPE_VERSION;
@@ -102,7 +99,8 @@ const UNSIGNED_KEYS = Object.freeze([
 
 const SIGNED_KEYS = Object.freeze([...UNSIGNED_KEYS, "sig"] as const);
 const verifiedArtifacts = new WeakMap<EnvelopeArtifact, number>();
-const MESSAGE_TYPE_SET: ReadonlySet<string> = new Set(ENVELOPE_MESSAGE_TYPES);
+const SIGNABLE_MESSAGE_TYPES: ReadonlySet<string> = new Set(ENVELOPE_MESSAGE_TYPES);
+const MESSAGE_TYPE_SET: ReadonlySet<string> = new Set([...ENVELOPE_MESSAGE_TYPES, ...LEGACY_ENVELOPE_TYPES]);
 
 export function encodeUnsignedEnvelope(value: UnsignedEnvelope): CanonicalCbor {
   const envelope = parseUnsignedEnvelope(toUnsignedValue(value));
@@ -114,6 +112,9 @@ export function signEnvelope(
   secretKey: Ed25519SecretKey,
 ): EnvelopeArtifact {
   const parsed = parseUnsignedEnvelope(toUnsignedValue(value));
+  if (!SIGNABLE_MESSAGE_TYPES.has(parsed.type)) {
+    throw malformed("Retired housekeeping types cannot be signed");
+  }
   const envelope = { ...parsed, body: decodeCanonical(encodeCanonical(parsed.body)) };
   const signerPublicKey = deriveEd25519PublicKey(secretKey);
   if (!bytesEqual(envelope.from, signerPublicKey)) {

@@ -68,17 +68,6 @@ export {
   type PersistentSessionReceiveResult,
 } from "./persistent-receiver";
 export {
-  DEFAULT_MAX_PENDING_SYNC_RESPONSE_BYTES,
-  DEFAULT_MAX_PENDING_SYNC_RESPONSES,
-  PersistentSyncReceiver,
-  type PersistentSyncReceiverOptions,
-  type PersistentSyncReceiveResult,
-  type SyncHistoryReceiveResult,
-  type SyncHistoryReceiver,
-  type SyncCancellationSignal,
-  type SyncReceiptProgress,
-} from "./persistent-sync-receiver";
-export {
   PersistentLobbyReceiver,
   PersistentLobbyReceiverError,
   type AcceptedLobbyEnvelopeStore,
@@ -113,16 +102,4 @@ export {
   type SyncResponseRejection,
   type SyncServeResult,
 } from "./sync";
-export {
-  planWitnessSyncRequests,
-  type WitnessSyncPlanRejection,
-  type WitnessSyncPlanResult,
-} from "./sync-plan";
-export {
-  assessWitness,
-  currentWitnessBody,
-  HOUSEKEEPING_ENVELOPE_TYPES,
-  shouldEmitImmediateWitness,
-  type WitnessAssessment,
-  type WitnessHeadOutcome,
-} from "./witness";
+export { planHeadSyncRequest, type HeadSyncPlan } from "./sync-plan";

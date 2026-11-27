@@ -95,13 +95,22 @@ export {
   type SyncResponseBody,
 } from "./sync";
 export {
-  decodeWitnessBody,
-  encodeWitnessBody,
-  type WitnessBody,
-  type WitnessHead,
-} from "./witness";
+  decodeHeadsBody,
+  encodeHeadsBody,
+  type HeadsBody,
+  type AdvertisedHead,
+} from "./heads";
 export {
   decodeEquivocationViolationBody,
   encodeEquivocationViolationBody,
   type EquivocationViolationBody,
 } from "./violation";
+export {
+  CHANNEL_CONTROL_PREFIX,
+  MAX_CHANNEL_CONTROL_BYTES,
+  MAX_GAME_ENVELOPE_BYTES,
+  MAX_HISTORY_ENVELOPE_BYTES,
+  decodeChannelControl,
+  encodeChannelControl,
+  type ChannelControl,
+} from "./channel-control";

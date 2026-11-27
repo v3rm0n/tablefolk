@@ -56,7 +56,7 @@ describe("session history capture", () => {
   });
 
   it("preserves empty seats, prefix order, and detached arrays without interpreting any message type", () => {
-    const { session, bySeat, envelopes } = fixture([5, 0, 5, 0, 5]);
+    const { session, bySeat, envelopes } = fixture([4, 0, 4, 0, 3]);
     const heads = session.heads();
     const ingest = vi.spyOn(session, "ingest").mockImplementation(() => { throw new Error("No writes"); });
     const sign = vi.spyOn(protocol, "signEnvelope").mockImplementation(() => { throw new Error("No signing"); });
@@ -66,7 +66,7 @@ describe("session history capture", () => {
     expect(history.bySeat).toEqual(bySeat);
     expect(history.envelopes).toEqual(envelopes);
     expect(history.envelopes.map(({ envelope }) => envelope.type)).toEqual(ENVELOPE_MESSAGE_TYPES);
-    expect(range.mock.calls).toEqual([0, 2, 4].map((seat) => [ROSTER[seat], 0, 4]));
+    expect(range.mock.calls).toEqual([0, 2, 4].map((seat) => [ROSTER[seat], 0, bySeat[seat]!.length - 1]));
     expect(history.envelopes[0]).toBe(history.bySeat[0]![0]);
     expect(history.envelopes[0]).toBe(envelopes[0]);
     history.assertUnchanged();

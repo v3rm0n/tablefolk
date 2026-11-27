@@ -353,7 +353,7 @@ describe("persistent setup private-work boundaries", () => {
       vi.restoreAllMocks();
       const c = persistentSetupFixture();
       await advanceTo(c, type);
-      const ahead = await c.author.author({ round: c.round, phase: "setup.keys", type: "WITNESS", body: { heads: [] } });
+      const ahead = await c.author.author({ round: c.round, phase: "setup.keys", type: "VIOLATION", body: { heads: [] } });
       const secrets = secretStores(c, true);
       const trace = observe(c);
       const before = c.receiver.snapshot;
@@ -376,7 +376,7 @@ describe("persistent setup private-work boundaries", () => {
       if (mode === "unsupported") {
         author = new PersistentEnvelopeAuthor(c.gameId, c.identities[0]!.secretKey, { appendNext: c.store.appendNext.bind(c.store) });
       } else {
-        const predecessor = await c.author.author({ round: c.round, phase: "setup.keys", type: "WITNESS", body: { heads: [] } });
+        const predecessor = await c.author.author({ round: c.round, phase: "setup.keys", type: "VIOLATION", body: { heads: [] } });
         await c.durable.receive(predecessor);
         if (mode === "accepted-only") author = new PersistentEnvelopeAuthor(c.gameId, c.identities[0]!.secretKey, new MemoryStore());
         else {
@@ -407,7 +407,7 @@ describe("persistent setup private-work boundaries", () => {
       const before = c.receiver.snapshot;
       const pending = local(c, secrets, "KEY_SHARE");
       await entered.promise;
-      const housekeeping = await c.author.author({ round: c.round, phase: "setup.keys", type: "WITNESS", body: { heads: [] } });
+      const housekeeping = await c.author.author({ round: c.round, phase: "setup.keys", type: "VIOLATION", body: { heads: [] } });
       if (accepted) await c.durable.receive(housekeeping);
       const sign = vi.spyOn(protocol, "signEnvelope");
       expect(c.receiver.snapshot).toBe(before);

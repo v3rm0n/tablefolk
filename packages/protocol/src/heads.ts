@@ -15,23 +15,23 @@ import {
   ProtocolSchemaError,
 } from "./schema";
 
-export interface WitnessHead {
+export interface AdvertisedHead {
   readonly from: IdentityPublicKey;
   readonly seq: number;
   readonly hash: Hash256;
 }
 
-export interface WitnessBody {
-  readonly heads: readonly WitnessHead[];
+export interface HeadsBody {
+  readonly heads: readonly AdvertisedHead[];
   readonly stateHash?: Hash256;
 }
 
-const MAX_WITNESS_HEADS = 8;
+const MAX_HEADS_HEADS = 8;
 const BODY_KEYS = ["heads"] as const;
 const BODY_WITH_STATE_KEYS = ["heads", "state_hash"] as const;
 const HEAD_KEYS = ["from", "seq", "hash"] as const;
 
-export function encodeWitnessBody(body: WitnessBody): CborMap {
+export function encodeHeadsBody(body: HeadsBody): CborMap {
   const heads = normalizeHeads(body.heads);
   const encodedHeads = heads.map((head) => ({
     from: head.from,
@@ -41,25 +41,25 @@ export function encodeWitnessBody(body: WitnessBody): CborMap {
   if (body.stateHash !== undefined) {
     return {
       heads: encodedHeads,
-      state_hash: decodeHash(body.stateHash, "WITNESS.body.state_hash"),
+      state_hash: decodeHash(body.stateHash, "HEADS.body.state_hash"),
     };
   }
   return { heads: encodedHeads };
 }
 
-export function decodeWitnessBody(value: CborValue): WitnessBody {
+export function decodeHeadsBody(value: CborValue): HeadsBody {
   const body = expectExactMap(
     value,
     hasMapKey(value, "state_hash") ? BODY_WITH_STATE_KEYS : BODY_KEYS,
-    "WITNESS.body",
+    "HEADS.body",
   );
-  const encodedHeads = expectArray(body["heads"], "WITNESS.body.heads");
-  if (encodedHeads.length > MAX_WITNESS_HEADS) {
-    throw new ProtocolSchemaError("WITNESS.body.heads", "must contain at most 8 entries");
+  const encodedHeads = expectArray(body["heads"], "HEADS.body.heads");
+  if (encodedHeads.length > MAX_HEADS_HEADS) {
+    throw new ProtocolSchemaError("HEADS.body.heads", "must contain at most 8 entries");
   }
 
-  const heads = encodedHeads.map((candidate, index): WitnessHead => {
-    const path = `WITNESS.body.heads[${index}]`;
+  const heads = encodedHeads.map((candidate, index): AdvertisedHead => {
+    const path = `HEADS.body.heads[${index}]`;
     const head = expectExactMap(candidate, HEAD_KEYS, path);
     return Object.freeze({
       from: decodeIdentity(head["from"], `${path}.from`),
@@ -72,18 +72,18 @@ export function decodeWitnessBody(value: CborValue): WitnessBody {
   if (Object.hasOwn(body, "state_hash")) {
     return Object.freeze({
       heads: frozenHeads,
-      stateHash: decodeHash(body["state_hash"]!, "WITNESS.body.state_hash"),
+      stateHash: decodeHash(body["state_hash"]!, "HEADS.body.state_hash"),
     });
   }
   return Object.freeze({ heads: frozenHeads });
 }
 
-function normalizeHeads(heads: readonly WitnessHead[]): readonly WitnessHead[] {
-  if (!Array.isArray(heads) || heads.length > MAX_WITNESS_HEADS) {
-    throw new ProtocolSchemaError("WITNESS.body.heads", "must contain at most 8 entries");
+function normalizeHeads(heads: readonly AdvertisedHead[]): readonly AdvertisedHead[] {
+  if (!Array.isArray(heads) || heads.length > MAX_HEADS_HEADS) {
+    throw new ProtocolSchemaError("HEADS.body.heads", "must contain at most 8 entries");
   }
-  const normalized = heads.map((head, index): WitnessHead => {
-    const path = `WITNESS.body.heads[${index}]`;
+  const normalized = heads.map((head, index): AdvertisedHead => {
+    const path = `HEADS.body.heads[${index}]`;
     if (typeof head !== "object" || head === null) {
       throw new ProtocolSchemaError(path, "must be a head object");
     }
@@ -97,13 +97,13 @@ function normalizeHeads(heads: readonly WitnessHead[]): readonly WitnessHead[] {
   return normalized;
 }
 
-function rejectDuplicateSenders(heads: readonly WitnessHead[]): void {
+function rejectDuplicateSenders(heads: readonly AdvertisedHead[]): void {
   const senders = new Set<string>();
   for (const [index, head] of heads.entries()) {
     const sender = bytesToHex(head.from);
     if (senders.has(sender)) {
       throw new ProtocolSchemaError(
-        "WITNESS.body.heads",
+        "HEADS.body.heads",
         `contains duplicate sender at index ${index}`,
       );
     }

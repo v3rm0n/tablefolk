@@ -7,7 +7,7 @@ import {
   encodeJoinBody,
   encodeReadyBody,
   encodeRosterBody,
-  encodeWitnessBody,
+  encodeHeadsBody,
   hashRosterBody,
   parseGameId,
   parseHash256,
@@ -311,8 +311,8 @@ function finalizedFixture() {
   const aliceTail = signEnvelope(
     {
       ...baseEnvelope(ALICE, 2, aliceReady.hash),
-      type: "WITNESS",
-      body: encodeWitnessBody({ heads: [] }),
+      type: "VIOLATION",
+      body: encodeHeadsBody({ heads: [] }),
     },
     ALICE.secretKey,
   );

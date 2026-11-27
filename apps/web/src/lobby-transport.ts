@@ -1,5 +1,5 @@
 import { bytesToHex, type Ed25519KeyPair } from "@p2pcards/crypto";
-import { type GameId, type IdentityPublicKey } from "@p2pcards/protocol";
+import { MAX_CHANNEL_CONTROL_BYTES, type GameId, type IdentityPublicKey } from "@p2pcards/protocol";
 import {
   AuthenticatedPeerChannel, FullMeshTransport,
   type MeshPeerConnectionFactory, type SignalingAdapter,
@@ -14,6 +14,7 @@ interface Peer {
   readonly open: () => void;
   timer: ReturnType<typeof setTimeout> | null;
   channel: AuthenticatedPeerChannel | null;
+  sending: Promise<void>;
 }
 
 export interface LobbyTransportOptions {
@@ -44,7 +45,7 @@ export interface LobbyTransportLike {
   close(): Promise<void>;
 }
 
-/** Authenticated browser mesh. Session readiness is owned by the application history barrier. */
+/** Authenticated browser mesh. Session readiness is owned by the application catch-up flow. */
 export class LobbyTransport implements LobbyTransportLike {
   readonly #mesh: FullMeshTransport;
   readonly #options: LobbyTransportOptions;
@@ -61,7 +62,7 @@ export class LobbyTransport implements LobbyTransportLike {
       onUnauthenticatedDataChannel: (identity, wire, generation) => {
         const key = bytesToHex(identity);
         const peer: Peer = {
-          identity, wire, generation, channel: null, timer: null,
+          identity, wire, generation, channel: null, timer: null, sending: Promise.resolve(),
           open: () => {
             if (this.#closed || this.#peers.get(key) !== peer || peer.channel !== null) { return; }
             wire.removeEventListener("open", peer.open);
@@ -72,8 +73,8 @@ export class LobbyTransport implements LobbyTransportLike {
                 remoteIdentity: identity, localFingerprint: fingerprints.localFingerprint,
                 remoteFingerprint: fingerprints.remoteFingerprint,
                 maxQueuedMessages: 32,
-                reassembler: { maxMessageBytes: 65536, maxPendingBytes: 262144, maxPendingGroups: 8 },
-                sender: { maxPayloadBytes: 65536 },
+                reassembler: { maxMessageBytes: MAX_CHANNEL_CONTROL_BYTES, maxPendingBytes: 262144, maxPendingGroups: 8 },
+                sender: { maxPayloadBytes: MAX_CHANNEL_CONTROL_BYTES },
                 onAuthenticated: () => {
                   if (this.#peers.get(key) !== peer) { return; }
                   options.onAuthenticated(identity, generation);
@@ -134,8 +135,11 @@ export class LobbyTransport implements LobbyTransportLike {
     if (this.#closed || peer?.generation !== generation || !peer.channel?.authenticated) {
       throw new Error("Lobby connection was replaced or is not authenticated");
     }
-    if (payload.length > 65536) { throw new Error("Envelope exceeds 64 KiB"); }
-    await peer.channel.send(payload);
+    if (payload.length > MAX_CHANNEL_CONTROL_BYTES) throw new Error("Lobby payload exceeds size limit");
+    const channel = peer.channel;
+    const sending = peer.sending.then(() => channel.send(payload));
+    peer.sending = sending.catch(() => undefined);
+    await sending;
   }
 
   #fail(peer: Peer, cause: unknown): void {

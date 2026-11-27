@@ -109,7 +109,7 @@ describe("Sasku round inbox admission", () => {
     const variants: readonly (readonly [Partial<UnsignedEnvelope>, SaskuRoundInboxErrorCode])[] = [
       [{ game: parseGameId(new Uint8Array(16).fill(0x7f)) }, "wrong_game"],
       [{ round: c.f.round + 1 }, "wrong_round"],
-      [{ type: "WITNESS", body: { heads: [] } }, "wrong_type"],
+      [{ type: "VIOLATION", body: { heads: [] } }, "wrong_type"],
       [{ type: "KEY_SHARE", body: {} }, "wrong_type"],
       ...["00", "-0", "+0", "0.0", "0e0", "", "-1", "4"].map((suffix) =>
         [{ phase: `round.${c.f.round}.deal.${suffix}` }, "wrong_phase"] as const),
@@ -215,10 +215,10 @@ describe("Sasku round inbox scheduling", () => {
     expect(inbox.pendingBytes).toBe(0);
   });
 
-  it("leaves gaps pending and requires explicit notification after out-of-band WITNESS receipt", async () => {
+  it("leaves gaps pending and requires explicit notification after out-of-band envelope receipt", async () => {
     const c = await context({}, undefined, false);
     const inbox = inboxFor(c);
-    const control = await c.authors[1]!.author({ round: c.f.round, phase: c.game.snapshot.ledger.phase, type: "WITNESS", body: { heads: [] } });
+    const control = await c.authors[1]!.author({ round: c.f.round, phase: c.game.snapshot.ledger.phase, type: "VIOLATION", body: { heads: [] } });
     const message = await native(c, c.f.deal(0, 1));
     const receive = vi.spyOn(c.game, "receive");
     const write = vi.spyOn(c.store, "persistAcceptedEnvelope");
@@ -481,7 +481,7 @@ describe("Sasku round inbox failures and lifecycle", () => {
     const inbox = inboxFor(c);
     const message = await native(c, c.f.deal(0, 1));
     const broken = signEnvelope({ ...message.envelope, prev: parseHash256(new Uint8Array(32).fill(0xaa)) }, c.f.identities[1]!.secretKey);
-    const control = await c.authors[2]!.author({ round: c.f.round, phase: c.game.snapshot.ledger.phase, type: "WITNESS", body: { heads: [] } });
+    const control = await c.authors[2]!.author({ round: c.f.round, phase: c.game.snapshot.ledger.phase, type: "VIOLATION", body: { heads: [] } });
     await c.durable.receive(control);
     const body = c.f.deal(0, 2).envelope.body;
     const equivocation = signEnvelope({ ...control.envelope, type: "SHARES", body }, c.f.identities[2]!.secretKey);
