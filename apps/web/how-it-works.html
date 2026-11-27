@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="referrer" content="no-referrer" />
-    <meta name="description" content="The connection, signed history, shuffle proofs, private deal, and audit behind peer-to-peer Sasku." />
-    <meta name="theme-color" content="#ebe2cc" />
-    <title>How a P2P card game works — Tablefolk</title>
+    <meta name="description" content="How peer-to-peer Sasku connects players, shuffles the deck, deals private hands, and audits each round." />
+    <meta name="theme-color" content="#efe9dd" />
+    <title>How it works — Tablefolk</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
@@ -14,107 +14,137 @@
       <a class="reference-back" href="./">← Back to game</a>
 
       <section class="technical-hero" aria-labelledby="technical-title">
-        <p class="eyebrow">Technical walkthrough</p>
-        <h1 id="technical-title">How does a P2P <br /><em>card game work?</em></h1>
-        <p class="technical-lede">Sasku uses Nostr relays to set up WebRTC connections. The four browsers then exchange signed game records, jointly shuffle an encrypted deck, open private hands, and audit every play.</p>
+        <h1 id="technical-title">How peer-to-peer Sasku works</h1>
+        <p class="technical-lede">There is no game server holding the deck. Four browsers use Nostr relays to establish WebRTC links, then jointly encrypt and shuffle the 36 cards, deal private hands, and verify every play against a signed transcript.</p>
         <nav class="technical-jump" aria-label="On this page">
-          <a href="#connection"><span>01</span> Connect the players <span aria-hidden="true">↘</span></a>
-          <a href="#game"><span>02</span> Play the game <span aria-hidden="true">↘</span></a>
+          <a href="#connection">Connecting the table</a>
+          <a href="#game">Playing a hand</a>
+          <a href="#privacy">Privacy &amp; limits</a>
         </nav>
       </section>
 
       <section class="technical-chapter" id="connection" aria-labelledby="connection-title">
         <div class="technical-section-heading">
-          <p class="eyebrow">01 / Connection</p>
-          <div><h2 id="connection-title">First, the browsers find each other.</h2><p>A relay introduces the players. Once the links are ready, the four browsers exchange game messages directly.</p></div>
+          <h2 id="connection-title">Connecting the table</h2>
+          <p>A public relay introduces the four browsers. Once direct links open, all game traffic stays between the players.</p>
         </div>
         <ol class="technical-connection-flow">
           <li class="technical-connection-step">
-            <div class="technical-connection-art technical-connection-art--invite" aria-hidden="true">
-              <div class="technical-invite"><span class="technical-invite__top">SASKU TABLE <span>↗</span></span><strong>Join the game</strong><small>Table ID · Host identity</small></div>
+            <div class="technical-connection-copy">
+              <span class="technical-step-label">Step 1</span>
+              <h3>Invitation link</h3>
+              <p>The URL fragment carries the 16-byte game ID, the host’s Ed25519 public key, and the rules profile. Because it sits after <code>#</code>, the fragment is never sent in HTTP requests.</p>
             </div>
-            <div class="technical-connection-copy"><span class="technical-step-label">01 / Invitation</span><h3>Share a table link</h3><p>The link identifies the table and the host’s public identity. Each invited player opens it in their own browser.</p></div>
           </li>
           <li class="technical-connection-step">
-            <div class="technical-connection-art technical-connection-art--relay" aria-hidden="true">
-              <div class="technical-relay-graphic"><span class="technical-relay-peer">1</span><span class="technical-relay-dashes"></span><span class="technical-relay-hub">relay</span><span class="technical-relay-dashes"></span><span class="technical-relay-peer">2</span></div>
-              <small>Connection setup only</small>
+            <div class="technical-connection-copy">
+              <span class="technical-step-label">Step 2</span>
+              <h3>Relay introduction</h3>
+              <p>Browsers exchange room-encrypted WebRTC offers and ICE network candidates over Nostr relays. Relays only pass connection setup messages, never game moves.</p>
             </div>
-            <div class="technical-connection-copy"><span class="technical-step-label">02 / Introduction</span><h3>Exchange connection details</h3><p>Nostr relays carry encrypted offers and network candidates, so browsers can find a WebRTC route. The relays do not carry game moves.</p></div>
           </li>
           <li class="technical-connection-step">
-            <div class="technical-connection-art technical-connection-art--mesh" aria-hidden="true">
-              <svg class="technical-mesh" viewBox="0 0 240 145" focusable="false">
-                <path d="M56 26 184 26 184 119 56 119Z M56 26 184 119 M184 26 56 119" />
-                <g><circle cx="56" cy="26" r="17" /><circle cx="184" cy="26" r="17" /><circle cx="56" cy="119" r="17" /><circle cx="184" cy="119" r="17" /></g>
-                <g class="technical-mesh__numbers"><text x="56" y="27">1</text><text x="184" y="27">2</text><text x="56" y="120">3</text><text x="184" y="120">4</text></g>
-              </svg>
-              <small>Six browser-to-browser links</small>
+            <div class="technical-connection-copy">
+              <span class="technical-step-label">Step 3</span>
+              <h3>Authenticated mesh</h3>
+              <p>Every pair opens a direct WebRTC data channel and signs both DTLS certificate fingerprints. The host then signs the four-seat roster, and all four players sign readiness.</p>
             </div>
-            <div class="technical-connection-copy"><span class="technical-step-label">03 / Peer network</span><h3>Verify and connect</h3><p>Every pair forms a WebRTC link and checks signed identities. The four players agree on the roster and rules, then synchronize their signed history.</p></div>
           </li>
         </ol>
-        <div class="technical-connection-result"><span aria-hidden="true">✓</span><p><strong>Now the table is connected.</strong> Game actions travel between the browsers over authenticated peer links. The relay’s job was the introduction.</p></div>
-        <p class="technical-connection-caveat">Some networks block browser-to-browser links. This build has no TURN fallback, so a table cannot start if those links fail.</p>
+
         <div class="technical-trace" aria-labelledby="connection-trace-title">
-          <div class="technical-trace-heading"><p class="eyebrow">Protocol trace / connection</p><div><h3 id="connection-trace-title">From invitation to a ready peer.</h3><p>These checks establish identity and catch up history before anyone makes a new move.</p></div></div>
+          <div class="technical-trace-heading">
+            <h3 id="connection-trace-title">Connection messages</h3>
+            <p>Each peer verifies identity and catches up on saved history before any card is dealt.</p>
+          </div>
           <dl class="technical-trace-list">
-            <div><dt><code>g · h · r · s</code> Invitation fragment</dt><dd>The URL fragment names the 16-byte game ID, the host’s Ed25519 public key, and the rules and signaling profiles. The host key is the first identity to trust. URL fragments are not sent with the page’s HTTP request.</dd></div>
-            <div><dt><code>SDP / ICE</code> Signaling</dt><dd>Browsers exchange WebRTC offers, answers, and ICE candidates through Nostr relay WebSockets. A room-derived AES-GCM key encrypts this traffic, but does not prove a player’s identity; the later HELLO does. STUN helps find reachable addresses; this build has no TURN relay.</dd></div>
-            <div><dt><code>HELLO</code> Peer authentication</dt><dd>After a WebRTC data channel opens, each side signs a message binding its Ed25519 identity, this game ID, and both observed DTLS certificate fingerprints. Application messages remain blocked until both directions pass.</dd></div>
-            <div><dt><code>ROSTER / READY</code> Table agreement</dt><dd>The host signs the four-seat roster and the rules hash. Every player signs readiness for that exact roster hash, so a peer cannot quietly change the players or match rules.</dd></div>
-            <div><dt><code>seq / prev</code> History and catch-up</dt><dd>Every durable record uses canonical CBOR and an Ed25519 signature, with its author’s sequence number and previous hash. Peers replay the original bytes, reject gaps or conflicts, and acknowledge an exact history prefix only after saving and validating it. New actions wait for all three peers to catch up.</dd></div>
+            <div><dt><code>g · h · r · s</code> Invitation</dt><dd>Encodes the game ID, host Ed25519 public key, rules profile, and signaling adapter in the URL hash.</dd></div>
+            <div><dt><code>SDP / ICE</code> Signaling</dt><dd>WebRTC session descriptions and candidates encrypted with a room-derived AES-GCM key. STUN finds reachable addresses; TURN is not configured.</dd></div>
+            <div><dt><code>HELLO</code> Channel auth</dt><dd>Binds each player’s Ed25519 identity to the game ID and both observed DTLS certificate fingerprints before unlocking game traffic.</dd></div>
+            <div><dt><code>ROSTER / READY</code> Agreement</dt><dd>The host signs the four-seat order and rules hash. Every seat signs readiness for that exact hash.</dd></div>
+            <div><dt><code>seq / prev</code> Transcript chain</dt><dd>Every record is canonical CBOR signed with Ed25519, chained by sequence number and previous hash. Browsers replay and validate the exact bytes on reload.</dd></div>
           </dl>
         </div>
       </section>
 
       <section class="technical-chapter" id="game" aria-labelledby="game-title">
         <div class="technical-section-heading">
-          <p class="eyebrow">02 / The game</p>
-          <div><h2 id="game-title">Then they play each round together.</h2><p>The dealer seat rotates after each hand. Each browser keeps its own secrets and checks every public step.</p></div>
+          <h2 id="game-title">Playing a hand</h2>
+          <p>The deal rotates each round. Every browser holds its own secret key share and checks every proof locally.</p>
         </div>
         <ol class="technical-game-grid">
           <li class="technical-game-card">
-            <div class="technical-game-art technical-game-art--deck" aria-hidden="true"><div class="technical-deck"><span></span><span></span><span>36</span></div><div class="technical-four-keys"><span>1</span><span>2</span><span>3</span><span>4</span></div></div>
-            <div class="technical-game-copy"><span class="technical-step-label">01 / Prepare</span><h3>Lock and shuffle</h3><p>Each player adds a secret key share. Together they encrypt the 36 cards, then each browser shuffles and remasks the deck. A proof shows the deck is still complete without revealing its order.</p></div>
+            <div class="technical-game-copy">
+              <span class="technical-step-label">Step 1</span>
+              <h3>Joint key &amp; shuffle</h3>
+              <p>All four seats contribute public key shares to form one ElGamal deck key. Each player permutes and re-masks the 36 cards in turn, attaching a zero-knowledge shuffle proof.</p>
+            </div>
           </li>
           <li class="technical-game-card">
-            <div class="technical-game-art technical-game-art--deal" aria-hidden="true"><div class="technical-deal-view"><span>Your browser</span><div class="technical-mini-card technical-mini-card--open">A♠</div></div><div class="technical-deal-divider">≠</div><div class="technical-deal-view"><span>Other browsers</span><div class="technical-mini-card technical-mini-card--closed">?</div></div></div>
-            <div class="technical-game-copy"><span class="technical-step-label">02 / Deal</span><h3>Open only your hand</h3><p>The other three players publish verified decryption shares for your cards. Your browser adds its own private share and opens your nine cards locally. Nobody else gets that last share.</p></div>
+            <div class="technical-game-copy">
+              <span class="technical-step-label">Step 2</span>
+              <h3>Private deal</h3>
+              <p>Each seat owns nine encrypted deck positions. The other three players publish verified decryption shares for those cards; you combine them with your local secret to read your hand.</p>
+            </div>
           </li>
           <li class="technical-game-card">
-            <div class="technical-game-art technical-game-art--play" aria-hidden="true"><div class="technical-mini-card technical-mini-card--closed">?</div><span class="technical-reveal-arrow">→</span><div class="technical-mini-card technical-mini-card--open technical-mini-card--red">Q♥</div><span class="technical-play-caption">Public trick</span></div>
-            <div class="technical-game-copy"><span class="technical-step-label">03 / Play</span><h3>Reveal one card at a time</h3><p>Bids and trump are public. When you play, you sign the move and reveal that card’s missing share. Everyone opens the played card and updates the same trick; the rest of your hand stays hidden.</p></div>
+            <div class="technical-game-copy">
+              <span class="technical-step-label">Step 3</span>
+              <h3>Bidding &amp; tricks</h3>
+              <p>Bids and trump selection are signed public actions. Playing a card reveals your own decryption share and proof for that single position so the table can open it.</p>
+            </div>
           </li>
           <li class="technical-game-card">
-            <div class="technical-game-art technical-game-art--audit" aria-hidden="true"><div class="technical-audit-sheet"><span>✓ <i>36 cards accounted for</i></span><span>✓ <i>Plays and ownership checked</i></span><span>✓ <i>Score checked locally</i></span></div></div>
-            <div class="technical-game-copy"><span class="technical-step-label">04 / Audit</span><h3>Check the finished hand</h3><p>By the ninth trick, all 36 cards are open. Every browser checks ownership, bids, following suit, and scoring against the signed record. Hidden-hand violations can be caught at this final audit.</p></div>
+            <div class="technical-game-copy">
+              <span class="technical-step-label">Step 4</span>
+              <h3>Full-hand audit</h3>
+              <p>After the ninth trick, all 36 cards are open. Every browser replays the hand to verify card ownership, bids, and suit-following rules before recording the score.</p>
+            </div>
           </li>
         </ol>
+
         <div class="technical-trace" aria-labelledby="game-trace-title">
-          <div class="technical-trace-heading"><p class="eyebrow">Protocol trace / round</p><div><h3 id="game-trace-title">What each signed message does.</h3><p>The same record is checked independently by all four browsers.</p></div></div>
+          <div class="technical-trace-heading">
+            <h3 id="game-trace-title">Round messages</h3>
+            <p>All four browsers validate the same signed envelopes independently.</p>
+          </div>
           <dl class="technical-trace-list">
-            <div><dt><code>KEY_SHARE</code> Joint encryption key</dt><dd>Each seat publishes a public key share with a proof that it knows the matching secret. The shares form one public deck key; no browser has the whole private key. The four players also commit and reveal a seed. This match profile starts with player 4 as dealer, rotates the dealer, and fixes the deal order.</dd></div>
-            <div><dt><code>SHUFFLE</code> Verified mixing</dt><dd>The 36 known cards become encrypted positions. Each seat permutes and re-encrypts the deck in turn, then publishes a candidate Bayer–Groth shuffle proof. Peers verify it in a temporary WASM worker before accepting the next shuffle.</dd></div>
-            <div><dt><code>SHARES</code> Private deal</dt><dd>Each seat receives nine encrypted positions. The three non-owners publish proven decryption shares for those positions. Only the owner combines them with its own secret share to learn the cards; its game key is saved locally so the hand can be rebuilt after a reload.</dd></div>
-            <div><dt><code>ACTION</code> Bids, trump, and plays</dt><dd>A signed action records each turn. A play includes the owner’s missing decryption share and proof, so everyone can open that one card and verify the public trick. Whether an earlier player illegally failed to follow suit cannot be known until their whole hand is open.</dd></div>
-            <div><dt><code>AUDIT_DISCLOSE</code> Final replay</dt><dd>Once all 36 cards have been played, each seat signs a final participation marker. The markers disclose no additional cards. Each browser reconstructs the original hands, replays the action history, and adds a valid score to the match locally. Play continues until a partnership reaches 12 game points.</dd></div>
+            <div><dt><code>KEY_SHARE</code> Deck key</dt><dd>Each seat publishes a Ristretto255 public key share and Schnorr proof of knowledge. The combined key locks the deck; no single player knows the full secret key.</dd></div>
+            <div><dt><code>SHUFFLE</code> Verified mix</dt><dd>Seats 1 through 4 shuffle and re-encrypt the 36-card deck sequentially, producing a Bayer–Groth shuffle proof verified in a WebAssembly worker.</dd></div>
+            <div><dt><code>SHARES</code> Card deal</dt><dd>For each seat’s nine positions, the three non-owners publish Chaum–Pedersen proven decryption shares. Your private key stays in IndexedDB so reloads restore your hand.</dd></div>
+            <div><dt><code>ACTION</code> Bids &amp; plays</dt><dd>Records a bid, pass, diamonds call, trump choice, or card play. Card plays attach the owner’s decryption share so everyone can open that card.</dd></div>
+            <div><dt><code>AUDIT_DISCLOSE</code> Verification</dt><dd>Once all nine tricks finish, each seat signs an audit marker. Every browser checks that earlier plays followed suit and awards game points toward the 12-point target.</dd></div>
           </dl>
         </div>
       </section>
 
-      <section class="technical-privacy" aria-labelledby="privacy-title">
-        <div><p class="eyebrow">The privacy boundary</p><h2 id="privacy-title">Your unplayed cards stay in your browser.</h2><p>The public record includes the roster, bids, trump, proofs, played cards, and scores. Those clues can narrow what another player might hold, but they do not reveal the unplayed cards themselves.</p></div>
-        <div class="technical-privacy-split" aria-label="Information visible during a round"><div><span class="technical-privacy-icon" aria-hidden="true">♠</span><strong>Only you can open</strong><p>Your unplayed hand and your private key share.</p></div><div><span class="technical-privacy-icon" aria-hidden="true">✓</span><strong>Everyone can verify</strong><p>The public actions, opened cards, and shuffle proofs.</p></div></div>
+      <section class="technical-privacy" id="privacy" aria-labelledby="privacy-title">
+        <div>
+          <h2 id="privacy-title">What stays private</h2>
+          <p>The public transcript contains the roster, bids, trump suit, shuffle proofs, played cards, and scores. Your unplayed cards and your private key share never leave your browser.</p>
+        </div>
+        <div class="technical-privacy-split" aria-label="Information visible during a round">
+          <div>
+            <strong>Local to your browser</strong>
+            <p>Your unplayed cards and your secret key share in IndexedDB.</p>
+          </div>
+          <div>
+            <strong>Verified by all players</strong>
+            <p>Signed bids, opened cards, shuffle proofs, and end-of-hand audits.</p>
+          </div>
+        </div>
       </section>
 
       <section class="technical-scope" aria-labelledby="scope-title">
-        <p class="eyebrow">Current build</p>
-        <h2 id="scope-title">An experimental full game.</h2>
-        <p>All four players must stay connected. On reload, a browser rechecks saved signatures and shuffle proofs before rebuilding the match and its current hand from the local key. The one-tab demo uses local message delivery in place of WebRTC; the game steps are the same.</p>
-        <p>The shuffle proof backend still awaits independent review. Privacy assumes working cryptography, at least one honest shuffler, and private local keys. A player can also stall the game by withholding messages or disconnecting.</p>
-        <p class="technical-further">For exact formats and limits, read the <a href="https://github.com/v3rm0n/tablefolk/blob/main/docs/first-playable-round.md">first-round implementation profile</a> and <a href="https://github.com/v3rm0n/tablefolk/blob/main/docs/protocol-profile.md">wire protocol</a>.</p>
-        <div class="technical-next"><a class="button button--primary" href="./">Play Sasku <span aria-hidden="true">→</span></a><a class="reference-link" href="./scoring.html">Scoring reference <span aria-hidden="true">→</span></a></div>
+        <h2 id="scope-title">Current limitations</h2>
+        <p>All four players must stay online to advance a hand. If you reload, your browser re-verifies saved signatures and shuffle proofs before restoring your hand from local storage. Strict NATs or firewalls may block direct WebRTC links because no TURN relay is configured.</p>
+        <p>The shuffle proof implementation is experimental and has not undergone independent cryptographic audit. A disconnected or unresponsive peer can stall the table.</p>
+        <p class="technical-further">Specifications: <a href="https://github.com/v3rm0n/tablefolk/blob/main/docs/first-playable-round.md">First-round profile</a> · <a href="https://github.com/v3rm0n/tablefolk/blob/main/docs/protocol-profile.md">Wire protocol</a></p>
+        <div class="technical-next">
+          <a class="button button--primary" href="./">Back to table</a>
+          <a class="reference-link" href="./scoring.html">Scoring reference</a>
+          <a class="reference-link" href="./demo.html">Local demo</a>
+        </div>
       </section>
     </main>
   </body>

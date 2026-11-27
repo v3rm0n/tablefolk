@@ -35,24 +35,32 @@ export function DemoApp({ session }: { readonly session: DemoSession }) {
   return <div className="demo-page">
     <header className="demo-toolbar">
       <div className="demo-toolbar__top">
-        <div><h1>Demo</h1><p>Switch players to see each hand.</p></div>
-        <div className="demo-toolbar__links"><a href="./">Back to game</a><button className="button button--secondary" disabled={starting} onClick={() => void restart()}>New demo table</button></div>
+        <div>
+          <p className="eyebrow">Local sandbox</p>
+          <h1>Four-player demo</h1>
+          <p>All four seats run in this tab with separate encrypted hands. Switch tabs to view any seat.</p>
+        </div>
+        <div className="demo-toolbar__links">
+          <a href="./">← Back to game</a>
+          <button className="button button--secondary" disabled={starting} onClick={() => void restart()}>New demo table</button>
+        </div>
       </div>
       <div className="demo-seats" role="tablist" aria-label="Demo players">
         {snapshots.map((snapshot, index) => {
           const active = game?.state?.hand.turn === index && ["bidding", "choosing_trump", "playing"].includes(game.phase);
           return <button key={index} type="button" role="tab" aria-selected={selected === index} aria-controls="demo-player-view" className={`demo-seat${selected === index ? " is-selected" : ""}${active ? " is-turn" : ""}`}
             onClick={() => { setSelected(index); setFollowTurn(false); }}>
-            <strong>Player {index + 1}</strong><span>{active ? "Your turn" : snapshot.game ? "At the table" : snapshot.room ? snapshot.room.ownReady ? "Ready" : "Not ready" : "Opening"}</span>
+            <strong>Player {index + 1}</strong>
+            <span>{active ? "Active turn" : snapshot.game ? `Team ${index % 2 === 0 ? "1 + 3" : "2 + 4"}` : snapshot.room ? snapshot.room.ownReady ? "Ready" : "Not ready" : "Starting…"}</span>
           </button>;
         })}
       </div>
       <div className="demo-controls">
-        <label><input type="checkbox" checked={followTurn} onChange={event => setFollowTurn(event.target.checked)} /> Follow the turn automatically</label>
+        <label><input type="checkbox" checked={followTurn} onChange={event => setFollowTurn(event.target.checked)} /> Automatically switch to active player</label>
         {turn !== null && turn !== undefined && !followTurn && <button className="button button--quiet" onClick={() => { setSelected(turn); setFollowTurn(true); }}>Go to player {turn + 1}</button>}
       </div>
     </header>
     {error && <div className="demo-message notice notice--error" role="alert">{error} <button className="button button--secondary" onClick={() => void restart()}>Try again</button></div>}
-    {starting ? <div className="demo-message" role="status">Opening four local players…</div> : <div id="demo-player-view" role="tabpanel" aria-label={`Player ${selected + 1} view`}><App key={selected} controller={session.controllers[selected]!} demo /></div>}
+    {starting ? <div className="demo-message" role="status">Starting four local players and shuffling the deck…</div> : <div id="demo-player-view" role="tabpanel" aria-label={`Player ${selected + 1} view`}><App key={selected} controller={session.controllers[selected]!} demo /></div>}
   </div>;
 }
