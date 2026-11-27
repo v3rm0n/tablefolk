@@ -134,6 +134,7 @@ test("four isolated browser identities play a complete Sasku match and recover a
     await expect(pages[2]!.getByLabel("Custom Nostr relays")).toHaveValue(relayUrl);
     await pages[2]!.getByRole("button", { name: "Join this table" }).click();
     for (const page of pages) { await expect(page.getByRole("button", { name: /^(Not ready|Ready)$/ })).toBeVisible(); }
+    await expect(pages[0]!.locator(".diagnostics > summary")).toContainText("3 verified links");
     expect(await ownFingerprint(pages[2]!)).toBe(identities[2]);
     const tableBounds = await pages[0]!.getByLabel("Table seats").boundingBox();
     for (const seat of await pages[0]!.locator(".seat").all()) {
