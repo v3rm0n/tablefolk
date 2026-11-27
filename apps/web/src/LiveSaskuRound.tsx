@@ -1,3 +1,4 @@
+import type { TableStatus } from "./lobby-types";
 import { useState } from "react";
 import type { SaskuActionIntent } from "@p2pcards/game-sasku";
 import { SASKU_SUITS, parseSaskuCard } from "@p2pcards/rules-sasku";
@@ -7,12 +8,12 @@ import { compareSaskuHandCards } from "./sasku-hand-order";
 
 const SUIT_LABELS = { clubs: "Clubs", spades: "Spades", hearts: "Hearts", diamonds: "Diamonds" } as const;
 
-export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (intent: SaskuActionIntent) => Promise<void> }) {
+export function LiveSaskuRound({ view, act, table, vote }: { view: LiveRoundView; act: (intent: SaskuActionIntent) => Promise<void>; table: TableStatus | null; vote: () => Promise<void> | undefined }) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const state = view.state?.hand;
   const mine = state?.turn === view.seat;
-  const yourTurn = mine && ["bidding", "choosing_trump", "playing"].includes(view.phase);
+  const yourTurn = view.connected && mine && ["bidding", "choosing_trump", "playing"].includes(view.phase);
   const enabled = mine && view.connected && !submitting && !view.error;
   const send = async (intent: SaskuActionIntent) => {
     setError(null); setSubmitting(true);
@@ -29,13 +30,13 @@ export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (inten
   const showingLast = Boolean(last && state?.trick.length === 0);
   const displayedTrick = showingLast ? last!.plays : state?.trick ?? [];
   const turnLabel = view.phase === "bidding" ? "Your turn to bid" : view.phase === "choosing_trump" ? "Choose your trump" : "Your turn to play";
-  const title = done
+  const title = table?.ended ? "Table ended" : done
     ? view.match.winner === team ? "Your team won the game" : "The opponents won the game"
     : view.phase === "complete" ? `Round ${view.match.round} complete`
     : view.phase === "audit" ? "Verifying hand"
     : preparing ? "Dealing round"
     : mine ? turnLabel : `Player ${(state?.turn ?? 0) + 1}’s turn`;
-  const instruction = preparing
+  const instruction = table?.ended ? "You can leave the table whenever you are ready." : preparing
     ? !view.connected ? "Waiting for all four players to connect."
       : view.phase === "setup" ? "Exchanging round keys with the table."
       : view.phase === "shuffle" ? view.message
@@ -66,6 +67,16 @@ export function LiveSaskuRound({ view, act }: { view: LiveRoundView; act: (inten
         {preparing ? "Dealing" : done ? "Match over" : yourTurn ? "Your turn" : `Seat ${view.seat + 1}`}
       </span>
     </header>
+    {table?.ended ? <p role="status" className="notice notice--error">{table.ended}</p>
+      : !done && !!table?.disconnected.length && <div className="notice" aria-label="Disconnected players">
+        <p role="status">{table.disconnected.map(seat => `Player ${seat + 1}`).join(", ")} {table.disconnected.length === 1 ? "is" : "are"} disconnected. Play resumes when all players reconnect.</p>
+        {table.canVote && <div className="hand-action-buttons">
+          <button className="button button--secondary" disabled={table.voted} onClick={() => void vote()?.catch(cause => setError(cause instanceof Error ? cause.message : "Could not vote"))}>
+            {table.voted ? "Vote cast" : "Vote to end table"}
+          </button>
+          <span role="status">{table.votes} of {table.needed} connected players voted to end the table.</span>
+        </div>}
+      </div>}
     {(view.error || error) && <p role="alert" className="notice notice--error">{view.error ?? error}</p>}
     <div className="live-scoreboard" aria-label="Round scoreboard">
       <div>

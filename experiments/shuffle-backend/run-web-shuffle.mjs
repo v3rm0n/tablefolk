@@ -18,7 +18,7 @@ try {
   const check = async url => {
     await page.goto(url);
     const result = await page.evaluate(() => globalThis.runWebShuffleChecks());
-    assert.deepEqual(result, { cancelled: true, invalidRejected: true, accepted: ["accepted", "accepted", "accepted", "accepted"], complete: true, deckSize: 36, durable: { recoveredSeats: [1, 2, 3, null], complete: true, deckSize: 36, authoredSequence: 3, hand: { privateHandSizes: [9, 9, 9, 9], plays: 36, audit: "valid", recovered: true }, coordinated: { reverseHistoryEnvelopes: 57, audit: "valid", pending: 0, sync: "range_received" } } });
+    assert.deepEqual(result, { cancelled: true, invalidRejected: true, accepted: ["accepted", "accepted", "accepted", "accepted"], complete: true, deckSize: 36, durable: { recoveredSeats: [1, 2, 3, null], complete: true, deckSize: 36, authoredSequence: 3, hand: { privateHandSizes: [9, 9, 9, 9], plays: 36, audit: "valid", recovered: true }, coordinated: { reverseHistoryEnvelopes: 57, audit: "valid", pending: 0, sync: "duplicate" } } });
     return result;
   };
   const development = await check(`${server.resolvedUrls.local[0]}experiments/shuffle-backend/web-shuffle-harness.html`);

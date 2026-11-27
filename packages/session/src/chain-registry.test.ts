@@ -55,7 +55,7 @@ describe("established session chain registry", () => {
     ).toThrow(/invalid Ed25519/);
   });
 
-  it("routes accepted envelopes and emits witness heads in seat order", () => {
+  it("routes accepted envelopes and returns advertised heads in seat order", () => {
     const registry = registryForThree();
     const fromCarol = signed(CAROL, GAME, 0, ZERO_HASH, "carol");
     const fromAlice = signed(ALICE, GAME, 0, ZERO_HASH, "alice");

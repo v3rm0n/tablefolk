@@ -34,7 +34,7 @@ Key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be interpreted as in
 ### 1.2 Non-goals
 
 - Collusion through side channels (voice call, chat). Players who share their hands out of band are indistinguishable from a single player.
-- Abort resistance. A player can always disconnect. Aborts are detected, attributed and treated as forfeit; they are not prevented.
+- Abort resistance. A player can always disconnect. Disconnects pause play. The remaining players can vote to end the table.
 - Remote client integrity. The protocol is designed so that a modified client gains no advantage; it does not attempt to attest remote software.
 - Availability of third-party signaling or TURN infrastructure.
 - Matchmaking, ranking, spectators, cross-device persistence.
@@ -65,7 +65,7 @@ The honest player runs an unmodified client in a browser with a functioning CSPR
 |                   distributed reveal, randomness beacon   |
 +-----------------------------------------------------------+
 | Session layer     identity, signed envelopes, hash chain, |
-|                   witness/equivocation, sync, transcript  |
+|                   heads/equivocation, sync, transcript  |
 +-----------------------------------------------------------+
 | Transport         WebRTC full mesh, ICE (STUN/TURN),      |
 |                   signaling adapters, channel auth,       |
@@ -256,13 +256,13 @@ Every envelope is sent by its author to all N−1 peers. There is no relaying of
 
 ### 6.5 Head exchange and equivocation detection
 
-A sender could send different envelopes with the same `seq` to different peers. To detect this without bloating the signed per-sender hash chain, peers exchange ephemeral (unchained) `HEADS { heads: [{from, seq, hash}], state_hash? }` messages over the DTLS+`HELLO`-authenticated data channels on connect/reconnect and periodically while idle (target architecture tracked in `#4`; `main` currently implements signed `WITNESS` envelopes—see [protocol.md](protocol.md)).
+A sender could send different envelopes with the same `seq` to different peers. To detect this without bloating the signed per-sender hash chain, peers exchange ephemeral (unchained) `HEADS { heads: [{from, seq, hash}], state_hash? }` messages over the DTLS+`HELLO`-authenticated data channels on connect/reconnect and periodically during the connection. See [protocol.md](protocol.md) for framing and request correlation.
 
-On receiving `HEADS` whose `(from, seq, hash)` conflicts with its own view for the same `(from, seq)`, a peer sends an ephemeral `SYNC_REQ` for that envelope. If it obtains two validly signed envelopes with equal `(from, seq)` and different hashes, it broadcasts a signed `VIOLATION { seat, reason: "equivocation", evidence: [env1, env2] }`. Equivocation evidence is self-certifying and ends the game with the equivocating seat forfeiting.
+On receiving `HEADS` whose `(from, seq, hash)` conflicts with its own view for the same `(from, seq)`, a peer sends an ephemeral `SYNC_REQ` for that envelope. If it obtains two validly signed envelopes with equal `(from, seq)` and different hashes, it broadcasts a signed `VIOLATION { seat, reason: "equivocation", evidence: [env1, env2] }`. Equivocation evidence is self-certifying and ends the table, identifying the equivocating seat.
 
 ### 6.6 Sync
 
-`SYNC_REQ { from, from_seq, to_seq }` requests a range of one sender's signed envelopes; `SYNC_RESP { envelopes }` returns them. In the target architecture (`#4`), `HEADS`, `SYNC_REQ`, and `SYNC_RESP` are ephemeral transport messages outside the per-sender hash chain, avoiding chain-gap deadlocks and idle transcript growth. Responses are verified by author signature and hash chain, so any connected peer may serve them for reconnection, relay-assisted catch-up, and equivocation resolution.
+`SYNC_REQ { from, from_seq, to_seq }` requests a range of one sender's signed envelopes; `SYNC_RESP { envelopes }` returns them. `HEADS`, `SYNC_REQ`, and `SYNC_RESP` are ephemeral transport messages outside the per-sender hash chain. Responses are verified by author signature and hash chain, so any connected peer may serve them for reconnection, relay-assisted catch-up, and equivocation resolution.
 
 ### 6.7 Transcript
 
@@ -345,7 +345,7 @@ Verifiers check `z·G = R1 + c·H_i` and `z·A_j = R2 + c·S_{i,j}`. Shares for 
 
 Seat p then computes `M = B_j − Σ_{i≠p} S_{i,j} − x_p·A_j` and looks up `id_c`. Because every input was verified, the lookup cannot fail for an honest p; a failure indicates a bug, not an attack.
 
-Which positions are revealed to whom is fixed by the engine's deterministic deal schedule (Section 8.4). A seat that publishes shares for a position not scheduled to it, or fails to publish scheduled shares within the timeout, commits a violation.
+Which positions are revealed to whom is fixed by the engine's deterministic deal schedule (Section 8.4). Publishing shares for an unscheduled position violates the protocol. A missing scheduled share pauses progress.
 
 ### 7.8 Reveal to all (playing a card)
 
@@ -367,7 +367,7 @@ For randomness other than the deck order (initial dealer, seat rotation, dice), 
 2. After all commitments are received, `RAND_REVEAL { s }` from every seat.
 3. `seed = SHA-256(s_0 ‖ s_1 ‖ … ‖ s_{N−1})`.
 
-A reveal that does not match its commitment, or a missing reveal, is a violation by that seat. The seed is unpredictable and unbiasable if at least one seat is honest, because the last revealer can only choose to abort, not to alter the outcome.
+A reveal that does not match its commitment is a violation by that seat. A missing reveal pauses the beacon. The seed is unpredictable and unbiasable if at least one seat is honest, because the last revealer can only choose to abort, not to alter the outcome.
 
 ### 7.11 Cost estimates
 
@@ -389,7 +389,7 @@ A complete round setup (N shuffles with proofs plus a full deal) for N = 4 and D
 
 ### 8.1 Phases and expected senders
 
-The engine is a state machine whose phases have a fixed set of expected senders. An envelope whose `type` is a game message and whose `from` is not an expected sender for the current phase, or whose `round`/`phase` do not match, is a violation. `VIOLATION` (equivocation) envelopes are accepted in any phase; `HEADS`, `SYNC_REQ`, and `SYNC_RESP` are ephemeral transport messages outside the signed hash chain in the target architecture (`#4`).
+The engine is a state machine whose phases have a fixed set of expected senders. An envelope whose `type` is a game message and whose `from` is not an expected sender for the current phase, or whose `round`/`phase` do not match, is a violation. `VIOLATION` (equivocation) envelopes are accepted in any phase; `HEADS`, `SYNC_REQ`, and `SYNC_RESP` are ephemeral transport messages outside the signed hash chain.
 
 | Phase | Expected senders | Messages |
 |---|---|---|
@@ -405,7 +405,7 @@ When `expected()` returns `"all"` (simultaneous actions such as bids or passes),
 
 ### 8.2 Deterministic reducer
 
-Public game state is a value produced by `rules.apply(state, action, revealed)`. All peers hold identical state after each accepted envelope. Rules modules MUST be pure and deterministic: integer arithmetic only, no `Math.random`, no `Date`, no dependence on object key order, no floating point. The engine MAY compute `SHA-256(canonical(state))` after each transition and include it in `WITNESS` to detect divergence early.
+Public game state is a value produced by `rules.apply(state, action, revealed)`. All peers hold identical state after each accepted envelope. Rules modules MUST be pure and deterministic: integer arithmetic only, no `Math.random`, no `Date`, no dependence on object key order, no floating point. The engine MAY compute `SHA-256(canonical(state))` after each transition and include it in `HEADS` to detect divergence early.
 
 ### 8.3 Public and audit constraints
 
@@ -429,7 +429,7 @@ Mandatory disclosure means that in games with audit constraints, unplayed cards 
 
 ### 8.5 Disconnects and table abort
 
-Rather than enforcing hard automatic 60 s forfeit timers (which punish casual players whose phone screen locks), the target UX (`#4`) surfaces a clear disconnected-player status banner and offers an optional human-triggered "Vote to end table" flow among the remaining connected seats. A reconnecting peer resumes cleanly via ephemeral `HEADS` / `SYNC_*` catch-up without losing the match.
+The browser shows which players are disconnected and pauses new moves while they reconnect. When at least two players remain, they can each choose **Vote to end table**. The table ends when every connected seat votes for the same missing-seat mask. Changes to the missing seats clear pending votes. A completed abort is saved locally by peers that observed it. A returning player learns the result from independent confirmations by all prior voters. Until the vote passes, a reconnecting peer can resume with ephemeral `HEADS` / `SYNC_*` catch-up.
 
 ### 8.6 Violations and blame
 
@@ -478,7 +478,6 @@ interface RulesModule<S> {
   version: string
   deck: DeckSpec
   seats: { min: number; max: number }
-  timeouts?: { actionMs?: number }
 
   init(seatCount: number, seed: Uint8Array): S
   expected(state: S): { seats: Seat[] | "all"; phase: string } | null
@@ -516,12 +515,13 @@ Contract:
 | `SHARES` | `round.r.deal.k` | all except recipient | `to, items[{pos,S,R1,R2,z}]` |
 | `ACTION` | `round.r.play.t` | expected seats | `kind, data, reveal[], shares[]` |
 | `AUDIT_DISCLOSE` | `round.r.audit` | all | `items[{pos,S,R1,R2,z}]` |
-| `HEADS` | any (ephemeral, target `#4`) | any | `heads[{from,seq,hash}], state_hash?` (not an envelope; replaces chained `WITNESS`) |
-| `SYNC_REQ` | any (ephemeral, target `#4`) | any | `from, from_seq, to_seq` (not an envelope in target `#4`) |
-| `SYNC_RESP` | any (ephemeral, target `#4`) | any | `envelopes[]` (not an envelope in target `#4`) |
+| `HEADS` | authenticated channel | any | `heads[{from,seq,hash}], state_hash?` |
+| `SYNC_REQ` | authenticated channel | any | `from, from_seq, to_seq` |
+| `SYNC_RESP` | authenticated channel | any | `envelopes[]` or null |
+| `ABORT_VOTE` | authenticated channel | connected seat | `missing` (seat mask), `ended` |
 | `VIOLATION` | any | any | `seat, reason: "equivocation", evidence: [env1, env2]` |
 
-Signed lobby/game types and `VIOLATION` are carried in the envelope of Section 6.1. `HELLO` and (in target `#4`) `HEADS`, `SYNC_REQ`, and `SYNC_RESP` are ephemeral channel messages outside the signed per-sender hash chain.
+Signed lobby/game types and `VIOLATION` are carried in the envelope of Section 6.1. `HELLO`, `HEADS`, `SYNC_REQ`, `SYNC_RESP`, and `ABORT_VOTE` are ephemeral channel messages outside the signed per-sender hash chain.
 
 ---
 
@@ -537,7 +537,7 @@ Signed lobby/game types and `VIOLATION` are carried in the envelope of Section 6
 | No forged cards | Card points are hash-derived; shuffle proof is sound | Computationally bounded adversary |
 | Rule compliance | Deterministic validation by every peer; audit after disclosure | Any coalition |
 | Non-repudiation and offline verifiability | Signed envelopes, per-sender hash chain, public shares and proofs | Any party |
-| Equivocation detection | Witness heads and self-certifying evidence | Any sender |
+| Equivocation detection | Advertised heads and self-certifying evidence | Any sender |
 | Signaling MITM resistance | DTLS fingerprints signed by identity keys | Active network adversary |
 
 Explicitly not provided: prevention of aborts (only attribution), secrecy against a coalition that includes the recipient, protection against out-of-band collusion, resistance to traffic analysis or timing side channels.
@@ -574,7 +574,7 @@ IndexedDB database `p2pcards`, stores:
 2. **Round-trip property tests**: shuffle by k random seats, deal every position to a random seat, reveal all; recovered card set equals the deck spec.
 3. **Adversarial peer harness**: a scripted peer that (a) submits a bad shuffle proof, (b) publishes an unscheduled share, (c) plays a position it was not dealt, (d) equivocates, (e) breaks its hash chain, (f) withholds a reveal, (g) violates an audit constraint. Each MUST be detected by every honest peer with identical blame.
 4. **Determinism**: replay recorded transcripts in Chrome, Firefox and Safari and compare per-step `state_hash`.
-5. **Transport**: connection matrix across NAT types with and without TURN; reconnection mid-round within the timeout.
+5. **Transport**: connection matrix across NAT types with and without TURN; reconnection and relay catch-up mid-round.
 6. **Offline verifier**: in-browser CBOR transcript export and network-free verification (`verifyTranscript`) that reproduces the match result or the first deterministic violation (no separate Node CLI required; `#8`).
 
 ---

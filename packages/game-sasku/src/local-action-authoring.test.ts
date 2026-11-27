@@ -359,7 +359,7 @@ describe("local Sasku action authoring", () => {
   it("requires recovery before signing when the native authored head is ahead of the accepted prefix", async () => {
     const c = await context();
     const before = c.game.snapshot;
-    const ahead = await c.author.author({ round: c.f.round, phase: before.ledger.phase, type: "WITNESS", body: { heads: [] } });
+    const ahead = await c.author.author({ round: c.f.round, phase: before.ledger.phase, type: "VIOLATION", body: { heads: [] } });
     const records = c.store.artifacts();
     const sign = vi.spyOn(protocol, "signEnvelope");
     const receive = vi.spyOn(c.durable, "receive");
@@ -385,7 +385,7 @@ describe("local Sasku action authoring", () => {
     const active = act(c, 0, { type: "diamonds" });
     await entered.promise;
     const housekeeping = new PersistentEnvelopeAuthor(c.f.gameId, c.f.identities[0]!.secretKey, c.store);
-    const witness = await housekeeping.author({ round: c.f.round, phase: before.ledger.phase, type: "WITNESS", body: { heads: [] } });
+    const witness = await housekeeping.author({ round: c.f.round, phase: before.ledger.phase, type: "VIOLATION", body: { heads: [] } });
     await expect(c.durable.receive(witness)).resolves.toMatchObject({ status: "accepted" });
     expect(c.game.snapshot).toBe(before);
     gate.resolve();

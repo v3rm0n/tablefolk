@@ -219,14 +219,44 @@ test("four isolated browser identities play a complete Sasku match and recover a
     await pages[0]!.screenshot({ path: testInfo.outputPath("live-table-desktop.png"), fullPage: true });
     await pages[3]!.screenshot({ path: testInfo.outputPath("live-table-mobile.png"), fullPage: true });
 
-    // Restore a private hand from persisted signed history and its existing local secret.
+    // Drop one remote sender's tail, then recover it over the authenticated mesh.
     const beforeHand = await pages[2]!.getByLabel("Your private hand").getByRole("button").evaluateAll(buttons => buttons.map(b => b.getAttribute("aria-label")));
+    const completeTranscript = (await readTranscripts())[2];
+    await pages[2]!.evaluate(async () => {
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("p2pcards");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const transaction = database.transaction("transcripts", "readwrite");
+        transaction.oncomplete = () => resolve();
+        transaction.onabort = () => reject(transaction.error);
+        const store = transaction.objectStore("transcripts");
+        const request = store.getAll();
+        request.onsuccess = () => {
+          const tail = (request.result as { arrival: number; authored: boolean; seq: number }[])
+            .filter(record => !record.authored).sort((left, right) => right.seq - left.seq)[0];
+          if (!tail) { transaction.abort(); return; }
+          store.delete(tail.arrival);
+        };
+      });
+      database.close();
+    });
+    expect((await readTranscripts())[2]).toHaveLength(completeTranscript!.length - 1);
     await pages[2]!.reload();
     await expect(pages[2]!.getByRole("button", { name: "Join this table" })).toBeEnabled();
+    const disconnect = pages[0]!.getByLabel("Disconnected players");
+    await expect(disconnect).toContainText("is disconnected");
+    await disconnect.getByRole("button", { name: "Vote to end table" }).click();
+    await expect(disconnect.getByRole("button", { name: "Vote cast" })).toBeDisabled();
+    await expect(disconnect).toContainText("1 of 3 connected players");
     await configureRelay(pages[2]!, relayUrl);
     await pages[2]!.getByRole("button", { name: "Join this table" }).click();
     await expect(pages[2]!.getByLabel("Live Sasku round")).toHaveAttribute("data-phase", "bidding", { timeout: 120_000 });
     await expect.poll(() => pages[2]!.getByLabel("Your private hand").getByRole("button").evaluateAll(buttons => buttons.map(b => b.getAttribute("aria-label")))).toEqual(beforeHand);
+    await expect.poll(async () => (await readTranscripts())[2]).toEqual(completeTranscript);
+    await expect(disconnect).toHaveCount(0);
     await seatedPages[0]!.getByLabel("Live Sasku round").getByRole("button", { name: /^Bid / }).first().click();
     for (const page of seatedPages.slice(1)) await page.getByLabel("Live Sasku round").getByRole("button", { name: "Pass", exact: true }).click();
     await seatedPages[0]!.getByLabel("Live Sasku round").getByRole("button", { name: /^Choose clubs/ }).click();

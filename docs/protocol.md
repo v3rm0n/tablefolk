@@ -182,44 +182,54 @@ ten fields (no extensions):
   positions). Empty `{items: []}` is valid when all dealt cards were already
   opened publicly.
 
-### Housekeeping & control
+### Authenticated channel control
 
-> **Current `main` vs. target `#4`:** On `main`, `WITNESS`, `SYNC_REQ`, and
-> `SYNC_RESP` are implemented as signed per-sender chained envelopes. Under the
-> accepted pragmatic scope ([decisions.md](decisions.md#d10--planned-protocol--runtime-simplifications),
-> `#4`), liveness and catch-up (`HEADS`, `SYNC_REQ`, `SYNC_RESP`) move to
-> ephemeral unchained messages over the DTLS+`HELLO`-authenticated data channel,
-> keeping the signed per-sender hash chain strictly for lobby/game envelopes and
-> equivocation `VIOLATION` evidence.
+After reciprocal `HELLO`, a control payload is prefixed with byte `0x03` and
+encoded as a canonical CBOR map with `type` and `body`. Sync requests and
+responses also carry a channel-local unsigned integer `id`. The DTLS channel
+authenticates the sending peer. Control payloads allocate no sequence numbers
+and are omitted from the transcript.
 
-- **`WITNESS` (current `main`; replaced by ephemeral `HEADS` in `#4`):**
-  `{heads}` or `{heads, state_hash}` where `heads` has 0–8 unique
-  `{from, seq, hash}` entries in ascending finalized-seat order. Emitted after
-  game/lobby envelopes and periodically (`>= 5 s` idle), but **not** immediately
-  after housekeeping envelopes (`WITNESS`, `SYNC_REQ`, `SYNC_RESP`,
-  `TIMEOUT_VOTE`, `VIOLATION`) to prevent witness loops.
-- **`SYNC_REQ` (chained on `main`; ephemeral in `#4`):**
-  `{from, from_seq, to_seq}` (inclusive `from_seq <= to_seq`).
-- **`SYNC_RESP` (chained on `main`; ephemeral in `#4`):** `{envelopes}`
-  (non-empty array of complete nested signed envelope maps, not byte strings).
-  On `main`, preflight verifies every nested signature, game, sender, contiguous
-  sequence, and internal `prev` link before mutation; outer response persistence
-  precedes nested original dispatch; an outer envelope cannot repair its own
-  chain gap using its nested body. Moving `SYNC_*` off the hash chain in `#4`
-  eliminates that self-repair paradox.
-  - Default bounds on `main`: `<= 128` envelopes / `4 MiB` for standalone sync
-    (`<= 32` originals / `64 KiB` in `CandidateSaskuRoundOwner`).
-- **`VIOLATION`:** `reason: "equivocation"` is the **only** wire `VIOLATION`
-  certificate format: `{seat, reason: "equivocation", evidence: [env1, env2]}`.
-  Both evidence items are complete nested signed envelopes for the same
-  `(game, from, seq)` with different hashes, sorted in ascending lexicographic
-  hash order; `seat` must match `from`'s finalized roster seat. Non-equivocation
-  faults (invalid proof, unscheduled share, illegal action, audit violation) do
-  not use bespoke wire `VIOLATION` certificates because every honest peer
-  already observes and validates the offending signed envelope directly (see
-  [decisions.md](decisions.md#d9--limit-wire-violation-certificates-to-equivocation)).
-  Automatic `TIMEOUT_VOTE` deadlines are superseded by human-triggered table
-  abort voting (`#4`).
+- **`HEADS`** carries `{heads}` or `{heads, state_hash}`. Up to eight unique
+  `{from, seq, hash}` entries advertise signed history held by that peer,
+  including history from other roster members. The browser sends heads on
+  authentication, on roster changes by the host, and every five seconds.
+- **`SYNC_REQ`** carries `{from, from_seq, to_seq}` with inclusive bounds.
+  The browser requests one original at a time per author and serving peer.
+- **`SYNC_RESP`** echoes the request ID and carries `{envelopes}`, with complete
+  nested signed envelope maps. A null body means the requested original is
+  unavailable. The receiver matches the response to an outstanding request,
+  verifies the original author's signature, game, sequence, and any advertised
+  hash, then validates the original chain and semantics before admitting it.
+  Any connected roster peer holding the original can serve it.
+- **`ABORT_VOTE`** carries `{missing, ended}`, a four-seat bitmask of disconnected
+  players. At least two players must be connected. The table ends without a
+  new score when every connected player explicitly votes for the same
+  nonempty missing-seat mask. A topology change clears pending votes locally.
+  Observers save a completed vote outcome locally. A returning seat learns the
+  outcome when every voter independently confirms it with `ended: true`.
+
+Initial catch-up gates the local driver on the authenticated channel generation.
+Subsequent live envelopes travel over ordered, reliable SCTP without per-envelope
+acknowledgements. Everyone at a table must use a browser build that supports
+these channel messages. Periodic heads can expose a missing or conflicting original
+without pausing live play.
+
+### Equivocation certificate
+
+A conflicting head is a hint to request the signed original at that sequence.
+If the advertised branch is ahead and its first missing original does not
+extend the local head, the receiver requests that original's predecessor at
+the known sequence to confirm the conflicting history.
+
+**`VIOLATION`** is a signed envelope in round `0`, phase
+`"control.equivocation"`. Its body is
+`{seat, reason: "equivocation", evidence: [env1, env2]}`. Both items are complete
+nested signed envelopes for the same `(game, from, seq)` with different hashes,
+sorted in ascending lexicographic hash order. The seat must match the original
+author in the finalized roster. Verified evidence ends the table and identifies
+the equivocating player. Other game faults are checked directly against the
+offending signed envelope.
 
 ---
 

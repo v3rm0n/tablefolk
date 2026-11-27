@@ -309,12 +309,12 @@ describe("Sasku round recovery", () => {
     expect(c.session.heads().map(head => head.seq)).toEqual([3, 3, 2, 2]);
   });
 
-  it("ignores explicit lobby/housekeeping bodies and current-round shuffle provenance, including nested SYNC traffic", async () => {
+  it("ignores explicit lobby/housekeeping bodies and current-round shuffle provenance, including nested evidence", async () => {
     const c = await context({}, undefined, false);
     const nested = c.f.action(0, [], 20, "diamonds");
-    for (const type of ["JOIN", "ROSTER", "READY", "WITNESS", "SYNC_REQ", "SYNC_RESP", "TIMEOUT_VOTE", "VIOLATION", "SHUFFLE"] as const) {
+    for (const type of ["JOIN", "ROSTER", "READY", "VIOLATION", "SHUFFLE"] as const) {
       await append(c, 0, { round: type === "SHUFFLE" ? c.f.round : 99, phase: "external.prerequisite", type,
-        body: type === "SYNC_RESP" ? { envelopes: [nested.canonicalBytes, new Uint8Array([0xff])] } : { deliberately: "not a valid control body" } });
+        body: type === "VIOLATION" ? { envelopes: [nested.canonicalBytes, new Uint8Array([0xff])] } : { deliberately: "not a valid control body" } });
     }
     const contribution = await append(c, 1, c.f.deal(0, 1).envelope);
     await c.game.receive(contribution);
@@ -324,7 +324,7 @@ describe("Sasku round recovery", () => {
 
   it("charges exact envelope limits for setup and ignored control traffic before allocating ranges", async () => {
     const c = await context({}, undefined, false);
-    await append(c, 0, { round: 99, phase: "control", type: "WITNESS", body: {} });
+    await append(c, 0, { round: 99, phase: "control", type: "VIOLATION", body: {} });
     const count = c.store.artifacts().length;
     expect(count).toBe(13);
     expect(DEFAULT_MAX_SASKU_RECOVERY_ENVELOPES).toBe(1024);
@@ -340,7 +340,7 @@ describe("Sasku round recovery", () => {
 
   it("charges exact byte limits across every prefix, including ignored control payloads", async () => {
     const c = await context({}, undefined, false);
-    const control = await append(c, 0, { round: 99, phase: "control", type: "SYNC_RESP", body: { padding: new Uint8Array(4096) } });
+    const control = await append(c, 0, { round: 99, phase: "control", type: "VIOLATION", body: { padding: new Uint8Array(4096) } });
     const bytes = c.store.artifacts().reduce((sum, { artifact }) => sum + artifact.canonicalBytes.length, 0);
     expect(DEFAULT_MAX_SASKU_RECOVERY_BYTES).toBe(16 * 1024 * 1024);
     expect(PersistentSaskuRoundReceiver.recover(c.options, { maxBytes: bytes }).snapshot).toEqual(c.game.snapshot);
@@ -366,7 +366,7 @@ describe("Sasku round recovery", () => {
     }
     vi.restoreAllMocks();
     const body = { padding: new Uint8Array(MAX_ROUND_REVEAL_ENVELOPE_BYTES) };
-    const control = await append(c, 0, { round: 99, phase: "control", type: "WITNESS", body });
+    const control = await append(c, 0, { round: 99, phase: "control", type: "VIOLATION", body });
     expect(control.canonicalBytes.length).toBeGreaterThan(MAX_ROUND_REVEAL_ENVELOPE_BYTES);
     expect(PersistentSaskuRoundReceiver.recover(c.options).snapshot).toEqual(c.game.snapshot);
     await append(c, 1, { round: c.f.round, phase: c.game.snapshot.ledger.phase, type: "SHARES", body });
@@ -423,7 +423,7 @@ describe("Sasku round recovery", () => {
 
   it("reverifies ignored records' signatures and canonical encoding rather than trusting cached decoded views", async () => {
     const c = await context({}, undefined, false);
-    const control = await append(c, 0, { round: 99, phase: "control", type: "WITNESS", body: {} });
+    const control = await append(c, 0, { round: 99, phase: "control", type: "VIOLATION", body: {} });
     const prefix = c.session.readRange(c.f.roster[0]!, 0, 3);
     if (prefix.status !== "complete") throw new Error("Missing test prefix");
     expect(control.canonicalBytes[0]).toBe(0xaa);
@@ -468,14 +468,14 @@ describe("Sasku round recovery", () => {
       artifact.hash.fill(0xee);
       return result;
     });
-    const control = await append(c, 0, { round: 99, phase: "control", type: "WITNESS", body: {} });
+    const control = await append(c, 0, { round: 99, phase: "control", type: "VIOLATION", body: {} });
     expect(c.session.classify(control)).toMatchObject({ status: "rejected", reason: "equivocation" });
     expect(() => PersistentSaskuRoundReceiver.recover(c.options)).toThrow(SaskuRoundRecoveryError);
   });
 
   it("checks signed sequence, predecessor, game and sender independently of a cache's duplicate claim", async () => {
     const c = await context({}, undefined, false);
-    const control = await append(c, 0, { round: 99, phase: "control", type: "WITNESS", body: {} });
+    const control = await append(c, 0, { round: 99, phase: "control", type: "VIOLATION", body: {} });
     const prefix = c.session.readRange(c.f.roster[0]!, 0, 3);
     if (prefix.status !== "complete") throw new Error("Missing test prefix");
     const read = vi.spyOn(c.session, "readRange");
@@ -610,7 +610,7 @@ describe("Sasku round recovery", () => {
     for (const mode of ["captured head", "append during capture", "append during replay"]) {
       const c = await context({}, undefined, false);
       await append(c, 1, c.f.deal(0, 1).envelope);
-      const ahead = await c.author.author({ round: 99, phase: "control", type: "WITNESS", body: {} });
+      const ahead = await c.author.author({ round: 99, phase: "control", type: "VIOLATION", body: {} });
       const before = c.game.snapshot;
       const captured = c.session.heads().map((head) => ({ ...head }));
       if (mode === "captured head") vi.spyOn(c.session, "heads").mockReturnValueOnce(captured);

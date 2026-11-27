@@ -340,13 +340,13 @@ describe("four-peer setup authoring with native IndexedDB history (direct fixtur
     for (const spy of forbiddenCalls) expect(spy).not.toHaveBeenCalled();
   }, 15_000);
 
-  it("extends four native lobby WITNESS prefixes: 12 setup originals plus 4 prefixes, not setup genesis", async () => {
+  it("extends four signed lobby prefixes: 12 setup originals plus 4 prefixes, not setup genesis", async () => {
     const peers = createPeers();
     const sign = vi.spyOn(protocol, "signEnvelope");
     const prefixes: EnvelopeArtifact[] = [];
     // Caller-validated housekeeping fixture, not JOIN/bootstrap or a lobby agreement protocol.
     for (const peer of peers) {
-      const prefix = await peer.author.author({ round: ROUND, phase: "lobby", type: "WITNESS", body: { heads: [] } });
+      const prefix = await peer.author.author({ round: ROUND, phase: "lobby", type: "READY", body: { fixture: true } });
       await expect(peer.sessionReceiver.receive(prefix)).resolves.toMatchObject({ status: "accepted", persistenceStatus: "duplicate" });
       peer.messages.push(prefix);
       prefixes.push(prefix);

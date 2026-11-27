@@ -17,7 +17,17 @@ export interface LobbyPeerView {
   readonly path: "direct" | "relayed" | "unknown";
 }
 
+export interface TableStatus {
+  readonly disconnected: readonly number[];
+  readonly ended: string | null;
+  readonly canVote: boolean;
+  readonly voted: boolean;
+  readonly votes: number;
+  readonly needed: number;
+}
+
 export interface BrowserLobbySnapshot {
+  readonly tableStatus?: TableStatus | null;
   readonly game?: LiveRoundView | null;
   readonly phase: "loading" | "welcome" | "connecting" | "lobby" | "agreed";
   readonly identity: { readonly publicKey: string; readonly fingerprint: string } | null;
@@ -46,6 +56,7 @@ export interface BrowserLobbyActions {
   join(invitation: string, relayText?: string): Promise<void>;
   markReady(): Promise<void>;
   setReady(ready: boolean): Promise<void>;
+  voteToEndTable?(): Promise<void>;
   playAction?(intent: SaskuActionIntent): Promise<void>;
   retryPeer(publicKey: string): Promise<void>;
   leave(): Promise<void>;

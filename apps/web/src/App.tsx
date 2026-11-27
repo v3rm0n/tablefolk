@@ -40,7 +40,7 @@ export function App({ controller, demo = false }: { readonly controller: Browser
     <main className={`shell${playing ? " shell--playing" : room === null ? " shell--welcome" : ""}`}>
       {state.error !== null && <div className="notice notice--error" role="alert">{state.error}</div>}
 
-      {state.game && controller.playAction && <div ref={roundHeading} tabIndex={-1} className="live-focus"><LiveSaskuRound view={state.game} act={intent => controller.playAction!(intent)} /></div>}
+      {state.game && controller.playAction && <div ref={roundHeading} tabIndex={-1} className="live-focus"><LiveSaskuRound view={state.game} act={intent => controller.playAction!(intent)} table={state.tableStatus ?? null} vote={() => controller.voteToEndTable?.()} /></div>}
       {room === null ? (
         <section className={`welcome${invited ? " welcome--invited" : ""}`} aria-labelledby="welcome-title">
           <div className="welcome__copy">
