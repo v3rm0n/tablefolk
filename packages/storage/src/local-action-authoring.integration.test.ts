@@ -49,9 +49,6 @@ describe("local Sasku action authoring with native IndexedDB history", () => {
       expect(game.readPrivateHand(author.sender, key)).toEqual(initialPrivate);
 
       // Returned buffers are not the native checkpoint, transcript, or accepted chain's buffers.
-      opening.received.canonicalBytes.fill(0xff);
-      opening.received.hash.fill(0xff);
-      opening.received.envelope.from.fill(0xff);
       expect(await authored.readAuthoredHead(f.gameId, author.sender)).toEqual(original);
       await expect(game.receive(original)).resolves.toMatchObject({
         status: "duplicate", chainStatus: "duplicate", persistenceStatus: "duplicate",

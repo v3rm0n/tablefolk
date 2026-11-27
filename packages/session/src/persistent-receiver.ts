@@ -57,7 +57,7 @@ export class PersistentSessionReceiver {
   readonly #store: AcceptedEnvelopeStore;
   #pending: Promise<void> = Promise.resolve();
 
-  constructor(registry: SessionChainRegistry, store: AcceptedEnvelopeStore) {
+  constructor(registry: SessionChainRegistry, store: AcceptedEnvelopeStore, { serializedByCaller = false } = {}) {
     if (!(registry instanceof SessionChainRegistry)) {
       throw new TypeError("Persistent receiver requires a session chain registry");
     }
@@ -70,11 +70,14 @@ export class PersistentSessionReceiver {
     }
     this.#registry = registry;
     this.#store = store;
+    this.#serializedByCaller = serializedByCaller;
   }
 
   isBoundTo(registry: SessionChainRegistry): boolean {
     return this.#registry === registry;
   }
+
+  readonly #serializedByCaller: boolean;
 
   receive(candidate: EnvelopeArtifact): Promise<PersistentSessionReceiveResult> {
     let received: EnvelopeArtifact;
@@ -86,6 +89,12 @@ export class PersistentSessionReceiver {
       );
     }
 
+    return this.receiveVerified(received);
+  }
+
+  /** Receives an artifact already authenticated at ingress or produced by the local signer. */
+  receiveVerified(received: EnvelopeArtifact): Promise<PersistentSessionReceiveResult> {
+    if (this.#serializedByCaller) return this.#persistThenIngest(received);
     const operation = this.#pending.then(() => this.#persistThenIngest(received));
     this.#pending = operation.then(
       () => undefined,

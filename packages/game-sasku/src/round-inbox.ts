@@ -1,7 +1,7 @@
-import { bytesEqual, bytesToHex } from "@p2pcards/crypto";
+import { bytesEqual } from "@p2pcards/crypto";
 import { decodeActionBody, decodeAuditDiscloseBody, decodeSharesBody } from "@p2pcards/deck";
 import { MAX_ROUND_REVEAL_ENVELOPE_BYTES } from "@p2pcards/engine";
-import { decodeAndVerifyEnvelope, parseGameId, parseIdentityPublicKey, type GameId, type IdentityPublicKey } from "@p2pcards/protocol";
+import { decodeAndVerifyEnvelope, parseGameId, parseIdentityPublicKey, type EnvelopeArtifact, type GameId, type IdentityPublicKey } from "@p2pcards/protocol";
 import { MAX_SASKU_HAND_ACTIONS } from "@p2pcards/rules-sasku";
 import { SessionChainRegistry } from "@p2pcards/session";
 
@@ -9,10 +9,6 @@ import { PersistentSaskuRoundReceiver, type SaskuRoundReceiveResult } from "./pe
 
 export const DEFAULT_MAX_PENDING_SASKU_INBOX_ENVELOPES = 32;
 export const DEFAULT_MAX_PENDING_SASKU_INBOX_BYTES = 1024 * 1024;
-
-const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as object;
-const typedArrayLength = Object.getOwnPropertyDescriptor(typedArrayPrototype, "length")!.get!;
-const typedArrayByteLength = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")!.get!;
 
 export interface SaskuRoundInboxOptions {
   readonly receiver: PersistentSaskuRoundReceiver;
@@ -36,7 +32,7 @@ export class SaskuRoundInboxError extends Error {
 }
 
 interface PendingEnvelope {
-  readonly bytes: Uint8Array;
+  readonly artifact: EnvelopeArtifact;
   readonly seat: number;
   readonly seq: number;
   readonly stage: number;
@@ -70,7 +66,6 @@ export class SaskuRoundInbox {
   #closed = false;
   #failure: Error | null = null;
   #draining = false;
-  #progressVersion = 0;
   #idle: Promise<void> = Promise.resolve();
   #resolveIdle: (() => void) | null = null;
   #cancelIdleWait: (() => void) | null = null;
@@ -110,7 +105,7 @@ export class SaskuRoundInbox {
       if (!(payload instanceof Uint8Array) || payload.constructor !== Uint8Array) {
         throw new SaskuRoundInboxError("invalid_envelope");
       }
-      const size = typedArrayByteLength.call(payload) as number;
+      const size = payload.length;
       if (!Number.isSafeInteger(size) || size < 1 || size > MAX_ROUND_REVEAL_ENVELOPE_BYTES) {
         throw new SaskuRoundInboxError("invalid_envelope");
       }
@@ -122,11 +117,9 @@ export class SaskuRoundInbox {
       catch (cause) { throw new SaskuRoundInboxError("wrong_peer", { cause }); }
       const seat = this.#roster.findIndex((identity) => bytesEqual(identity, peer));
       if (seat === -1 || seat === this.#selfSeat) { throw new SaskuRoundInboxError("wrong_peer"); }
-      const bytes = new Uint8Array(size);
       let received: ReturnType<typeof decodeAndVerifyEnvelope>;
       try {
-        bytes.set(payload);
-        received = decodeAndVerifyEnvelope(bytes);
+        received = decodeAndVerifyEnvelope(payload);
       } catch (cause) { throw new SaskuRoundInboxError("invalid_envelope", { cause }); }
       const envelope = received.envelope;
       if (!bytesEqual(envelope.from, peer)) { throw new SaskuRoundInboxError("wrong_peer"); }
@@ -161,11 +154,11 @@ export class SaskuRoundInbox {
       const queue = this.#queues[seat]!;
       const existing = this.#active?.seat === seat && this.#active.seq === seq
         ? this.#active : queue.find((job) => job.seq === seq);
-      if (existing !== undefined && existing !== null && !bytesEqual(existing.bytes, bytes)) {
+      if (existing !== undefined && existing !== null && !bytesEqual(existing.artifact.canonicalBytes, received.canonicalBytes)) {
         throw new SaskuRoundInboxError("conflicting_pending");
       }
       const pending = new Promise<SaskuRoundReceiveResult>((resolve, reject) => {
-        const job: PendingEnvelope = { bytes, seat, seq, stage, index, resolve, reject };
+        const job: PendingEnvelope = { artifact: received, seat, seq, stage, index, resolve, reject };
         const before = queue.findIndex((queued) => queued.seq > seq);
         // Equal-sequence duplicates each retain their own budget and promise, in admission order.
         queue.splice(before === -1 ? queue.length : before, 0, job);
@@ -181,7 +174,6 @@ export class SaskuRoundInbox {
 
   /** Explicit wake after external local authoring or durable housekeeping changes prerequisites. */
   processPending(): Promise<void> {
-    this.#progressVersion += 1;
     this.#startDrain();
     return this.#idle;
   }
@@ -206,7 +198,6 @@ export class SaskuRoundInbox {
   async #drain(): Promise<void> {
     try {
       while (!this.#stopped() && this.#pendingEnvelopes !== 0) {
-        const progressAtStart = this.#progressVersion;
         // Only this wait is cancellable. No cancellation reaches the receiver's actual writes.
         await new Promise<void>((resolve, reject) => {
           this.#cancelIdleWait = resolve;
@@ -217,16 +208,14 @@ export class SaskuRoundInbox {
         if (this.#receiver.pendingEnvelopes !== 0) continue;
 
         const snapshot = this.#receiver.snapshot;
-        const heads = this.#headVersion();
         const stage = snapshot.audit !== null ? 2 : snapshot.ledger.deal === null ? 1 : 0;
         const index = stage === 2 ? 0 : stage === 0 ? snapshot.ledger.dealIndex : snapshot.ledger.actionIndex;
-        const pendingBeforeSelection = this.#pendingEnvelopes;
         let selected: PendingEnvelope | undefined;
         let reason: "broken_prev" | "equivocation" | null = null;
         for (let offset = 0; offset < 4; offset += 1) {
           const head = this.#queues[(this.#nextSeat + offset) % 4]![0];
           if (head === undefined) continue;
-          const chain = this.#session.classify(decodeAndVerifyEnvelope(head.bytes));
+          const chain = this.#session.classify(head.artifact);
           if (chain.status === "rejected") {
             if (chain.reason === "gap") continue;
             if (chain.reason !== "broken_prev" && chain.reason !== "equivocation") {
@@ -234,34 +223,19 @@ export class SaskuRoundInbox {
             }
             reason = chain.reason;
           } else {
-            if (chain.status !== "accepted" && chain.status !== "duplicate") {
-              throw new Error("Invalid chain classification status");
-            }
             if (head.stage > stage || (head.stage === stage && head.index > index)) continue;
           }
           selected = head;
           break;
         }
-        if (selected === undefined) {
-          // A wake during classification must observe newly committed prerequisites, not spin on a redundant wake.
-          const observedVersion = this.#progressVersion;
-          const changed = observedVersion !== progressAtStart && (this.#receiver.pendingEnvelopes !== 0 ||
-            this.#receiver.snapshot !== snapshot || this.#headVersion() !== heads);
-          // Source callbacks above may admit another head or issue a newer wake themselves.
-          if (this.#pendingEnvelopes !== pendingBeforeSelection || changed || this.#progressVersion !== observedVersion) continue;
-          break;
-        }
-        const argument = reason === null ? decodeAndVerifyEnvelope(selected.bytes) : null;
-        if (this.#stopped()) break;
-        // Local work admitted since the idle barrier requires fresh eligibility, not this snapshot.
-        if (this.#receiver.pendingEnvelopes !== 0 || this.#queues[selected.seat]![0] !== selected) continue;
+        if (selected === undefined) break;
         this.#queues[selected.seat]!.shift();
         this.#nextSeat = (selected.seat + 1) % 4;
         this.#active = selected;
         try {
-          const result: SaskuRoundReceiveResult = argument === null
-            ? Object.freeze({ status: "rejected", reason: reason!, received: decodeAndVerifyEnvelope(selected.bytes) })
-            : this.#validateReceipt(selected, await this.#receiver.receive(argument));
+          const result: SaskuRoundReceiveResult = reason !== null
+            ? Object.freeze({ status: "rejected", reason, received: selected.artifact })
+            : await this.#receiver.receive(selected.artifact);
           this.#stopped();
           if (this.#failure !== null) throw this.#failure;
           selected.resolve(result);
@@ -269,7 +243,7 @@ export class SaskuRoundInbox {
           this.#stopped();
           selected.reject(this.#failure ?? cause);
         } finally {
-          this.#release(selected.bytes.length);
+          this.#release(selected.artifact.canonicalBytes.length);
           this.#active = null;
         }
       }
@@ -284,49 +258,11 @@ export class SaskuRoundInbox {
     }
   }
 
-  #validateReceipt(job: PendingEnvelope, receipt: SaskuRoundReceiveResult): SaskuRoundReceiveResult {
-    try {
-      const returnedBytes = copyExactBytes(receipt.received.canonicalBytes, job.bytes.length);
-      if (!bytesEqual(returnedBytes, job.bytes)) {
-        throw new Error("Round receipt does not match the submitted artifact");
-      }
-      const received = decodeAndVerifyEnvelope(job.bytes);
-      const status = receipt.status;
-      if (status === "rejected") {
-        const reason = receipt.reason;
-        if (reason !== "gap" && reason !== "broken_prev" && reason !== "equivocation" && reason !== "durable_conflict") {
-          throw new Error("Invalid round rejection reason");
-        }
-        return Object.freeze({ status, reason, received });
-      }
-      if (status !== "accepted" && status !== "duplicate") { throw new Error("Invalid round receipt status"); }
-      const chainStatus = receipt.chainStatus;
-      const persistenceStatus = receipt.persistenceStatus;
-      const snapshot = receipt.snapshot;
-      if ((chainStatus !== "accepted" && chainStatus !== "duplicate") ||
-          (persistenceStatus !== "stored" && persistenceStatus !== "duplicate") ||
-          typeof snapshot !== "object" || snapshot === null) {
-        throw new Error("Invalid round success receipt");
-      }
-      const recorded = this.#session.readRange(parseIdentityPublicKey(this.#roster[job.seat]!), job.seq, job.seq);
-      if (this.#session.classify(decodeAndVerifyEnvelope(job.bytes)).status !== "duplicate" ||
-          recorded.status !== "complete" || recorded.envelopes.length !== 1 ||
-          !bytesEqual(copyExactBytes(recorded.envelopes[0]!.canonicalBytes, job.bytes.length), job.bytes)) {
-        throw new Error("Round receipt is not reflected in its bound session registry");
-      }
-      return Object.freeze({ status, chainStatus, persistenceStatus, received, snapshot });
-    } catch (cause) { throw this.#fail(new SaskuRoundInboxError("invalid_receipt", { cause })); }
-  }
-
   #stopped(): boolean {
     const failure = this.#receiver.failure;
     if (failure !== null) this.#fail(failure);
     if (this.#receiver.closed) this.close();
     return this.#closed || this.#failure !== null;
-  }
-
-  #headVersion(): string {
-    return this.#session.heads().map(({ from, seq, hash }) => `${bytesToHex(from)}:${seq}:${bytesToHex(hash)}`).join("|");
   }
 
   #reserve(bytes: number): void {
@@ -345,7 +281,7 @@ export class SaskuRoundInbox {
   #rejectQueued(cause: Error): void {
     for (const queue of this.#queues) {
       for (const job of queue.splice(0)) {
-        this.#release(job.bytes.length);
+        this.#release(job.artifact.canonicalBytes.length);
         job.reject(cause);
       }
     }
@@ -362,15 +298,4 @@ export class SaskuRoundInbox {
 function positiveInteger(value: number): number {
   if (!Number.isSafeInteger(value) || value < 1) { throw new RangeError("Sasku inbox limits must be positive safe integers"); }
   return value;
-}
-
-function copyExactBytes(value: unknown, length: number): Uint8Array {
-  // Dependency-owned views can shadow length/byteLength; read internal typed-array sizes before bounded copying.
-  if (!(value instanceof Uint8Array) || value.constructor !== Uint8Array ||
-      typedArrayLength.call(value) !== length || typedArrayByteLength.call(value) !== length) {
-    throw new Error("Invalid round receipt byte view");
-  }
-  const bytes = new Uint8Array(length);
-  bytes.set(value);
-  return bytes;
 }

@@ -1,12 +1,12 @@
-import { bytesEqual, bytesToHex, randomBytes, scalarFromBigInt, type RandomSource, type RistrettoScalar } from "@p2pcards/crypto";
-import { decodeActionBody, decodeAuditDiscloseBody, encodeActionBody, encodeAuditDiscloseBody, encodeSharesBody, type ActionBody, type DecryptionShareBatchBackend, type MaskedCard } from "@p2pcards/deck";
+import { bytesEqual, bytesToHex, type RandomSource, type RistrettoScalar } from "@p2pcards/crypto";
+import { decodeAuditDiscloseBody, encodeActionBody, encodeAuditDiscloseBody, encodeSharesBody, type ActionBody, type DecryptionShareBatchBackend, type MaskedCard } from "@p2pcards/deck";
 import {
   MAX_ROUND_REVEAL_ENVELOPE_BYTES, RoundRevealError, RoundRevealLedger, SetupEnvelopeCoordinator,
   type PrivateDealStep, type RoundRevealSnapshot, type RoundRevealTransition,
 } from "@p2pcards/engine";
-import { decodeAndVerifyEnvelope, encodeUnsignedEnvelope, parseHash256, parseIdentityPublicKey, type EnvelopeArtifact, type IdentityPublicKey } from "@p2pcards/protocol";
+import { encodeUnsignedEnvelope, parseHash256, parseIdentityPublicKey, type EnvelopeArtifact, type IdentityPublicKey } from "@p2pcards/protocol";
 import {
-  MAX_SASKU_HAND_ACTIONS, SASKU_DECK_SPEC, SASKU_SUITS, SaskuHandError, SaskuPublicHandController,
+  MAX_SASKU_HAND_ACTIONS, SASKU_DECK_SPEC, SaskuHandError, SaskuPublicHandController,
   auditSaskuHand, decodeSaskuAction, legalSaskuCards, parseSaskuCard, saskuBidStrength,
   type SaskuCardId, type SaskuHandAction, type SaskuHandAuditResult, type SaskuHandScore, type SaskuPublicHandSnapshot, type SaskuSeat, type SaskuSuit,
 } from "@p2pcards/rules-sasku";
@@ -27,6 +27,8 @@ export interface PersistentSaskuRoundOptions {
   readonly dealer: SaskuSeat;
   readonly session: SessionChainRegistry;
   readonly sessionReceiver: PersistentSessionReceiver;
+  /** Use direct transitions under an existing round owner. */
+  readonly serializedByCaller?: boolean;
   readonly maxPendingEnvelopes?: number;
   readonly maxPendingBytes?: number;
 }
@@ -110,6 +112,7 @@ export class PersistentSaskuRoundReceiver {
   readonly #maxPendingEnvelopes: number;
   readonly #maxPendingBytes: number;
   readonly #round: number;
+  readonly #serializedByCaller: boolean;
   readonly #auditHashes = new Map<SaskuSeat, string>();
   readonly #queue: PendingOperation[] = [];
   #active = false;
@@ -148,6 +151,7 @@ export class PersistentSaskuRoundReceiver {
     });
     this.#round = options.round;
     this.#dealBackend = options.dealBackend;
+    this.#serializedByCaller = options.serializedByCaller ?? false;
     const counts = [0, 0, 0, 0];
     for (let pos = 0; pos < 36; pos += 1) {
       const owner = this.#ledger.ownerAt(pos);
@@ -176,7 +180,7 @@ export class PersistentSaskuRoundReceiver {
     try {
       for (const artifact of receiver.#replay(limits)) {
         const prepared = artifact.envelope.type === "SHARES"
-          ? await receiver.#ledger.prepareDealReceipt(decodeAndVerifyEnvelope(artifact.canonicalBytes), backend) : undefined;
+          ? await receiver.#ledger.prepareDealReceipt(artifact, backend) : undefined;
         receiver.#commitRecovered(receiver.#classify(artifact, prepared?.transition), prepared?.commit);
       }
       return receiver;
@@ -257,9 +261,7 @@ export class PersistentSaskuRoundReceiver {
     source?: RandomSource,
   ): Promise<SaskuRoundReceiveResult> {
     return this.#enqueueAuthoring(author, expected, "stale_action", (identity) => {
-      try { scalarFromBigInt(secretKey); }
-      catch { throw new RoundRevealError("invalid_local_key"); }
-      const captured = snapshotIntent(intent);
+      const captured = { ...intent };
       return () => this.#authorActionOne(author, identity, secretKey, expected, captured, source);
     });
   }
@@ -269,23 +271,16 @@ export class PersistentSaskuRoundReceiver {
     author: PersistentEnvelopeAuthor, secretKey: RistrettoScalar, expected: SaskuRoundSnapshot, source?: RandomSource,
   ): Promise<SaskuRoundReceiveResult> {
     return this.#enqueueAuthoring(author, expected, "stale_contribution", (identity) => {
-      try { scalarFromBigInt(secretKey); }
-      catch { throw new RoundRevealError("invalid_local_key"); }
       const seat = this.#session.seatOf(identity)! as SaskuSeat;
       return async () => {
         const requireCurrent = (): void => this.#requireContribution(expected, seat, "SHARES");
         requireCurrent();
-        const guardedSource: RandomSource = { fill: (bytes) => {
-          requireCurrent();
-          bytes.set(randomBytes(bytes.length, source));
-          requireCurrent();
-        } };
         const body = this.#dealBackend && source === undefined
           ? await this.#ledger.createDealSharesWithBackend(seat, secretKey, this.#dealBackend)
-          : this.#ledger.createDealShares(seat, secretKey, guardedSource);
-        return this.#authorAndReceive(author, identity, () => ({
+          : this.#ledger.createDealShares(seat, secretKey, source);
+        return this.#authorAndReceive(author, identity, {
           round: this.#round, phase: expected.ledger.phase, type: "SHARES", body: encodeSharesBody(body),
-        }), requireCurrent);
+        }, requireCurrent);
       };
     });
   }
@@ -297,9 +292,9 @@ export class PersistentSaskuRoundReceiver {
       return () => {
         const requireCurrent = (): void => this.#requireContribution(expected, seat, "AUDIT_DISCLOSE");
         requireCurrent();
-        return this.#authorAndReceive(author, identity, () => ({
+        return this.#authorAndReceive(author, identity, {
           round: this.#round, phase: expected.audit!.phase, type: "AUDIT_DISCLOSE", body: encodeAuditDiscloseBody({ items: [] }),
-        }), requireCurrent);
+        }, requireCurrent);
       };
     });
   }
@@ -308,32 +303,28 @@ export class PersistentSaskuRoundReceiver {
     author: PersistentEnvelopeAuthor, expected: SaskuRoundSnapshot, staleCode: "stale_action" | "stale_contribution",
     capture: (identity: IdentityPublicKey) => PendingOperation["run"],
   ): Promise<SaskuRoundReceiveResult> {
-    let reserved = false;
     try {
-      if (this.#failure !== null) { throw this.#failure; }
-      if (this.#closed) { throw new SaskuRoundReceiverError("closed"); }
-      // Charge the full envelope ceiling before copying an intent or doing key/proof work.
-      const size = MAX_ROUND_REVEAL_ENVELOPE_BYTES;
-      this.#reserve(size);
-      reserved = true;
+      this.#guard();
       if (!(author instanceof PersistentEnvelopeAuthor)) { throw new TypeError("Local authoring requires a persistent envelope author"); }
       if (!bytesEqual(author.gameId, this.#session.gameId)) { throw new RoundRevealError("wrong_game"); }
-      const identity = parseIdentityPublicKey(author.sender);
+      const identity = author.sender;
       if (this.#session.seatOf(identity) === null) { throw new RoundRevealError("unknown_sender"); }
       if (expected !== this.#snapshot) { throw new SaskuRoundReceiverError(staleCode); }
-      const run = capture(identity);
-      if (this.#failure !== null) { throw this.#failure; }
-      if (this.#closed) { throw new SaskuRoundReceiverError("closed"); }
-      const pending = new Promise<SaskuRoundReceiveResult>((resolve, reject) => this.#queue.push({
-        size, resolve, reject, run,
-      }));
-      reserved = false;
-      void this.#drain();
-      return pending;
-    } catch (cause) {
-      if (reserved) this.#release(MAX_ROUND_REVEAL_ENVELOPE_BYTES);
-      return Promise.reject(cause);
-    }
+      return this.#schedule(MAX_ROUND_REVEAL_ENVELOPE_BYTES, capture(identity));
+    } catch (cause) { return Promise.reject(cause); }
+  }
+
+  #guard(): void {
+    if (this.#failure !== null) throw this.#failure;
+    if (this.#closed) throw new SaskuRoundReceiverError("closed");
+  }
+
+  #schedule(size: number, run: PendingOperation["run"]): Promise<SaskuRoundReceiveResult> {
+    if (this.#serializedByCaller) return run();
+    this.#reserve(size);
+    const pending = new Promise<SaskuRoundReceiveResult>((resolve, reject) => this.#queue.push({ size, resolve, reject, run }));
+    void this.#drain();
+    return pending;
   }
 
   #requireContribution(expected: SaskuRoundSnapshot, seat: SaskuSeat, type: "SHARES" | "AUDIT_DISCLOSE"): void {
@@ -353,35 +344,12 @@ export class PersistentSaskuRoundReceiver {
     }
   }
 
-  receive(candidate: EnvelopeArtifact): Promise<SaskuRoundReceiveResult> {
-    let reservedBytes: number | null = null;
-    try {
-      if (this.#failure !== null) { throw this.#failure; }
-      if (this.#closed) { throw new SaskuRoundReceiverError("closed"); }
-      const input = candidate?.canonicalBytes;
-      if (!(input instanceof Uint8Array) || input.constructor !== Uint8Array || input.length === 0 || input.length > MAX_ROUND_REVEAL_ENVELOPE_BYTES) {
-        throw new SaskuRoundReceiverError("invalid_envelope");
-      }
-      const size = input.length;
-      this.#reserve(size);
-      reservedBytes = size;
-      const bytes = new Uint8Array(size);
-      try {
-        bytes.set(input);
-        decodeAndVerifyEnvelope(bytes);
-      } catch (cause) { throw new SaskuRoundReceiverError("invalid_envelope", { cause }); }
-      if (this.#failure !== null) { throw this.#failure; }
-      if (this.#closed) { throw new SaskuRoundReceiverError("closed"); }
-      const pending = new Promise<SaskuRoundReceiveResult>((resolve, reject) => this.#queue.push({
-        size, resolve, reject, run: () => this.#receiveOne(bytes),
-      }));
-      reservedBytes = null;
-      void this.#drain();
-      return pending;
-    } catch (cause) {
-      if (reservedBytes !== null) this.#release(reservedBytes);
-      return Promise.reject(cause);
-    }
+  /** Receives a signed artifact produced by the protocol codec or local author. */
+  async receive(received: EnvelopeArtifact): Promise<SaskuRoundReceiveResult> {
+    this.#guard();
+    const size = received.canonicalBytes.length;
+    if (size === 0 || size > MAX_ROUND_REVEAL_ENVELOPE_BYTES) throw new SaskuRoundReceiverError("invalid_envelope");
+    return this.#schedule(size, () => this.#receiveOne(received));
   }
 
   /** Cancels queued work. An already submitted durable receipt is allowed to finish consistently. */
@@ -434,35 +402,26 @@ export class PersistentSaskuRoundReceiver {
         throw new SaskuHandError("The player must follow the effective led suit", "follow_suit");
       }
     }
-    const guardedSource: RandomSource = { fill: (bytes) => {
-      requireCurrent();
-      bytes.set(randomBytes(bytes.length, source));
-      requireCurrent();
-    } };
     const body: ActionBody = {
       kind: intent.type,
       data: intent.type === "bid" ? { value: intent.value } : intent.type === "choose_trump" ? { suit: intent.suit } : {},
       reveal: intent.type === "play" ? [intent.position] : [],
-      shares: intent.type === "play" ? [this.#ledger.createActionShare(seat, secretKey, intent.position, guardedSource)] : [],
+      shares: intent.type === "play" ? [this.#ledger.createActionShare(seat, secretKey, intent.position, source)] : [],
     };
-    return this.#authorAndReceive(author, identity, () => ({
+    return this.#authorAndReceive(author, identity, {
       round: this.#round, phase: expected.ledger.phase, type: "ACTION", body: encodeActionBody(body),
-    }), requireCurrent);
+    }, requireCurrent);
   }
 
   async #authorAndReceive(
     author: PersistentEnvelopeAuthor, identity: IdentityPublicKey,
-    makeContent: () => EnvelopeContent, requireCurrent: () => void,
+    content: EnvelopeContent, requireCurrent: () => void,
   ): Promise<SaskuRoundReceiveResult> {
-    requireCurrent();
-    const content = makeContent();
-    const argument = makeContent();
     requireCurrent();
     let intended: Uint8Array | null = null;
     let authored: EnvelopeArtifact;
     try {
-      // Keep the intended wire body separate from buffers passed to the author dependency.
-      authored = await author.author(argument, (head) => {
+      authored = await author.author(content, (head) => {
         requireCurrent();
         const accepted = this.#session.heads().find((entry) => bytesEqual(entry.from, identity));
         const matches = head === null ? accepted === undefined
@@ -483,20 +442,13 @@ export class PersistentSaskuRoundReceiver {
       if (intended !== null || cause instanceof AuthoredEnvelopeStoreError) { throw this.#fail("recovery_required", cause); }
       throw this.#failure ?? cause;
     }
-    let received: EnvelopeArtifact;
-    try {
-      const bytes = authored.canonicalBytes;
-      if (!(bytes instanceof Uint8Array) || bytes.constructor !== Uint8Array || bytes.length > MAX_ROUND_REVEAL_ENVELOPE_BYTES) {
-        throw new Error("Invalid authored round envelope bytes");
-      }
-      received = decodeAndVerifyEnvelope(bytes);
-      if (intended === null || !bytesEqual(encodeUnsignedEnvelope(received.envelope), intended)) {
-        throw new Error("Authored round envelope does not match the guarded content");
-      }
-    } catch (cause) { throw this.#fail("invalid_receipt", cause); }
+    if (authored.canonicalBytes.length > MAX_ROUND_REVEAL_ENVELOPE_BYTES ||
+        intended === null || !bytesEqual(encodeUnsignedEnvelope(authored.envelope), intended)) {
+      throw this.#fail("invalid_receipt", new Error("Authored round envelope does not match the guarded content"));
+    }
     try {
       // Avoid re-enqueueing behind ourselves. Closing after signing cannot erase this durable artifact.
-      const result = await this.#receiveOne(received.canonicalBytes, true);
+      const result = await this.#receiveOne(authored, true);
       if (result.status === "rejected") { throw new Error("Durably authored round envelope was rejected by local receipt"); }
       return result;
     } catch (cause) { throw this.#fail("recovery_required", cause); }
@@ -523,12 +475,7 @@ export class PersistentSaskuRoundReceiver {
         if (prior !== undefined && prior !== bytesToHex(received.hash)) { throw new RoundRevealError("conflicting_contribution"); }
         classification = { type: "AUDIT_DISCLOSE", seat, status: prior === undefined ? "accepted" : "duplicate" };
       } else {
-        classification = Object.freeze({ ...(prepared ??
-          this.#ledger.classify(decodeAndVerifyEnvelope(received.canonicalBytes), expectedSeat)) });
-        if (classification.type !== received.envelope.type || classification.seat !== this.#session.seatOf(parseIdentityPublicKey(received.envelope.from)) ||
-            !bytesEqual(classification.received.canonicalBytes, received.canonicalBytes)) {
-          throw this.#fail("recovery_required", new Error("Reveal classification does not match the original envelope"));
-        }
+        classification = prepared ?? this.#ledger.classify(received, expectedSeat);
       }
     }
     catch (cause) {
@@ -545,7 +492,7 @@ export class PersistentSaskuRoundReceiver {
     if (classification.type === "ACTION" && classification.status === "accepted") {
       if (expectedSeat === undefined) { throw new SaskuRoundReceiverError("hand_complete"); }
       const revealed = Object.fromEntries(Object.entries(classification.revealed).map(([pos, card]) => [pos, parseSaskuCard(card).id]));
-      const body = decodeActionBody(received.envelope.body);
+      const body = classification.body;
       action = decodeSaskuAction(classification.seat, {
         kind: body.kind, data: body.data, reveal: body.reveal,
       }, revealed);
@@ -554,12 +501,11 @@ export class PersistentSaskuRoundReceiver {
     return { received, expectedSeat, type: classification.type, seat: classification.seat as SaskuSeat, status: classification.status, action };
   }
 
-  async #receiveOne(bytes: Uint8Array, finishAuthored = false): Promise<SaskuRoundReceiveResult> {
+  async #receiveOne(received: EnvelopeArtifact, finishAuthored = false): Promise<SaskuRoundReceiveResult> {
     if (this.#failure !== null) { throw this.#failure; }
     if (this.#closed && !finishAuthored) { throw new SaskuRoundReceiverError("closed"); }
-    const received = decodeAndVerifyEnvelope(bytes);
     const prepared = this.#dealBackend && received.envelope.type === "SHARES"
-      ? await this.#ledger.prepareDealReceipt(decodeAndVerifyEnvelope(bytes), this.#dealBackend) : undefined;
+      ? await this.#ledger.prepareDealReceipt(received, this.#dealBackend) : undefined;
     if (this.#closed && !finishAuthored) { throw new SaskuRoundReceiverError("closed"); }
     if (this.#failure !== null) { throw this.#failure; }
     const transition = this.#classify(received, prepared?.transition);
@@ -567,8 +513,7 @@ export class PersistentSaskuRoundReceiver {
     let chainStatus: "accepted" | "duplicate";
     let persistenceStatus: "stored" | "duplicate";
     try {
-      // The durable dependency never receives the private admission/commit buffers.
-      receipt = await this.#durable.receive(decodeAndVerifyEnvelope(bytes));
+      receipt = await this.#durable.receiveVerified(received);
     } catch (cause) {
       if (this.#failure !== null) { throw this.#failure; }
       if (cause instanceof PersistentSessionReceiverError) { throw this.#fail("recovery_required", cause); }
@@ -576,7 +521,7 @@ export class PersistentSaskuRoundReceiver {
     }
     try {
       const returnedBytes = receipt.received.canonicalBytes;
-      if (!(returnedBytes instanceof Uint8Array) || returnedBytes.constructor !== Uint8Array || !bytesEqual(returnedBytes, bytes)) {
+      if (!(returnedBytes instanceof Uint8Array) || returnedBytes.constructor !== Uint8Array || !bytesEqual(returnedBytes, received.canonicalBytes)) {
         throw new Error("Durable receipt does not match the submitted artifact");
       }
       const status = receipt.status;
@@ -597,8 +542,8 @@ export class PersistentSaskuRoundReceiver {
       persistenceStatus = persisted;
       const envelope = received.envelope;
       const recorded = this.#session.readRange(envelope.from, envelope.seq, envelope.seq);
-      if (this.#session.classify(decodeAndVerifyEnvelope(bytes)).status !== "duplicate" || recorded.status !== "complete" ||
-          recorded.envelopes.length !== 1 || !bytesEqual(recorded.envelopes[0]!.canonicalBytes, bytes)) {
+      if (this.#session.classify(received).status !== "duplicate" || recorded.status !== "complete" ||
+          recorded.envelopes.length !== 1 || !bytesEqual(recorded.envelopes[0]!.canonicalBytes, received.canonicalBytes)) {
         throw new Error("Durable receipt is not reflected in its bound session registry");
       }
     } catch (cause) { throw this.#fail("invalid_receipt", cause); }
@@ -638,7 +583,7 @@ export class PersistentSaskuRoundReceiver {
         }
       } else {
         const committed = commitPreparedDeal ? commitPreparedDeal()
-          : this.#ledger.commit(decodeAndVerifyEnvelope(received.canonicalBytes), expectedSeat);
+          : this.#ledger.commit(received, expectedSeat);
         if (committed.status !== status || committed.type !== type || committed.seat !== seat ||
             !bytesEqual(committed.received.canonicalBytes, received.canonicalBytes)) {
           throw new Error("Reveal commit does not match the original transition");
@@ -698,37 +643,4 @@ export class PersistentSaskuRoundReceiver {
 function positiveInteger(value: number): number {
   if (!Number.isSafeInteger(value) || value < 1) { throw new RangeError("Sasku queue limits must be positive safe integers"); }
   return value;
-}
-
-function snapshotIntent(candidate: SaskuActionIntent): SaskuActionIntent {
-  if (typeof candidate !== "object" || candidate === null ||
-      (Object.getPrototypeOf(candidate) !== Object.prototype && Object.getPrototypeOf(candidate) !== null)) {
-    throw new SaskuHandError("A plain local action intent is required");
-  }
-  const keys = Reflect.ownKeys(candidate);
-  if (keys.length < 1 || keys.length > 2) { throw new SaskuHandError("Invalid local action fields"); }
-  const fields: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
-  for (const key of keys) {
-    const property = Object.getOwnPropertyDescriptor(candidate, key);
-    if (typeof key !== "string" || property === undefined || !property.enumerable || !("value" in property)) {
-      throw new SaskuHandError("Local action fields must be enumerable data properties");
-    }
-    fields[key] = property.value;
-  }
-  const names = Object.keys(fields).sort().join(",");
-  if ((fields["type"] === "pass" || fields["type"] === "diamonds") && names === "type") {
-    return Object.freeze({ type: fields["type"] });
-  }
-  if (fields["type"] === "bid" && names === "type,value" && typeof fields["value"] === "number" &&
-      Number.isSafeInteger(fields["value"]) && fields["value"] >= 3 && fields["value"] <= 9) {
-    return Object.freeze({ type: "bid", value: fields["value"] });
-  }
-  if (fields["type"] === "choose_trump" && names === "suit,type" && SASKU_SUITS.includes(fields["suit"] as SaskuSuit)) {
-    return Object.freeze({ type: "choose_trump", suit: fields["suit"] as SaskuSuit });
-  }
-  if (fields["type"] === "play" && names === "position,type" && typeof fields["position"] === "number" &&
-      Number.isSafeInteger(fields["position"]) && fields["position"] >= 0 && fields["position"] < 36 && !Object.is(fields["position"], -0)) {
-    return Object.freeze({ type: "play", position: fields["position"] });
-  }
-  throw new SaskuHandError("Invalid local action intent");
 }

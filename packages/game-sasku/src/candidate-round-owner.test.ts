@@ -76,3 +76,45 @@ it("rejects deferred work and requires recovery when the durable phase handoff f
   const recovered = await CandidateSaskuRoundOwner.open(c.options);
   expect(recovered.snapshot.phase).toBe("round"); recovered.close(); c.owner.close();
 }, 30_000);
+
+it("runs phase transitions directly under the match scheduler and promotes only after the final durable shuffle", async () => {
+  const c = await fixture(true);
+  c.owner.close();
+  const owner = await CandidateSaskuRoundOwner.open({ ...c.options, serializedByCaller: true });
+  for (const artifact of c.shuffles.slice(0, 3)) {
+    await expect(owner.receiveHistory(artifact)).resolves.toMatchObject({ status: "accepted" });
+  }
+
+  const gate = deferred(), started = deferred();
+  const persist = c.store.persistAcceptedEnvelope.bind(c.store);
+  vi.spyOn(c.store, "persistAcceptedEnvelope").mockImplementationOnce(async artifact => {
+    started.resolve();
+    await gate.promise;
+    return persist(artifact);
+  });
+  const lastShuffle = owner.receiveHistory(c.shuffles[3]!);
+  await started.promise;
+  try {
+    expect(owner.snapshot).toMatchObject({ phase: "shuffle", state: { nextSeat: 3 } });
+    expect(owner.pendingEnvelopes).toBe(0);
+  } finally {
+    gate.resolve();
+  }
+  await expect(lastShuffle).resolves.toMatchObject({ status: "accepted" });
+  expect(owner.snapshot.phase).toBe("round");
+  await expect(owner.receiveHistory(c.deals[0]!)).resolves.toMatchObject({ status: "accepted" });
+  expect(owner.pendingEnvelopes).toBe(0);
+  owner.close();
+}, 30_000);
+
+it("rejects an invalid signature at direct wire ingress before proof verification or storage", async () => {
+  const c = await fixture();
+  const bytes = c.shuffles[1]!.canonicalBytes.slice();
+  bytes[bytes.length - 1]! ^= 1;
+  const persist = vi.spyOn(c.store, "persistAcceptedEnvelope");
+  await expect(c.owner.receive(c.f.roster[1]!, bytes)).rejects.toMatchObject({ code: "INVALID_SIGNATURE" });
+  expect(c.owner.pendingEnvelopes).toBe(0);
+  expect(c.verifier.verify).not.toHaveBeenCalled();
+  expect(persist).not.toHaveBeenCalled();
+  c.owner.close();
+});

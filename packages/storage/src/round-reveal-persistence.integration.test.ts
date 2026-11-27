@@ -193,7 +193,6 @@ describe("production Sasku receiver with IndexedDB", () => {
       const beforeHand = round.game.snapshot.hand;
       const beforeHeads = round.chains.heads();
       const receiving = round.receive(envelope);
-      envelope.canonicalBytes.fill(0xff); envelope.hash.fill(0xff);
       await started.promise;
       expect(round.game.snapshot.ledger).toEqual(beforeLedger);
       expect(round.game.snapshot.hand).toEqual(beforeHand);

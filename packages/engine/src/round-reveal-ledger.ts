@@ -1,11 +1,11 @@
-import { bytesEqual, bytesToHex, randomBytes, RistrettoPoint, type RandomSource, type RistrettoScalar } from "@p2pcards/crypto";
+import { bytesEqual, bytesToHex, RistrettoPoint, type RandomSource, type RistrettoScalar } from "@p2pcards/crypto";
 import {
   CardPointTable, createProvenDecryptionShare, decodeActionBody, decodeSharesBody, decryptionShare, removeDecryptionShares, verifyProvenDecryptionShare,
   type ActionBody, type DecryptionShareBatchBackend, type DeckSpec, type MaskedCard, type PositionShare, type SharesBody,
 } from "@p2pcards/deck";
-import { decodeAndVerifyEnvelope, parseGameId, type EnvelopeArtifact, type GameId, type IdentityPublicKey, type ProofContext } from "@p2pcards/protocol";
+import { type EnvelopeArtifact, type GameId, type IdentityPublicKey, type ProofContext } from "@p2pcards/protocol";
 
-import { ActionEnvelopeError, decodeActionEnvelope, MAX_ACTION_ENVELOPE_BYTES, type ActionEnvelopeErrorCode } from "./action-envelope";
+import { MAX_ACTION_ENVELOPE_BYTES, type ActionEnvelopeErrorCode } from "./action-envelope";
 import { SetupEnvelopeCoordinator } from "./setup-envelope-coordinator";
 
 export const MAX_ROUND_REVEAL_ENVELOPE_BYTES = MAX_ACTION_ENVELOPE_BYTES;
@@ -201,16 +201,9 @@ export class RoundRevealLedger {
 
   /** Prepares only this pending nonrecipient's exact current batch, never caller-selected positions. */
   createDealShares(seat: number, secretKey: RistrettoScalar, source?: RandomSource): SharesBody {
-    const { context, cards, to, requirePending } = this.#dealContribution(seat, secretKey);
-    const guardedSource: RandomSource = { fill: (bytes) => {
-      requirePending();
-      bytes.set(randomBytes(bytes.length, source));
-      // Check every draw, including nonces rejected by the scalar sampler.
-      requirePending();
-    } };
+    const { context, cards, to } = this.#dealContribution(seat, secretKey);
     const items = cards.map(({ pos, A }) => {
-      const share = createProvenDecryptionShare(context, pos, secretKey, A, guardedSource);
-      requirePending();
+      const share = createProvenDecryptionShare(context, pos, secretKey, A, source);
       return Object.freeze({ pos, ...share });
     });
     return Object.freeze({ to, items: Object.freeze(items) });
@@ -237,7 +230,7 @@ export class RoundRevealLedger {
       if (this.#contributors.has(seat)) { throw new RoundRevealError("conflicting_contribution"); }
     };
     requirePending();
-    const context = { gameId: parseGameId(this.#gameId), round: this.#round, phase: this.#phase() };
+    const context = { gameId: this.#gameId, round: this.#round, phase: this.#phase() };
     return { context, cards: this.#dealPositions(step, seat).map(pos => ({ pos, A: this.#deck[pos]!.A })),
       to: this.#batchDeal ? 4 : step.to, requirePending };
   }
@@ -256,13 +249,7 @@ export class RoundRevealLedger {
     if (!Object.hasOwn(hand.remaining, position)) { throw new RoundRevealError("already_revealed"); }
     if (this.#actionIndex >= this.#maxActions) { throw new RoundRevealError("action_limit"); }
     const phase = this.#phase();
-    const guardedSource: RandomSource = { fill: (bytes) => {
-      if (phase !== this.#phase()) { throw new RoundRevealError("wrong_phase"); }
-      bytes.set(randomBytes(bytes.length, source));
-      if (phase !== this.#phase()) { throw new RoundRevealError("wrong_phase"); }
-    } };
-    const share = createProvenDecryptionShare({ gameId: this.#gameId, round: this.#round, phase }, position, secretKey, this.#deck[position]!.A, guardedSource);
-    if (phase !== this.#phase()) { throw new RoundRevealError("wrong_phase"); }
+    const share = createProvenDecryptionShare({ gameId: this.#gameId, round: this.#round, phase }, position, secretKey, this.#deck[position]!.A, source);
     return Object.freeze({ pos: position, ...share });
   }
 
@@ -281,10 +268,8 @@ export class RoundRevealLedger {
       verify = () => backend.verifyDleqBatch(context, key, cards, items);
     });
     if (transition.type !== "SHARES") throw new RoundRevealError("wrong_type");
-    // Keep the committed bytes independent of the returned transition.
-    const captured = { canonicalBytes: transition.received.canonicalBytes.slice() };
     if (verify && !await verify()) throw new RoundRevealError("invalid_share_proof");
-    return { transition, commit: () => this.#process(captured, undefined, true, () => {}) };
+    return { transition, commit: () => this.#process(candidate, undefined, true, () => {}) };
   }
 
   /** The caller must validate rules and durably accept the envelope before this mutation. */
@@ -309,17 +294,10 @@ export class RoundRevealLedger {
   }
 
   #process(
-    candidate: { readonly canonicalBytes: Uint8Array }, expectedSeat: number | undefined, commit: boolean,
+    received: EnvelopeArtifact, expectedSeat: number | undefined, commit: boolean,
     checkDeal?: (context: ProofContext, key: RistrettoPoint, items: readonly PositionShare[]) => void,
   ): RoundRevealTransition {
-    let received: EnvelopeArtifact;
-    try {
-      const bytes = candidate.canonicalBytes;
-      if (!(bytes instanceof Uint8Array) || bytes.constructor !== Uint8Array || bytes.length > MAX_ROUND_REVEAL_ENVELOPE_BYTES) {
-        throw new TypeError("Round reveal envelope exceeds its byte boundary");
-      }
-      received = decodeAndVerifyEnvelope(bytes);
-    } catch (cause) { throw new RoundRevealError("invalid_envelope", { cause }); }
+    if (received.canonicalBytes.length > MAX_ROUND_REVEAL_ENVELOPE_BYTES) throw new RoundRevealError("invalid_envelope");
     const envelope = received.envelope;
     if (!bytesEqual(envelope.game, this.#gameId)) { throw new RoundRevealError("wrong_game"); }
     const seat = this.#seats.get(bytesToHex(envelope.from));
@@ -347,7 +325,7 @@ export class RoundRevealLedger {
       }
       const key = this.#publicKeys[seat]!;
       if (checkDeal) {
-        checkDeal({ ...context, gameId: parseGameId(this.#gameId) }, key, body.items);
+        checkDeal(context, key, body.items);
       } else {
         for (const item of body.items) {
           if (!verifyProvenDecryptionShare(context, item.pos, key, this.#deck[item.pos]!.A, item)) {
@@ -372,16 +350,12 @@ export class RoundRevealLedger {
     }
     if (this.#schedule[this.#dealIndex] !== undefined) { throw new RoundRevealError("deal_incomplete"); }
     if (this.#actionIndex >= this.#maxActions) { throw new RoundRevealError("action_limit"); }
+    if (expectedSeat === undefined) throw new RangeError("An expected action seat is required");
+    if (envelope.phase !== this.#phase()) throw new RoundRevealError("wrong_phase");
+    if (seat !== expectedSeat) throw new RoundRevealError("unexpected_sender");
     let body: ActionBody;
-    try {
-      body = decodeActionEnvelope(received.canonicalBytes, {
-        gameId: this.#gameId, round: this.#round, actionIndex: this.#actionIndex, roster: this.#roster,
-        expectedSeats: expectedSeat === undefined ? [] : [expectedSeat],
-      }).action;
-    } catch (cause) {
-      if (cause instanceof ActionEnvelopeError) { throw new RoundRevealError(cause.code, { cause }); }
-      throw cause;
-    }
+    try { body = decodeActionBody(envelope.body); }
+    catch (cause) { throw new RoundRevealError("malformed_body", { cause }); }
     // Check all ownership/freshness constraints before attempting any card opening.
     for (const position of body.reveal) {
       const owner = this.#owners[position];

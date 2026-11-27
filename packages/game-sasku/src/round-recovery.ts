@@ -1,6 +1,6 @@
 import { bytesEqual } from "@p2pcards/crypto";
 import { MAX_ROUND_REVEAL_ENVELOPE_BYTES, recoverSetup, type SetupEnvelopeCoordinator } from "@p2pcards/engine";
-import { parseGameId, parseHash256, parseIdentityPublicKey, type EnvelopeArtifact } from "@p2pcards/protocol";
+import { type EnvelopeArtifact } from "@p2pcards/protocol";
 import { captureSessionHistory, type SessionChainRegistry } from "@p2pcards/session";
 
 export const DEFAULT_MAX_SASKU_RECOVERY_ENVELOPES = 1024;
@@ -36,25 +36,12 @@ export function captureSaskuRoundHistory(
   if (typeof allowOtherRounds !== "boolean") throw new TypeError("Invalid other-round recovery policy");
 
   try {
-    const game = parseGameId(setup.gameId);
-    const setupRound = setup.round;
-    const setupRoster = setup.roster;
-    if (!Array.isArray(setupRoster) || setupRoster.length !== 4) {
-      throw new SaskuRoundRecoveryError("Sasku recovery requires four setup seats");
+    const game = setup.gameId;
+    const roster = setup.roster;
+    if (!bytesEqual(game, session.gameId) || roster.length !== 4 ||
+        roster.some((sender, seat) => session.seatOf(sender) !== seat)) {
+      throw new SaskuRoundRecoveryError("Sasku recovery history does not match its setup");
     }
-    const roster = Array.from(setupRoster, parseIdentityPublicKey);
-    const sourceHeads = session.heads();
-    if (!Array.isArray(sourceHeads) || sourceHeads.length !== 4) {
-      throw new SaskuRoundRecoveryError("Sasku recovery requires every sender chain");
-    }
-    // Sasku needs all four chains, unlike a fresh or partially started session.
-    const heads = Array.from(sourceHeads, (source, seat) => {
-      const head = { from: parseIdentityPublicKey(source.from), seq: source.seq, hash: parseHash256(source.hash) };
-      if (!bytesEqual(head.from, roster[seat]!) || !Number.isSafeInteger(head.seq) || head.seq < 0 || Object.is(head.seq, -0)) {
-        throw new SaskuRoundRecoveryError("Invalid Sasku recovery heads or seat order");
-      }
-      return head;
-    });
     const history = captureSessionHistory(session, { maxEnvelopes, maxBytes });
     if (history.bySeat.length !== 4 || history.bySeat.some((artifacts) => artifacts.length === 0)) {
       throw new SaskuRoundRecoveryError("Sasku recovery requires every sender chain");
@@ -63,13 +50,7 @@ export function captureSaskuRoundHistory(
     const setupArtifacts: EnvelopeArtifact[] = [];
     const bySeat: EnvelopeArtifact[][] = [[], [], [], []];
     for (let seat = 0; seat < 4; seat += 1) {
-      const head = heads[seat]!;
       const artifacts = history.bySeat[seat]!;
-      const last = artifacts.at(-1)!;
-      if (!bytesEqual(last.envelope.game, game) || !bytesEqual(last.envelope.from, roster[seat]!) ||
-          last.envelope.seq !== head.seq || !bytesEqual(last.hash, head.hash)) {
-        throw new SaskuRoundRecoveryError("Sasku recovery history does not match its setup or captured heads");
-      }
       let revealed = false;
       for (const artifact of artifacts) {
         const envelope = artifact.envelope;
@@ -109,7 +90,7 @@ export function captureSaskuRoundHistory(
       }
     }
 
-    const recovered = recoverSetup(game, setupRound, roster, setupArtifacts, setup.beaconRequired).coordinator;
+    const recovered = recoverSetup(game, setup.round, roster, setupArtifacts, setup.beaconRequired).coordinator;
     const aggregateKey = setup.aggregateKey;
     const seed = setup.seed;
     const recoveredSeed = recovered.seed;
@@ -126,25 +107,7 @@ export function captureSaskuRoundHistory(
       }
     }
 
-    const assertUnchanged = (): void => {
-      try {
-        history.assertUnchanged();
-        if (sourceHeads.length !== 4) { throw new SaskuRoundRecoveryError("Sasku recovery heads changed"); }
-        for (let seat = 0; seat < 4; seat += 1) {
-          const expected = heads[seat]!;
-          const actual = sourceHeads[seat]!;
-          if (!Object.is(actual.seq, expected.seq) || !bytesEqual(parseIdentityPublicKey(actual.from), expected.from) ||
-              !bytesEqual(parseHash256(actual.hash), expected.hash)) {
-            throw new SaskuRoundRecoveryError("Sasku recovery heads changed");
-          }
-        }
-      } catch (cause) {
-        if (cause instanceof SaskuRoundRecoveryError) throw cause;
-        throw new SaskuRoundRecoveryError("Could not check Sasku recovery history stability", { cause });
-      }
-    };
-    assertUnchanged();
-    return Object.freeze({ bySeat: Object.freeze(bySeat.map((artifacts) => Object.freeze(artifacts))), assertUnchanged });
+    return Object.freeze({ bySeat: Object.freeze(bySeat.map((artifacts) => Object.freeze(artifacts))), assertUnchanged: history.assertUnchanged });
   } catch (cause) {
     if (cause instanceof SaskuRoundRecoveryError) throw cause;
     throw new SaskuRoundRecoveryError("Could not capture Sasku round history", { cause });

@@ -44,7 +44,7 @@ interface Room {
   readonly barriers: Map<string, { generation: number; barrier: PeerHistoryBarrier }>;
   readonly roundCompletions: Map<string, Map<number, { generation: number; marker: Uint8Array }>>;
   readonly sentRoundCompletions: Map<string, Map<number, { generation: number; marker: Uint8Array }>>;
-  readonly early: { remote: IdentityPublicKey; payload: Uint8Array }[];
+  readonly early: EnvelopeArtifact[];
   readonly paths: Map<string, "direct" | "relayed" | "unknown">;
 }
 
@@ -291,24 +291,29 @@ export class BrowserLobbyController implements BrowserLobbyActions {
     const candidate = decodeAndVerifyEnvelope(payload);
     if (!["JOIN", "ROSTER", "READY"].includes(candidate.envelope.type)) {
       if (!bytesEqual(candidate.envelope.from, remote) || !bytesEqual(candidate.envelope.game, room.invitation.gameId)) throw new LobbyProtocolError("Wrong authenticated round sender");
-      return this.#enqueue(room, async () => {
-        if (room.game) room.game.receive(remote, payload);
+      try {
+        this.#require(room);
+        if (room.blocked) throw new Error("Lobby storage needs recovery; leave and reopen the invitation");
+        if (room.game) room.game.receive(candidate);
         else {
           if (room.early.length >= 32) throw new LobbyProtocolError("Early round queue is full");
-          room.early.push({ remote, payload: payload.slice() });
+          room.early.push(candidate);
         }
         if (!room.playing && bytesEqual(remote, room.invitation.host) && candidate.envelope.type === "KEY_SHARE") {
           room.playing = true;
           this.#refresh(room);
         }
-      });
+      } catch (cause) {
+        this.#recordFailure(room, cause);
+        throw cause;
+      }
+      return;
     }
     if (payload.length > 4096) { throw new LobbyProtocolError("Lobby envelope exceeds 4 KiB"); }
-    let artifact: EnvelopeArtifact;
+    const artifact = candidate;
     try {
-      artifact = decodeAndVerifyEnvelope(payload);
       if (!bytesEqual(artifact.envelope.game, room.invitation.gameId) || !bytesEqual(artifact.envelope.from, remote) ||
-          artifact.envelope.round !== 0 || artifact.envelope.phase !== "lobby" || !["JOIN", "ROSTER", "READY"].includes(artifact.envelope.type)) {
+          artifact.envelope.round !== 0 || artifact.envelope.phase !== "lobby") {
         throw new Error("Only this authenticated author's lobby messages are accepted");
       }
       if (artifact.envelope.type === "JOIN") { decodeJoinBody(artifact.envelope.body); }
@@ -530,14 +535,18 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       if (room.blocked) { throw new Error("Lobby storage needs recovery; leave and reopen the invitation"); }
       await operation();
     }).catch((cause: unknown) => {
-      if (this.#room === room) {
-        if (!(cause instanceof LobbyProtocolError)) { room.blocked = true; }
-        this.#set({ error: message(cause) }); this.#refresh(room);
-      }
+      this.#recordFailure(room, cause);
       throw cause;
     }).finally(() => { room.pending -= 1; });
     room.queue = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  #recordFailure(room: Room, cause: unknown): void {
+    if (this.#room !== room) return;
+    if (!(cause instanceof LobbyProtocolError)) room.blocked = true;
+    this.#set({ error: message(cause) });
+    this.#refresh(room);
   }
 
   #accepted(room: Room, result: { readonly status: string; readonly reason?: string; readonly persistenceStatus?: string }): void {
@@ -602,7 +611,7 @@ export class BrowserLobbyController implements BrowserLobbyActions {
       room.game = new LiveRound({ session: room.lobby.finalizedRegistry, roster: room.lobby.roster!, self: parseIdentityPublicKey(this.#identity.publicKey),
         author: room.author, stored: room.stored, ...(this.#options.storage ? { storage: this.#options.storage } : {}),
         changed: () => this.#refresh(room), published: () => this.#flushAll(room) });
-      for (const item of room.early.splice(0)) room.game.receive(item.remote, item.payload);
+      for (const artifact of room.early.splice(0)) room.game.receive(artifact);
       this.#flushAll(room);
     }
     for (const [key, entry] of room.barriers) {

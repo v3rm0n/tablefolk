@@ -26,6 +26,7 @@ export interface PersistentSetupReceiverOptions {
   readonly self: IdentityPublicKey;
   readonly session: SessionChainRegistry;
   readonly sessionReceiver: PersistentSessionReceiver;
+  readonly serializedByCaller?: boolean;
   readonly maxPendingEnvelopes?: number;
   readonly maxPendingBytes?: number;
   readonly historyLimits?: SessionHistoryCaptureLimits;
@@ -90,6 +91,7 @@ export class PersistentSetupReceiver {
   readonly #roster: readonly IdentityPublicKey[];
   readonly #self: IdentityPublicKey;
   readonly #seat: number;
+  readonly #serializedByCaller: boolean;
   readonly #maxPendingEnvelopes: number;
   readonly #maxPendingBytes: number;
   readonly #queue: PendingOperation[] = [];
@@ -119,6 +121,7 @@ export class PersistentSetupReceiver {
     this.#self = parseIdentityPublicKey(captured.self);
     this.#seat = this.#roster.findIndex((sender) => bytesEqual(sender, this.#self));
     if (this.#seat === -1) { throw new TypeError("The local setup identity must belong to the finalized roster"); }
+    this.#serializedByCaller = captured.serializedByCaller ?? false;
     this.#maxPendingEnvelopes = positiveInteger(captured.maxPendingEnvelopes ?? DEFAULT_MAX_PENDING_SETUP_ENVELOPES);
     this.#maxPendingBytes = positiveInteger(captured.maxPendingBytes ?? DEFAULT_MAX_PENDING_SETUP_BYTES);
     const history = captureSessionHistory(this.#session, captured.historyLimits);
@@ -178,14 +181,14 @@ export class PersistentSetupReceiver {
   authorKeyShare(author: PersistentEnvelopeAuthor, store: DurableGameSecretStore, expected: PersistentSetupSnapshot, source?: RandomSource): Promise<PersistentSetupReceiveResult> {
     return this.#author(author, expected, "KEY_SHARE", async (guard) => {
       const local = await prepareLocalGameKeyShare({ gameId: this.gameId, round: this.#round, phase: "setup.keys" }, store, source, guard);
-      return () => ({ type: "KEY_SHARE", round: this.#round, phase: "setup.keys", body: encodeGameKeyShareBody(local.share) });
+      return { type: "KEY_SHARE", round: this.#round, phase: "setup.keys", body: encodeGameKeyShareBody(local.share) };
     });
   }
 
   authorRandCommit(author: PersistentEnvelopeAuthor, store: DurableSetupBeaconSecretStore, expected: PersistentSetupSnapshot, source?: RandomSource): Promise<PersistentSetupReceiveResult> {
     return this.#author(author, expected, "RAND_COMMIT", async (guard) => {
       const local = await prepareLocalBeaconContribution({ gameId: this.gameId, round: this.#round, roster: this.roster, sender: this.self }, store, source, guard);
-      return () => ({ type: "RAND_COMMIT", round: this.#round, phase: "setup.rand", body: encodeRandCommitBody({ cm: local.commitment }) });
+      return { type: "RAND_COMMIT", round: this.#round, phase: "setup.rand", body: encodeRandCommitBody({ cm: local.commitment }) };
     });
   }
 
@@ -194,7 +197,7 @@ export class PersistentSetupReceiver {
       const cm = this.#coordinator.commitmentAt(this.#seat);
       if (cm === null) throw this.#fail("recovery_required", new Error("Reveal phase is missing the local commitment"));
       const local = await restoreLocalBeaconContribution({ gameId: this.gameId, round: this.#round, roster: this.roster, sender: this.self }, store, cm, guard);
-      return () => ({ type: "RAND_REVEAL", round: this.#round, phase: "setup.rand", body: encodeRandRevealBody({ s: local.secret }) });
+      return { type: "RAND_REVEAL", round: this.#round, phase: "setup.rand", body: encodeRandRevealBody({ s: local.secret }) };
     });
   }
 
@@ -205,7 +208,7 @@ export class PersistentSetupReceiver {
 
   #author(
     author: PersistentEnvelopeAuthor, expected: PersistentSetupSnapshot, type: SetupMessageType,
-    prepare: (guard: () => undefined) => Promise<() => EnvelopeContent>,
+    prepare: (guard: () => undefined) => Promise<EnvelopeContent>,
   ): Promise<PersistentSetupReceiveResult> {
     let reserved = false;
     try {
@@ -227,7 +230,7 @@ export class PersistentSetupReceiver {
 
   async #authorOne(
     author: PersistentEnvelopeAuthor, expected: PersistentSetupSnapshot, type: SetupMessageType,
-    prepare: (guard: () => undefined) => Promise<() => EnvelopeContent>,
+    prepare: (guard: () => undefined) => Promise<EnvelopeContent>,
   ): Promise<PersistentSetupReceiveResult> {
     const guard = (): undefined => {
       this.#requireOpen();
@@ -247,15 +250,12 @@ export class PersistentSetupReceiver {
       if (cause instanceof AuthoredEnvelopeStoreError) throw this.#fail("recovery_required", cause);
       throw this.#failure ?? cause;
     }
-    const makeContent = await prepare(guard);
-    guard();
-    const content = makeContent();
-    const argument = makeContent();
+    const content = await prepare(guard);
     guard();
     let intended: Uint8Array | null = null;
     let authored: EnvelopeArtifact;
     try {
-      authored = await author.author(argument, (head) => {
+      authored = await author.author(content, (head) => {
         guard();
         this.#requireHead(head);
         guard();
@@ -395,6 +395,7 @@ export class PersistentSetupReceiver {
 
   #enqueue(size: number, run: PendingOperation["run"]): Promise<PersistentSetupReceiveResult> {
     this.#requireOpen();
+    if (this.#serializedByCaller) return run().finally(() => this.#release(size));
     const result = new Promise<PersistentSetupReceiveResult>((resolve, reject) => this.#queue.push({ size, run, resolve, reject }));
     void this.#drain();
     return result;

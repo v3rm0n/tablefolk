@@ -190,16 +190,16 @@ describe("private Sasku hand recovery with IndexedDB", () => {
     const persist = store.persistAcceptedEnvelope.bind(store);
     const fault = vi.spyOn(store, "persistAcceptedEnvelope").mockImplementationOnce(async (received) => {
       const receipt = await persist(received);
-      received.hash.fill(0xff);
-      return receipt;
+      if (receipt.status === "conflict") return receipt;
+      return { ...receipt, record: { ...receipt.record, artifact: f.deal(0, 2) } };
     });
     try {
       expect(game.readPrivateHand(identity, key)).toBeNull();
       const before = game.snapshot;
       const message = f.deal(0, 3);
-      await expect(game.receive(message)).rejects.toMatchObject({ code: "invalid_receipt" });
+      await expect(game.receive(message)).rejects.toMatchObject({ code: "recovery_required" });
       round.messages.push(message);
-      expect(game.failure?.code).toBe("invalid_receipt");
+      expect(game.failure?.code).toBe("recovery_required");
       const stored = await databaseContents(round.options);
       expect(stored).toEqual(expectedContents(round));
       expect(() => game.readPrivateHand(identity, key)).toThrow(game.failure!);
