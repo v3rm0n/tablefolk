@@ -18,6 +18,9 @@ Local changes made 2026-09-23 for the isolated `candidate-transcript` experiment
 - `src/transcript.rs` implements the candidate SHA-512/CBOR event framing,
   response absorption, challenge reduction, and bounds.
 
+The local prover also clears the private permutation, shuffle witness copies,
+and aggregate remasking scalar on drop.
+
 All other source files, including proof equations and transcript append call
 sites, match the pinned upstream bytes. `source-manifest.json` records original
 and local source hashes; `node ../../verify-vendor.mjs` checks the local snapshot.

@@ -16,7 +16,10 @@ describe("card point derivation", () => {
 
     expect(first.size).toBe(2);
     expect(first.deckSpecId).toBe("test/2@1");
-    expect(first.pointAt(0).equals(second.pointAt(0))).toBe(true);
+    expect(first.pointAt(0)).toBe(second.pointAt(0));
+    const reordered = new CardPointTable({ id: "test/2@1", cards: ["D:10", "C:A"] });
+    expect(reordered.cardIdAt(0)).toBe("D:10");
+    expect(reordered.pointAt(0).equals(first.pointAt(1))).toBe(true);
     expect(first.pointAt(0).equals(first.pointAt(1))).toBe(false);
     expect(first.cardIdAt(1)).toBe("D:10");
     expect(first.identify(first.pointAt(0))).toBe("C:A");

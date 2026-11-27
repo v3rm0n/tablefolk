@@ -62,6 +62,9 @@ node run-browser.mjs
 # Bounded 36-card statement/witness API across TS, native Rust, and WASM worker
 node run-shuffle-api.mjs
 
+# Cross-runtime DLEQ interoperability and shuffle/deal arithmetic timings
+node benchmark-crypto.mjs
+
 # Full browser worker + IndexedDB shuffle/deal/play/audit/owner/sync integration
 node stage-web-candidate.mjs
 node run-web-shuffle.mjs

@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 const source = new URL("./pkg-transcript/", import.meta.url);
 const target = new URL("../../apps/web/public/shuffle-candidate/", import.meta.url);
 const js = await readFile(new URL("shuffle_backend_evaluation.js", source));
-for (const name of ["prove_candidate_shuffle36", "verify_candidate_shuffle36", "validate_candidate_shuffle_statement36"]) {
+for (const name of ["prove_candidate_shuffle36", "verify_candidate_shuffle36", "validate_candidate_shuffle_statement36",
+  "prepare_and_prove_candidate_shuffle36", "create_dleq_batch", "verify_dleq_batch"]) {
   if (!js.toString().includes(`export function ${name}(`)) throw new Error("Build candidate-transcript artifacts before staging");
 }
 const wasm = await readFile(new URL("shuffle_backend_evaluation_bg.wasm", source));

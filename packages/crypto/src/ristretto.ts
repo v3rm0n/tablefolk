@@ -47,15 +47,8 @@ export class RistrettoPoint {
     }
 
     try {
-      const point = ristretto255.Point.fromBytes(bytes);
-      if (!bytesEqual(point.toBytes(), bytes)) {
-        throw new RistrettoEncodingError("Ristretto point encoding is not canonical");
-      }
-      return new RistrettoPoint(point);
+      return new RistrettoPoint(ristretto255.Point.fromBytes(bytes));
     } catch (cause) {
-      if (cause instanceof RistrettoEncodingError) {
-        throw cause;
-      }
       throw new RistrettoEncodingError("Invalid Ristretto point encoding", { cause });
     }
   }

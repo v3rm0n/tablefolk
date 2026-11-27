@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RistrettoPoint } from "@p2pcards/crypto";
+import { RistrettoPoint, scalarFromBigInt } from "@p2pcards/crypto";
 import { encodeCandidateShuffleStatement36, encodeCandidateShuffleProof36 } from "@p2pcards/deck";
 import { parseGameId, parseHash256 } from "@p2pcards/protocol";
 import { CandidateShuffleClient } from "./candidate-shuffle-client";
@@ -27,6 +27,30 @@ describe("candidate shuffle worker lifecycle", () => {
     expect(f.make).toHaveBeenCalledOnce();
     f.client.close();
     expect(f.workers[0]!.terminate).toHaveBeenCalledOnce();
+  });
+  it("reuses the worker across shuffle and deal operations and clears the dispatched secret", async () => {
+    const f = fixture();
+    const shuffle = f.client.prove(statement), w = f.workers[0]!;
+    w.onmessage!({ data: { statement, proof } });
+    await shuffle;
+
+    const gameId = parseGameId(new Uint8Array(16));
+    const context = { gameId, round: 1, phase: "round.1.deal.0" };
+    const cards = [{ pos: 24, A: RistrettoPoint.base() }];
+    const clone = vi.fn();
+    w.postMessage.mockImplementationOnce(request => clone(structuredClone(request)));
+    const create = f.client.createDleqBatch(context, scalarFromBigInt(7n), cards);
+    const original = w.postMessage.mock.lastCall![0].secret as Uint8Array;
+    expect(original).toEqual(new Uint8Array(32));
+    expect(clone.mock.lastCall![0].secret[0]).toBe(7);
+    w.onmessage!({ data: { shares: new Uint8Array(128) } });
+
+    const verify = f.client.verifyDleqBatch(context, RistrettoPoint.base(), cards, await create);
+    w.onmessage!({ data: { valid: true } });
+    await expect(verify).resolves.toBe(true);
+    expect(f.make).toHaveBeenCalledOnce();
+    expect(w.terminate).not.toHaveBeenCalled();
+    f.client.close();
   });
   it("rejects busy calls, aborts, and ignores a queued late result", async () => {
     const f = fixture(), abort = new AbortController();

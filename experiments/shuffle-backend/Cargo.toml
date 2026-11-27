@@ -14,7 +14,7 @@ crate-type = ["rlib", "cdylib"]
 [features]
 ristretto = ["dep:ark-ed25519", "dep:curve25519-dalek"]
 candidate-crs = ["ristretto", "dep:sha2"]
-candidate-transcript = ["candidate-crs", "dep:cards-proofs-sha512"]
+candidate-transcript = ["candidate-crs", "dep:cards-proofs-sha512", "dep:zeroize"]
 
 [dependencies]
 cards-proofs = { git = "https://github.com/paritytech/mental-poker", rev = "ac4fb67b612aa89f37f6be72ea74a3c13eff66ca" }
@@ -30,6 +30,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = { version = "=0.10.9", optional = true }
 wasm-bindgen = "=0.2.100"
+zeroize = { version = "1", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }

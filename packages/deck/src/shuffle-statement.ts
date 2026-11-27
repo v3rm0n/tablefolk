@@ -28,7 +28,7 @@ export function encodeCandidateShuffleStatement36(value: CandidateShuffleStateme
     throw new RangeError("Invalid shuffle round or seat");
   }
   const key = pointBytes(value.aggregateKey);
-  if (RistrettoPoint.fromBytes(key).isIdentity()) { throw new Error("Identity shuffle key"); }
+  if (value.aggregateKey.isIdentity()) { throw new Error("Identity shuffle key"); }
   return encodeCanonical([CANDIDATE_SHUFFLE_STATEMENT_PROFILE, game, round, seat,
     roster, key, packDeck(value.inputDeck), packDeck(value.outputDeck)]);
 }
@@ -95,7 +95,7 @@ export function encodeCandidateShuffleWitness36(witness: DeckShuffleWitness): {
 
 function pointBytes(point: RistrettoPoint): Uint8Array {
   if (!(point instanceof RistrettoPoint)) throw new TypeError("Expected Ristretto point");
-  const bytes = point.toBytes(); RistrettoPoint.fromBytes(bytes); return bytes;
+  return point.toBytes();
 }
 function packDeck(deck: readonly MaskedCard[]): Uint8Array {
   if (!Array.isArray(deck) || deck.length !== 36) throw new Error("Expected 36 ciphertexts");

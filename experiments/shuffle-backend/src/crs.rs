@@ -1,5 +1,6 @@
 //! Independent fixed-tuple CBOR/SHA-512 implementation of the candidate CRS.
 //! This does not adapt the upstream Fiat-Shamir transcript.
+use std::sync::OnceLock;
 use sha2::{Digest, Sha512};
 use ark_ff::Zero;
 use serde::Serialize;
@@ -47,21 +48,35 @@ fn validate(point: Point, previous: &[Point]) -> Result<(), String> {
     Ok(())
 }
 
-pub fn derive() -> Result<(Point, CommitKey, Vec<Vector>), String> {
-    let mut points = vec![Point::base()];
+pub fn derive() -> Result<&'static (Point, CommitKey), String> {
+    static CRS: OnceLock<Result<(Point, CommitKey), String>> = OnceLock::new();
+    CRS.get_or_init(|| derive_points(|_, _, _, _, _| {})).as_ref().map_err(Clone::clone)
+}
+
+pub fn vectors() -> Result<Vec<Vector>, String> {
     let mut vectors = Vec::with_capacity(11);
+    derive_points(|role, index, input, digest, point| {
+        vectors.push(Vector { role, index, input: hex(input),
+            digest: hex(digest), point: hex(&point.to_bytes()) });
+    })?;
+    Ok(vectors)
+}
+
+fn derive_points(
+    mut record: impl FnMut(&'static str, u8, &[u8], &[u8; 64], Point),
+) -> Result<(Point, CommitKey), String> {
+    let mut points = vec![Point::base()];
     for (role, count) in [("proof", 1), ("blinding", 1), ("message", 9)] {
         for index in 0..count {
             let input = input(role, index);
             let digest: [u8; 64] = Sha512::digest(&input).into();
             let point = Point::from_uniform_bytes(&digest);
             validate(point, &points)?;
-            vectors.push(Vector { role, index, input: hex(&input),
-                digest: hex(&digest), point: hex(&point.to_bytes()) });
+            record(role, index, &input, &digest, point);
             points.push(point);
         }
     }
-    Ok((points[1], CommitKey { h: points[2], g: points[3..].to_vec() }, vectors))
+    Ok((points[1], CommitKey { h: points[2], g: points[3..].to_vec() }))
 }
 
 #[cfg(test)]
@@ -73,15 +88,16 @@ mod tests {
         let expected: serde_json::Value = serde_json::from_str(include_str!(
             "../../../packages/deck/test-vectors/shuffle-crs-36.json"
         )).unwrap();
-        let (proof, key, vectors) = derive().unwrap();
-        assert_eq!(serde_json::to_value(vectors).unwrap(), expected);
+        let (proof, key) = derive().unwrap();
+        assert!(std::ptr::eq(derive().unwrap(), derive().unwrap()));
+        assert_eq!(serde_json::to_value(vectors().unwrap()).unwrap(), expected);
         assert_eq!(key.g.len(), 9);
-        assert_ne!(proof, key.h);
+        assert_ne!(*proof, key.h);
     }
 
     #[test]
     fn identity_equal_and_negated_bases_fail_closed() {
-        let (proof, _, _) = derive().unwrap();
+        let &(proof, _) = derive().unwrap();
         for point in [Point::zero(), Point::base(), -Point::base(), proof, -proof] {
             assert!(validate(point, &[Point::base(), proof]).is_err());
         }

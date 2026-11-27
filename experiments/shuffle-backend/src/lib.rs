@@ -3,6 +3,8 @@
 extern crate cards_proofs_sha512 as cards_proofs;
 #[cfg(feature = "candidate-transcript")]
 mod shuffle_api;
+#[cfg(feature = "candidate-transcript")]
+mod dleq;
 #[cfg(not(feature = "ristretto"))]
 use ark_ec::AffineRepr;
 use ark_ff::{UniformRand, Zero};
@@ -33,11 +35,42 @@ pub fn verify_candidate_shuffle36(statement: &[u8], proof: &[u8]) -> Result<bool
 }
 
 /// Private witness arguments must never be broadcast, logged, or persisted.
-#[cfg(feature = "candidate-transcript")]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg(all(feature = "candidate-transcript", not(target_arch = "wasm32")))]
 pub fn prove_candidate_shuffle36(statement: &[u8], permutation: &[u8], randomizers: &[u8]) -> Result<Vec<u8>, String> {
     shuffle_api::prove(statement, permutation, randomizers)
 }
+
+#[cfg(all(feature = "candidate-transcript", target_arch = "wasm32"))]
+#[wasm_bindgen]
+pub fn prove_candidate_shuffle36(statement: &[u8], permutation: Vec<u8>, randomizers: Vec<u8>) -> Result<Vec<u8>, String> {
+    // Own and wipe the wasm-bindgen copies while preserving the caller's buffers.
+    let permutation = zeroize::Zeroizing::new(permutation);
+    let randomizers = zeroize::Zeroizing::new(randomizers);
+    shuffle_api::prove(statement, &permutation, &randomizers)
+}
+/// Returns the completed canonical statement followed by its proof.
+#[cfg(feature = "candidate-transcript")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn prepare_and_prove_candidate_shuffle36(template: &[u8]) -> Result<Vec<u8>, String> {
+    shuffle_api::prepare_and_prove(template)
+}
+
+/// Creates packed DLEQ shares and erases the supplied secret bytes on return.
+#[cfg(feature = "candidate-transcript")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn create_dleq_batch(context: &[u8], secret: &mut [u8], cards: &[u8]) -> Result<Vec<u8>, String> {
+    use zeroize::Zeroize;
+    let result = dleq::create(context, secret, cards);
+    secret.zeroize();
+    result
+}
+
+#[cfg(feature = "candidate-transcript")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn verify_dleq_batch(context: &[u8], key: &[u8], cards: &[u8], shares: &[u8]) -> Result<bool, String> {
+    dleq::verify(context, key, cards, shares)
+}
+
 #[cfg(feature = "candidate-transcript")]
 pub const TRANSCRIPT_PROFILE: &str = "bg-ristretto255-36-4x9-fs-candidate-v1";
 #[cfg(not(feature = "candidate-transcript"))]
@@ -202,9 +235,9 @@ fn decode_exact<T: CanonicalDeserialize>(bytes: &[u8]) -> Result<T, String> {
 fn verify(f: &Fixture, context: &[u8]) -> bool {
     #[cfg(feature = "candidate-crs")]
     {
-        let Ok((generator, key, _)) = crs::derive() else { return false; };
+        let Ok((generator, key)) = crs::derive() else { return false; };
         if (f.rows, f.cols) != (4, 9) || f.encryption.generator != ristretto::Point::base()
-            || f.generator != generator || f.commitments.h != key.h || f.commitments.g != key.g {
+            || f.generator != *generator || f.commitments.h != key.h || f.commitments.g != key.g {
             return false;
         }
     }
@@ -231,7 +264,10 @@ pub fn generate_fixture(rows: u32, cols: u32, initial_identity_a: bool) -> Resul
     #[cfg(not(feature = "candidate-crs"))]
     let (generator, commitments) = (Enc::generator(&mut rng), Comm::setup(&mut rng, cols as usize));
     #[cfg(feature = "candidate-crs")]
-    let (generator, commitments, _) = crs::derive()?;
+    let (generator, commitments) = {
+        let (generator, commitments) = crs::derive()?;
+        (*generator, commitments.clone())
+    };
     let messages: Vec<_> = (0..36).map(|_| Plaintext::rand(&mut rng)).collect();
     let input: Vec<_> = messages.iter().map(|message| {
         let randomness = if initial_identity_a { Scalar::zero() } else { nonzero_scalar(&mut rng) };
@@ -370,7 +406,7 @@ pub fn evaluate_adapter_vectors(request: &str) -> Result<String, String> {
 #[cfg(feature = "candidate-crs")]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn evaluate_crs_vectors() -> Result<String, String> {
-    serde_json::to_string(&crs::derive()?.2).map_err(|e| e.to_string())
+    serde_json::to_string(&crs::vectors()?).map_err(|e| e.to_string())
 }
 
 /// Structural codec validation only; does not verify proof equations.

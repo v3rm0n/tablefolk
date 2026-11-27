@@ -32,6 +32,21 @@ export interface ProvenDecryptionShare {
   readonly proof: ChaumPedersenProof;
 }
 
+export interface DecryptionShareCard {
+  readonly pos: number;
+  readonly A: RistrettoPoint;
+}
+
+export interface DecryptionShareBatchBackend {
+  createDleqBatch(
+    context: ProofContext, secretKey: RistrettoScalar, cards: readonly DecryptionShareCard[],
+  ): Promise<readonly ProvenDecryptionShare[]>;
+  verifyDleqBatch(
+    context: ProofContext, publicKey: RistrettoPoint, cards: readonly DecryptionShareCard[],
+    shares: readonly ProvenDecryptionShare[],
+  ): Promise<boolean>;
+}
+
 export function createGameKeyShare(
   context: ProofContext,
   secretKey: RistrettoScalar,

@@ -108,6 +108,19 @@ impl CanonicalDeserialize for Point {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Ciphertext(pub Point, pub Point);
 
+#[cfg(feature = "candidate-transcript")]
+impl Ciphertext {
+    pub fn remask_base(self, key: &Point, mask: &Scalar) -> Self {
+        let bytes = zeroize::Zeroizing::new(scalar_bytes(*mask));
+        let mask = zeroize::Zeroizing::new(
+            Option::from(DalekScalar::from_canonical_bytes(*bytes))
+                .expect("Arkworks and Dalek scalar fields must agree"),
+        );
+        Self(Point(self.0.0 + RistrettoPoint::mul_base(&mask)),
+            Point(self.1.0 + key.0 * *mask))
+    }
+}
+
 impl Add for Ciphertext {
     type Output = Self;
     fn add(self, other: Self) -> Self { Self(self.0 + other.0, self.1 + other.1) }
